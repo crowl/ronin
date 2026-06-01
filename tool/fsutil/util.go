@@ -1,0 +1,141 @@
+package fsutil
+
+import (
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+type ResolvedPath struct {
+	Display string
+	Abs     string
+}
+
+func ResolvePath(cwd string, path string) (ResolvedPath, error) {
+	return resolvePath(cwd, path, true)
+}
+
+func ResolvePathForWrite(cwd string, path string) (ResolvedPath, error) {
+	return resolvePath(cwd, path, false)
+}
+
+func resolvePath(cwd string, path string, followLeaf bool) (ResolvedPath, error) {
+	if cwd == "" {
+		cwd = "."
+	}
+
+	absCWD, err := filepath.Abs(cwd)
+	if err != nil {
+		return ResolvedPath{}, err
+	}
+	if realCWD, err := filepath.EvalSymlinks(absCWD); err == nil {
+		absCWD = realCWD
+	}
+
+	if path == "" {
+		path = "."
+	}
+
+	clean := filepath.Clean(path)
+	abs := clean
+	if !filepath.IsAbs(clean) {
+		abs = filepath.Join(absCWD, clean)
+	}
+
+	var resolvedAbs string
+	if followLeaf {
+		resolvedAbs, err = ResolveExistingOrParent(abs)
+	} else {
+		resolvedAbs, err = resolveParent(abs)
+	}
+	if err != nil {
+		return ResolvedPath{}, err
+	}
+
+	return ResolvedPath{
+		Display: DisplayPath(absCWD, resolvedAbs),
+		Abs:     resolvedAbs,
+	}, nil
+}
+
+func ResolveExistingOrParent(abs string) (string, error) {
+	if realPath, err := filepath.EvalSymlinks(abs); err == nil {
+		return realPath, nil
+	}
+
+	dir := filepath.Dir(abs)
+	suffix := filepath.Base(abs)
+
+	for {
+		if realDir, err := filepath.EvalSymlinks(dir); err == nil {
+			return filepath.Join(realDir, suffix), nil
+		}
+
+		next := filepath.Dir(dir)
+		if next == dir {
+			return "", errors.New("could not resolve path parent")
+		}
+		suffix = filepath.Join(filepath.Base(dir), suffix)
+		dir = next
+	}
+}
+
+func resolveParent(abs string) (string, error) {
+	dir, err := ResolveExistingOrParent(filepath.Dir(abs))
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, filepath.Base(abs)), nil
+}
+
+func DisplayPath(cwd string, abs string) string {
+	rel, err := filepath.Rel(cwd, abs)
+	if err == nil && (rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)))) {
+		return filepath.ToSlash(rel)
+	}
+
+	return filepath.ToSlash(abs)
+}
+
+const tmpFilePattern = ".ronin-*"
+
+func WriteFileAtomic(path string, data []byte, mode fs.FileMode) error {
+	dir := filepath.Dir(path)
+
+	tmp, err := os.CreateTemp(dir, tmpFilePattern)
+	if err != nil {
+		return err
+	}
+
+	tmpName := tmp.Name()
+	defer func() {
+		_ = os.Remove(tmpName)
+	}()
+
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+
+	if err := tmp.Chmod(mode.Perm()); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+
+	return syncDir(dir)
+}

@@ -1,0 +1,36 @@
+package tui
+
+import (
+	"time"
+
+	"github.com/crowl/ronin/tool"
+)
+
+type userMessageBox struct{ Text string }
+
+type assistantMessageBox struct{ Text string }
+
+type assistantThinkingBox struct{ Text string }
+
+type toolCallBox struct {
+	ToolCallID string
+	Title      string
+	Artifacts  []tool.Artifact
+	Error      string
+	StartedAt  time.Time
+	EndedAt    time.Time
+}
+
+type systemMessageBox struct{ Text string }
+
+type errorMessageBox struct{ Text string }
+
+// Box is a sealed interface to mark all application box types
+type box interface{ box() }
+
+func (b userMessageBox) box()       {}
+func (b assistantMessageBox) box()  {}
+func (b assistantThinkingBox) box() {}
+func (b toolCallBox) box()          {}
+func (b systemMessageBox) box()     {}
+func (b errorMessageBox) box()      {}
