@@ -25,10 +25,13 @@ git clone https://github.com/crowl/ronin.git
 cd ronin
 
 export OPENAI_API_KEY=...
+# Optional providers:
+export GEMINI_API_KEY=...
+export ANTHROPIC_API_KEY=...
 go run ./cmd/ronin
 ```
 
-The default model currently uses OpenAI, so `OPENAI_API_KEY` is required to start the app. Google models are also registered; set `GEMINI_API_KEY` if you want to use them.
+The default model currently uses OpenAI, so `OPENAI_API_KEY` is required to start the app. Google and Anthropic models are also registered when `GEMINI_API_KEY` and `ANTHROPIC_API_KEY` are set.
 
 You can run *ronin* against a specific working directory with:
 
