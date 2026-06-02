@@ -25,9 +25,9 @@ git clone https://github.com/crowl/ronin.git
 cd ronin
 
 export OPENAI_API_KEY=...
-# Optional providers:
 export GEMINI_API_KEY=...
 export ANTHROPIC_API_KEY=...
+
 go run ./cmd/ronin
 ```
 
@@ -36,8 +36,16 @@ The default model currently uses OpenAI, so `OPENAI_API_KEY` is required to star
 You can run *ronin* against a specific working directory with:
 
 ```sh
-go run ./cmd/ronin -cwd /path/to/project
+go run ./cmd/ronin -working_dir /path/to/project
 ```
+
+You can also provide a prompt directly and skip the TUI:
+
+```sh
+go run ./cmd/ronin -prompt "summarize this project"
+```
+
+In prompt mode, assistant text and compact tool status lines are written to stdout, then the process exits when the agent finishes.
 
 ## Configuration
 

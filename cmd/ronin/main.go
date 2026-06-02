@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"time"
@@ -23,8 +24,10 @@ import (
 )
 
 func main() {
+	var prompt string
 	var workingDir string
 
+	flag.StringVar(&prompt, "prompt", "", "Prompt to run without launching the TUI.")
 	flag.StringVar(&workingDir, "working_dir", ".", "Working directory. Defaults to the current directory.")
 
 	flag.Parse()
@@ -133,6 +136,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	if prompt != "" {
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
+		defer cancel()
+
+		if err := runPrompt(ctx, agt, prompt, os.Stdout); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
 	if err := runTUI(agt); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
@@ -154,6 +168,68 @@ func resolveModel(settings config.Settings) (llm.Model, llm.ReasoningLevel, erro
 	}
 
 	return llm.Model{}, "", fmt.Errorf("unknown model %q in config (is the provider's API key set?)", settings.Model.Provider+":"+settings.Model.Name)
+}
+
+type prompter interface {
+	Prompt(context.Context, string) (<-chan agent.Event, <-chan error)
+}
+
+func runPrompt(ctx context.Context, agt prompter, prompt string, output io.Writer) error {
+	events, errs := agt.Prompt(ctx, prompt)
+	atLineStart := true
+
+	writeText := func(text string) error {
+		if text == "" {
+			return nil
+		}
+		if _, err := io.WriteString(output, text); err != nil {
+			return err
+		}
+		atLineStart = text[len(text)-1] == '\n'
+		return nil
+	}
+
+	writeStatus := func(text string) error {
+		if !atLineStart {
+			if _, err := io.WriteString(output, "\n"); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintf(output, "%s\n", text); err != nil {
+			return err
+		}
+		atLineStart = true
+		return nil
+	}
+
+	for event := range events {
+		switch typedEvent := event.(type) {
+		case agent.AssistantMessageDeltaReceived:
+			if err := writeText(typedEvent.Text); err != nil {
+				return err
+			}
+		case agent.ToolExecutionStarted:
+			if err := writeStatus("[tool] " + typedEvent.Tool.Name()); err != nil {
+				return err
+			}
+		case agent.ToolExecutionFailed:
+			if err := writeStatus(fmt.Sprintf("[tool error] %s: %v", typedEvent.Tool.Name(), typedEvent.Error)); err != nil {
+				return err
+			}
+		}
+	}
+
+	if !atLineStart {
+		if _, err := io.WriteString(output, "\n"); err != nil {
+			return err
+		}
+	}
+
+	if err, ok := <-errs; ok && err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func runTUI(agt *agent.Agent) error {
