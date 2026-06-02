@@ -55,8 +55,10 @@ func TestPredictNext(t *testing.T) {
 				thinking = typedEvent
 			case llm.TextDelta:
 				text = typedEvent
-			case llm.ToolCallRequested:
-				toolCall = typedEvent.ToolCall
+			case llm.BlockEnded:
+				if block, ok := typedEvent.Block.(llm.ToolCallBlock); ok {
+					toolCall = block
+				}
 			case llm.PredictionFinished:
 				finished = typedEvent
 			}
@@ -91,8 +93,11 @@ func TestPredictNext(t *testing.T) {
 		if err != nil {
 			t.Fatalf("predict: %v", err)
 		}
-		if _, ok := events[len(events)-2].(llm.TextDelta); !ok {
-			t.Fatalf("penultimate event = %#v, want TextDelta", events[len(events)-2])
+		if _, ok := events[len(events)-3].(llm.TextDelta); !ok {
+			t.Fatalf("event before block end = %#v, want TextDelta", events[len(events)-3])
+		}
+		if _, ok := events[len(events)-2].(llm.BlockEnded); !ok {
+			t.Fatalf("penultimate event = %#v, want BlockEnded", events[len(events)-2])
 		}
 		finished, ok := events[len(events)-1].(llm.PredictionFinished)
 		if !ok {
@@ -323,8 +328,10 @@ func drainEvents(events <-chan llm.Event) []llm.Event {
 func toolCallIDs(events []llm.Event) []string {
 	var ids []string
 	for _, event := range events {
-		if requested, ok := event.(llm.ToolCallRequested); ok {
-			ids = append(ids, requested.ToolCall.ID)
+		if ended, ok := event.(llm.BlockEnded); ok {
+			if block, ok := ended.Block.(llm.ToolCallBlock); ok {
+				ids = append(ids, block.ID)
+			}
 		}
 	}
 	return ids

@@ -223,6 +223,9 @@ func (s *LLM) stream(ctx context.Context, req llm.PredictNextRequest, events cha
 	}
 
 	if !state.finished {
+		if err := state.finishOpenBlock(ctx, events); err != nil {
+			return err
+		}
 		return sendEvent(ctx, events, llm.PredictionFinished{StopReason: state.stopReason()})
 	}
 	return nil
@@ -467,9 +470,14 @@ func convertMessages(messages []llm.Message) ([]openAIInput, error) {
 }
 
 type streamState struct {
-	calls       map[string]*partialCall
-	toolEmitted bool
-	finished    bool
+	calls        map[string]*partialCall
+	toolEmitted  bool
+	finished     bool
+	blockStarted bool
+	blockKind    llm.BlockKind
+	blockIndex   int
+	text         strings.Builder
+	thinking     strings.Builder
 }
 
 type partialCall struct {
@@ -582,20 +590,42 @@ func handleData(ctx context.Context, data string, state *streamState, events cha
 	}
 
 	if delta, ok := raw["delta"].(string); ok && strings.Contains(typeName, "reasoning") && strings.Contains(typeName, "delta") {
-		return sendEvent(ctx, events, llm.ThinkingDelta{Text: delta})
+		if err := state.startBlock(ctx, events, llm.BlockKindThinking); err != nil {
+			return err
+		}
+		state.thinking.WriteString(delta)
+		return sendEvent(ctx, events, llm.ThinkingDelta{Index: state.blockIndex, Text: delta})
 	}
 
 	if delta, ok := raw["delta"].(string); ok && (strings.Contains(typeName, "text.delta") || strings.Contains(typeName, "output_text.delta")) {
-		return sendEvent(ctx, events, llm.TextDelta{Text: delta})
+		if err := state.startBlock(ctx, events, llm.BlockKindText); err != nil {
+			return err
+		}
+		state.text.WriteString(delta)
+		return sendEvent(ctx, events, llm.TextDelta{Index: state.blockIndex, Text: delta})
+	}
+
+	if strings.Contains(typeName, "output_text.done") || strings.Contains(typeName, "text.done") {
+		return state.finishText(ctx, events)
+	}
+
+	if strings.Contains(typeName, "reasoning") && strings.Contains(typeName, "done") {
+		return state.finishThinking(ctx, events)
 	}
 
 	if strings.Contains(typeName, "function_call_arguments.delta") {
+		if err := state.finishOpenBlock(ctx, events); err != nil {
+			return err
+		}
 		call := state.callForRaw(raw)
 		call.Arguments += stringField(raw, "delta")
 		return nil
 	}
 
 	if strings.Contains(typeName, "function_call_arguments.done") {
+		if err := state.finishOpenBlock(ctx, events); err != nil {
+			return err
+		}
 		call := state.callForRaw(raw)
 		if arguments := stringField(raw, "arguments"); arguments != "" {
 			call.Arguments = arguments
@@ -606,6 +636,9 @@ func handleData(ctx context.Context, data string, state *streamState, events cha
 
 	if item, ok := raw["item"].(map[string]any); ok {
 		if itemType, _ := item["type"].(string); itemType == "function_call" {
+			if err := state.finishOpenBlock(ctx, events); err != nil {
+				return err
+			}
 			call := state.callForRaw(raw)
 			mergeCallItem(call, item)
 			if strings.Contains(typeName, "output_item.done") {
@@ -616,6 +649,9 @@ func handleData(ctx context.Context, data string, state *streamState, events cha
 	}
 
 	if strings.Contains(typeName, "completed") || typeName == "response.completed" {
+		if err := state.finishOpenBlock(ctx, events); err != nil {
+			return err
+		}
 		state.finished = true
 		return sendEvent(ctx, events, llm.PredictionFinished{
 			Usage:      usageFromRaw(raw),
@@ -623,6 +659,60 @@ func handleData(ctx context.Context, data string, state *streamState, events cha
 		})
 	}
 
+	return nil
+}
+
+func (state *streamState) startBlock(ctx context.Context, events chan<- llm.Event, kind llm.BlockKind) error {
+	if state.blockStarted {
+		if state.blockKind == kind {
+			return nil
+		}
+		if err := state.finishOpenBlock(ctx, events); err != nil {
+			return err
+		}
+	}
+	state.blockStarted = true
+	state.blockKind = kind
+	return sendEvent(ctx, events, llm.BlockStarted{Index: state.blockIndex, Kind: kind})
+}
+
+func (state *streamState) finishOpenBlock(ctx context.Context, events chan<- llm.Event) error {
+	if state.text.Len() > 0 {
+		return state.finishText(ctx, events)
+	}
+	if state.thinking.Len() > 0 {
+		return state.finishThinking(ctx, events)
+	}
+	return nil
+}
+
+func (state *streamState) finishText(ctx context.Context, events chan<- llm.Event) error {
+	if state.text.Len() == 0 {
+		return nil
+	}
+	block := llm.TextBlock{Text: state.text.String()}
+	state.text.Reset()
+	state.blockStarted = false
+	state.blockKind = ""
+	if err := sendEvent(ctx, events, llm.BlockEnded{Index: state.blockIndex, Block: block}); err != nil {
+		return err
+	}
+	state.blockIndex++
+	return nil
+}
+
+func (state *streamState) finishThinking(ctx context.Context, events chan<- llm.Event) error {
+	if state.thinking.Len() == 0 {
+		return nil
+	}
+	block := llm.ThinkingBlock{Text: state.thinking.String()}
+	state.thinking.Reset()
+	state.blockStarted = false
+	state.blockKind = ""
+	if err := sendEvent(ctx, events, llm.BlockEnded{Index: state.blockIndex, Block: block}); err != nil {
+		return err
+	}
+	state.blockIndex++
 	return nil
 }
 
@@ -634,9 +724,18 @@ func emitToolCallIfReady(ctx context.Context, state *streamState, call *partialC
 	if err != nil {
 		return err
 	}
-	if err := sendEvent(ctx, events, llm.ToolCallRequested{ToolCall: toolCall}); err != nil {
+	if err := sendEvent(ctx, events, llm.BlockStarted{Index: state.blockIndex, Kind: llm.BlockKindToolCall}); err != nil {
 		return err
 	}
+	if call.Arguments != "" {
+		if err := sendEvent(ctx, events, llm.ToolCallArgumentsDelta{Index: state.blockIndex, Arguments: call.Arguments}); err != nil {
+			return err
+		}
+	}
+	if err := sendEvent(ctx, events, llm.BlockEnded{Index: state.blockIndex, Block: toolCall}); err != nil {
+		return err
+	}
+	state.blockIndex++
 	call.Emitted = true
 	state.toolEmitted = true
 	return nil

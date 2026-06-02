@@ -1,12 +1,39 @@
 package llm
 
+type BlockKind string
+
+const (
+	BlockKindText     BlockKind = "text"
+	BlockKindThinking BlockKind = "thinking"
+	BlockKindToolCall BlockKind = "tool_call"
+)
+
 type PredictionStarted struct{}
 
-type ThinkingDelta struct{ Text string }
+type BlockStarted struct {
+	Index int
+	Kind  BlockKind
+}
 
-type TextDelta struct{ Text string }
+type ThinkingDelta struct {
+	Index int
+	Text  string
+}
 
-type ToolCallRequested struct{ ToolCall ToolCallBlock }
+type TextDelta struct {
+	Index int
+	Text  string
+}
+
+type ToolCallArgumentsDelta struct {
+	Index     int
+	Arguments string
+}
+
+type BlockEnded struct {
+	Index int
+	Block AssistantBlock
+}
 
 type PredictionFinished struct {
 	Usage      Usage
@@ -15,8 +42,10 @@ type PredictionFinished struct {
 
 type Event interface{ event() }
 
-func (PredictionStarted) event()  {}
-func (ThinkingDelta) event()      {}
-func (TextDelta) event()          {}
-func (ToolCallRequested) event()  {}
-func (PredictionFinished) event() {}
+func (PredictionStarted) event()      {}
+func (BlockStarted) event()           {}
+func (ThinkingDelta) event()          {}
+func (TextDelta) event()              {}
+func (ToolCallArgumentsDelta) event() {}
+func (BlockEnded) event()             {}
+func (PredictionFinished) event()     {}

@@ -203,8 +203,7 @@ func (a *Agent) run(ctx context.Context, prompt string, events chan<- Event) err
 		case events <- ConversationTurnStarted{Turn: turn}:
 		}
 
-		var text strings.Builder
-		var thinking strings.Builder
+		var blocks []llm.AssistantBlock
 		var toolCalls []llm.ToolCallBlock
 		var usage llm.Usage
 
@@ -225,21 +224,22 @@ func (a *Agent) run(ctx context.Context, prompt string, events chan<- Event) err
 				case events <- AssistantMessageStarted{Message: llm.AssistantMessage{Timestamp: a.now()}}:
 				}
 			case llm.ThinkingDelta:
-				thinking.WriteString(typedEvent.Text)
 				select {
 				case <-ctx.Done():
 					return finish(ctx.Err())
 				case events <- AssistantThinkingDeltaReceived{Text: typedEvent.Text}:
 				}
 			case llm.TextDelta:
-				text.WriteString(typedEvent.Text)
 				select {
 				case <-ctx.Done():
 					return finish(ctx.Err())
 				case events <- AssistantMessageDeltaReceived{Text: typedEvent.Text}:
 				}
-			case llm.ToolCallRequested:
-				toolCalls = append(toolCalls, typedEvent.ToolCall)
+			case llm.BlockEnded:
+				blocks = append(blocks, typedEvent.Block)
+				if toolCall, ok := typedEvent.Block.(llm.ToolCallBlock); ok {
+					toolCalls = append(toolCalls, toolCall)
+				}
 			case llm.PredictionFinished:
 				a.contextUsage = typedEvent.Usage
 				usage = typedEvent.Usage
@@ -248,17 +248,6 @@ func (a *Agent) run(ctx context.Context, prompt string, events chan<- Event) err
 
 		if err := <-llmErrsCh; err != nil {
 			return finish(fmt.Errorf("llm prediction error: %w", err))
-		}
-
-		blocks := make([]llm.AssistantBlock, 0, 2+len(toolCalls))
-		if thinking.Len() > 0 {
-			blocks = append(blocks, llm.ThinkingBlock{Text: thinking.String()})
-		}
-		if text.Len() > 0 {
-			blocks = append(blocks, llm.TextBlock{Text: text.String()})
-		}
-		for _, call := range toolCalls {
-			blocks = append(blocks, call)
 		}
 
 		msg := llm.AssistantMessage{

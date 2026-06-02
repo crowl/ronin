@@ -30,7 +30,8 @@ type TextBlock struct {
 }
 
 type ThinkingBlock struct {
-	Text string
+	Text      string
+	Signature string
 }
 
 type ToolCallBlock struct {

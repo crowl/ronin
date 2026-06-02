@@ -106,8 +106,10 @@ func TestPredictNext(t *testing.T) {
 		var finished llm.PredictionFinished
 		for _, event := range events {
 			switch typedEvent := event.(type) {
-			case llm.ToolCallRequested:
-				toolCall = typedEvent.ToolCall
+			case llm.BlockEnded:
+				if block, ok := typedEvent.Block.(llm.ToolCallBlock); ok {
+					toolCall = block
+				}
 			case llm.PredictionFinished:
 				finished = typedEvent
 			}
@@ -140,8 +142,10 @@ func TestPredictNext(t *testing.T) {
 
 		var toolCall llm.ToolCallBlock
 		for _, event := range events {
-			if requested, ok := event.(llm.ToolCallRequested); ok {
-				toolCall = requested.ToolCall
+			if ended, ok := event.(llm.BlockEnded); ok {
+				if block, ok := ended.Block.(llm.ToolCallBlock); ok {
+					toolCall = block
+				}
 			}
 		}
 		if toolCall.ID != "call-1" || toolCall.Name != "tool" || string(toolCall.Arguments) != `{"x":1}` {
@@ -166,8 +170,10 @@ func TestPredictNext(t *testing.T) {
 
 		var toolCalls []llm.ToolCallBlock
 		for _, event := range events {
-			if requested, ok := event.(llm.ToolCallRequested); ok {
-				toolCalls = append(toolCalls, requested.ToolCall)
+			if ended, ok := event.(llm.BlockEnded); ok {
+				if block, ok := ended.Block.(llm.ToolCallBlock); ok {
+					toolCalls = append(toolCalls, block)
+				}
 			}
 		}
 		if len(toolCalls) != 1 {

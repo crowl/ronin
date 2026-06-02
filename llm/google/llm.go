@@ -462,6 +462,7 @@ type geminiStreamState struct {
 	toolEmitted bool
 	usage       llm.Usage
 	callCounter uint64
+	blockIndex  int
 }
 
 type geminiStreamEvent struct {
@@ -543,13 +544,27 @@ func handleData(ctx context.Context, data string, state *geminiStreamState, even
 		for _, part := range candidate.Content.Parts {
 			if part.Text != "" {
 				if part.Thought {
-					if err := sendEvent(ctx, events, llm.ThinkingDelta{Text: part.Text}); err != nil {
+					if err := sendEvent(ctx, events, llm.BlockStarted{Index: state.blockIndex, Kind: llm.BlockKindThinking}); err != nil {
 						return err
 					}
+					if err := sendEvent(ctx, events, llm.ThinkingDelta{Index: state.blockIndex, Text: part.Text}); err != nil {
+						return err
+					}
+					if err := sendEvent(ctx, events, llm.BlockEnded{Index: state.blockIndex, Block: llm.ThinkingBlock{Text: part.Text, Signature: part.ThoughtSignature}}); err != nil {
+						return err
+					}
+					state.blockIndex++
 				} else {
-					if err := sendEvent(ctx, events, llm.TextDelta{Text: part.Text}); err != nil {
+					if err := sendEvent(ctx, events, llm.BlockStarted{Index: state.blockIndex, Kind: llm.BlockKindText}); err != nil {
 						return err
 					}
+					if err := sendEvent(ctx, events, llm.TextDelta{Index: state.blockIndex, Text: part.Text}); err != nil {
+						return err
+					}
+					if err := sendEvent(ctx, events, llm.BlockEnded{Index: state.blockIndex, Block: llm.TextBlock{Text: part.Text}}); err != nil {
+						return err
+					}
+					state.blockIndex++
 				}
 			}
 			if part.FunctionCall != nil {
@@ -567,8 +582,15 @@ func handleData(ctx context.Context, data string, state *geminiStreamState, even
 					return fmt.Errorf("gemini function call %q arguments: invalid JSON", part.FunctionCall.Name)
 				}
 
-				if err := sendEvent(ctx, events, llm.ToolCallRequested{
-					ToolCall: llm.ToolCallBlock{
+				if err := sendEvent(ctx, events, llm.BlockStarted{Index: state.blockIndex, Kind: llm.BlockKindToolCall}); err != nil {
+					return err
+				}
+				if err := sendEvent(ctx, events, llm.ToolCallArgumentsDelta{Index: state.blockIndex, Arguments: string(args)}); err != nil {
+					return err
+				}
+				if err := sendEvent(ctx, events, llm.BlockEnded{
+					Index: state.blockIndex,
+					Block: llm.ToolCallBlock{
 						ID:               id,
 						Name:             part.FunctionCall.Name,
 						Arguments:        args,
@@ -577,6 +599,7 @@ func handleData(ctx context.Context, data string, state *geminiStreamState, even
 				}); err != nil {
 					return err
 				}
+				state.blockIndex++
 
 				state.toolEmitted = true
 			}

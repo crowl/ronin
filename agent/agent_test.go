@@ -57,11 +57,12 @@ func TestPromptLifecycle(t *testing.T) {
 		agt, err := agent.New(agent.Config{
 			LLM: &fakeLLM{eventBatches: [][]llm.Event{
 				{
-					llm.ToolCallRequested{ToolCall: llm.ToolCallBlock{ID: "call-1", Name: "fail", Arguments: json.RawMessage(`{}`)}},
+					llm.BlockEnded{Block: llm.ToolCallBlock{ID: "call-1", Name: "fail", Arguments: json.RawMessage(`{}`)}},
 					llm.PredictionFinished{},
 				},
 				{
 					llm.TextDelta{Text: "done"},
+					llm.BlockEnded{Block: llm.TextBlock{Text: "done"}},
 					llm.PredictionFinished{},
 				},
 			}},
@@ -85,11 +86,12 @@ func TestPromptLifecycle(t *testing.T) {
 		agt, err := agent.New(agent.Config{
 			LLM: &fakeLLM{eventBatches: [][]llm.Event{
 				{
-					llm.ToolCallRequested{ToolCall: llm.ToolCallBlock{ID: "call-1", Name: "missing", Arguments: json.RawMessage(`{}`)}},
+					llm.BlockEnded{Block: llm.ToolCallBlock{ID: "call-1", Name: "missing", Arguments: json.RawMessage(`{}`)}},
 					llm.PredictionFinished{},
 				},
 				{
 					llm.TextDelta{Text: "done"},
+					llm.BlockEnded{Block: llm.TextBlock{Text: "done"}},
 					llm.PredictionFinished{},
 				},
 			}},
@@ -113,6 +115,7 @@ func TestPromptLifecycle(t *testing.T) {
 		agt, err := agent.New(agent.Config{
 			LLM: &fakeLLM{events: []llm.Event{
 				llm.TextDelta{Text: "hello"},
+				llm.BlockEnded{Block: llm.TextBlock{Text: "hello"}},
 				llm.PredictionFinished{},
 			}},
 			Now: func() time.Time { return want },
@@ -139,11 +142,12 @@ func TestPromptLifecycle(t *testing.T) {
 		agt, err := agent.New(agent.Config{
 			LLM: &fakeLLM{eventBatches: [][]llm.Event{
 				{
-					llm.ToolCallRequested{ToolCall: llm.ToolCallBlock{ID: "call-1", Name: "stream", Arguments: json.RawMessage(`{}`)}},
+					llm.BlockEnded{Block: llm.ToolCallBlock{ID: "call-1", Name: "stream", Arguments: json.RawMessage(`{}`)}},
 					llm.PredictionFinished{},
 				},
 				{
 					llm.TextDelta{Text: "done"},
+					llm.BlockEnded{Block: llm.TextBlock{Text: "done"}},
 					llm.PredictionFinished{},
 				},
 			}},
