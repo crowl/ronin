@@ -223,7 +223,7 @@ func TestCompactConversation(t *testing.T) {
 			t.Fatalf("New() error = %v", err)
 		}
 
-		if err := agt.CompactConversation(); err != nil {
+		if err := agt.CompactConversation(context.Background()); err != nil {
 			t.Fatalf("CompactConversation() error = %v", err)
 		}
 		got := agt.Messages()
@@ -246,7 +246,7 @@ func TestCompactConversation(t *testing.T) {
 			t.Fatalf("New() error = %v", err)
 		}
 
-		err = agt.CompactConversation()
+		err = agt.CompactConversation(context.Background())
 		if !errors.Is(err, wantErr) {
 			t.Fatalf("CompactConversation() error = %v, want compact failed", err)
 		}
@@ -256,13 +256,34 @@ func TestCompactConversation(t *testing.T) {
 		}
 	})
 
+	t.Run("propagates_caller_context", func(t *testing.T) {
+		compactor := &fakeCompactor{messages: []llm.Message{llm.UserMessage{Text: "compacted"}}}
+		agt, err := agent.New(agent.Config{
+			LLM:       &fakeLLM{},
+			Compactor: compactor,
+			Messages:  []llm.Message{llm.UserMessage{Text: "old"}},
+		})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+
+		type ctxKey struct{}
+		ctx := context.WithValue(context.Background(), ctxKey{}, "v")
+		if err := agt.CompactConversation(ctx); err != nil {
+			t.Fatalf("CompactConversation() error = %v", err)
+		}
+		if compactor.gotCtx == nil || compactor.gotCtx.Value(ctxKey{}) != "v" {
+			t.Fatalf("compactor did not receive caller context")
+		}
+	})
+
 	t.Run("requires_configured_compactor", func(t *testing.T) {
 		agt, err := agent.New(agent.Config{LLM: &fakeLLM{}})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
 
-		err = agt.CompactConversation()
+		err = agt.CompactConversation(context.Background())
 		if err == nil || !strings.Contains(err.Error(), "compactor") {
 			t.Fatalf("CompactConversation() error = %v, want compactor error", err)
 		}
@@ -390,10 +411,12 @@ func (f *fakeLLM) PredictNextStructured(context.Context, llm.PredictNextStructur
 type fakeCompactor struct {
 	messages []llm.Message
 	input    []llm.Message
+	gotCtx   context.Context
 	err      error
 }
 
-func (f *fakeCompactor) Compact(_ context.Context, messages []llm.Message) ([]llm.Message, error) {
+func (f *fakeCompactor) Compact(ctx context.Context, messages []llm.Message) ([]llm.Message, error) {
+	f.gotCtx = ctx
 	f.input = append([]llm.Message(nil), messages...)
 	if f.err != nil {
 		return nil, f.err

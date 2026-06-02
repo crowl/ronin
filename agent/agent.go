@@ -139,11 +139,11 @@ func (a *Agent) SwitchReasoningLevel(lvl llm.ReasoningLevel) error {
 	return nil
 }
 
-func (a *Agent) CompactConversation() error {
+func (a *Agent) CompactConversation(ctx context.Context) error {
 	if a.compactor == nil {
 		return fmt.Errorf("compactor is not configured")
 	}
-	messages, err := a.compactor.Compact(context.Background(), append([]llm.Message(nil), a.messages...))
+	messages, err := a.compactor.Compact(ctx, append([]llm.Message(nil), a.messages...))
 	if err != nil {
 		return err
 	}
