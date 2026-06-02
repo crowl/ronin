@@ -102,8 +102,6 @@ func main() {
 		CWD:          cwd,
 		LLM:          defaultLLM,
 		Compactor:    compactor,
-		ContextFiles: contextFiles,
-		Skills:       skills,
 		Tools:        tools,
 		SystemPrompt: systemPrompt,
 		MaxTurns:     maxTurns,

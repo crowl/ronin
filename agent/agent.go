@@ -34,11 +34,8 @@ type Config struct {
 	CWD          string
 	LLM          llm.Assistant
 	Compactor    Compactor
-	ContextFiles []ContextFile
-	Skills       []Skill
 	Tools        []Tool
 	SystemPrompt string
-	SessionID    string
 	MaxTurns     int
 	Now          func() time.Time
 	Messages     []llm.Message
@@ -79,42 +76,31 @@ func New(cfg Config) (*Agent, error) {
 
 	return &Agent{
 		cwd:          cfg.CWD,
-		llm:          cfg.LLM,
-		compactor:    cfg.Compactor,
-		contextFiles: append([]ContextFile(nil), cfg.ContextFiles...),
 		systemPrompt: cfg.SystemPrompt,
-		sessionID:    cfg.SessionID,
-		tools:        append([]Tool(nil), cfg.Tools...),
-		skills:       append([]Skill(nil), cfg.Skills...),
-		toolByName:   toolByName,
-		toolDefs:     toolDefs,
 		maxTurns:     maxTurns,
-		messages:     append([]llm.Message(nil), cfg.Messages...),
 		now:          now,
+		llm:          cfg.LLM,
+		messages:     append([]llm.Message(nil), cfg.Messages...),
+		toolDefs:     toolDefs,
+		toolByName:   toolByName,
+		compactor:    cfg.Compactor,
 	}, nil
 }
 
 type Agent struct {
-	cwd    string
-	llm    llm.Assistant
-	now    func() time.Time
-	tools  []Tool
-	skills []Skill
+	cwd          string
+	systemPrompt string
+	maxTurns     int
+	now          func() time.Time
 
+	llm          llm.Assistant
+	messages     []llm.Message
 	contextUsage llm.Usage
-	toolDefs     []llm.Tool
+
+	toolDefs   []llm.Tool
+	toolByName map[string]Tool
 
 	compactor Compactor
-
-	contextFiles []ContextFile
-	toolByName   map[string]Tool
-
-	systemPrompt string
-
-	sessionID string
-	maxTurns  int
-
-	messages []llm.Message
 }
 
 func (a *Agent) Messages() []llm.Message {
