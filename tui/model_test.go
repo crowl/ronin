@@ -1,9 +1,12 @@
 package tui
 
 import (
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/crowl/ronin/tui/internal/terminal"
+	"github.com/crowl/ronin/tui/internal/text"
 )
 
 func TestAppModel(t *testing.T) {
@@ -83,6 +86,49 @@ func TestAppModel(t *testing.T) {
 		}
 	})
 
+	t.Run("compaction shows Compacting indicator", func(t *testing.T) {
+		model := newTestModel(t)
+		model.startCompaction(menuItem{Value: "/compact"})
+
+		if !model.working || model.workingLabel != "Compacting" {
+			t.Fatalf("working=%v label=%q, want Compacting", model.working, model.workingLabel)
+		}
+
+		lines, err := model.lines(80, &fakeAgent{}, time.Now())
+		if err != nil {
+			t.Fatalf("lines: %v", err)
+		}
+		if !renderedLinesContain(stripLines(lines), "Compacting") {
+			t.Fatalf("Compacting indicator not rendered: %#v", lines)
+		}
+		if renderedLinesContain(stripLines(lines), "Working") {
+			t.Fatalf("unexpected Working indicator: %#v", lines)
+		}
+	})
+
+	t.Run("pending steering prompt renders above indicator", func(t *testing.T) {
+		model := newTestModel(t)
+		model.startPrompt("do the thing")
+		model.steeringPrompt = "then this"
+
+		lines, err := model.lines(80, &fakeAgent{}, time.Now())
+		if err != nil {
+			t.Fatalf("lines: %v", err)
+		}
+		stripped := stripLines(lines)
+		steeringIdx := lineIndexContaining(stripped, "then this")
+		indicatorIdx := lineIndexContaining(stripped, "Working")
+		if steeringIdx < 0 {
+			t.Fatalf("steering prompt not rendered: %#v", lines)
+		}
+		if indicatorIdx < 0 {
+			t.Fatalf("working indicator not rendered: %#v", lines)
+		}
+		if steeringIdx >= indicatorIdx {
+			t.Fatalf("steering prompt (%d) should render above indicator (%d)", steeringIdx, indicatorIdx)
+		}
+	})
+
 	t.Run("working tick increments indicator only while working", func(t *testing.T) {
 		model := newTestModel(t)
 
@@ -97,6 +143,23 @@ func TestAppModel(t *testing.T) {
 			t.Fatalf("working tick\nupdate: %#v\nframe: %d", update, model.indicatorFrame)
 		}
 	})
+}
+
+func stripLines(lines []string) []string {
+	out := make([]string, len(lines))
+	for i, line := range lines {
+		out[i] = text.StripANSI(line)
+	}
+	return out
+}
+
+func lineIndexContaining(lines []string, value string) int {
+	for i, line := range lines {
+		if strings.Contains(line, value) {
+			return i
+		}
+	}
+	return -1
 }
 
 func newTestModel(t *testing.T) *appModel {

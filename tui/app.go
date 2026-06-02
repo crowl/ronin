@@ -173,6 +173,9 @@ func (app *app) handleAppEvent(ctx context.Context, event event) error {
 		app.cancelFunc = nil
 		update, _ := app.model.finishPrompt()
 		return app.applyUpdate(ctx, update)
+	case agentCompactionDone:
+		app.cancelFunc = nil
+		return app.applyUpdate(ctx, app.model.finishCompaction(typedEvent.Err))
 	}
 	return nil
 }
@@ -201,7 +204,7 @@ func (app *app) applyUpdate(ctx context.Context, update modelUpdate) error {
 	case submitPromptAction:
 		app.submitPrompt(ctx, action.Prompt)
 	case runCommandAction:
-		if err := app.runCommand(action.Item, action.Command); err != nil {
+		if err := app.runCommand(ctx, action.Item, action.Command); err != nil {
 			return err
 		}
 	}
@@ -259,18 +262,16 @@ func (app *app) submitPrompt(ctx context.Context, prompt string) {
 	}()
 }
 
-func (app *app) runCommand(item menuItem, command Command) error {
+func (app *app) runCommand(ctx context.Context, item menuItem, command Command) error {
 	var err error
 	switch typedCommand := command.(type) {
+	case CompactConversation:
+		app.compactConversation(ctx, item)
+		return nil
 	case StartNewConversation:
 		err = app.agent.NewConversation()
 		if err != nil {
 			err = fmt.Errorf("failed to start new conversation: %w", err)
-		}
-	case CompactConversation:
-		err = app.agent.CompactConversation()
-		if err != nil {
-			err = fmt.Errorf("failed to compact conversation: %w", err)
 		}
 	case SwitchModel:
 		err = app.agent.SwitchModel(typedCommand.Model)
@@ -290,6 +291,26 @@ func (app *app) runCommand(item menuItem, command Command) error {
 
 	app.model.recordCommand(item, err)
 	return nil
+}
+
+func (app *app) compactConversation(ctx context.Context, item menuItem) {
+	app.model.startCompaction(item)
+
+	compactCtx, cancel := context.WithCancel(ctx)
+	app.cancelFunc = cancel
+	app.requestRender()
+
+	go func() {
+		defer cancel()
+		err := app.agent.CompactConversation(compactCtx)
+		if err != nil {
+			err = fmt.Errorf("failed to compact conversation: %w", err)
+		}
+		select {
+		case app.events <- agentCompactionDone{Err: err}:
+		case <-ctx.Done():
+		}
+	}()
 }
 
 func (app *app) requestRender() {

@@ -570,7 +570,7 @@ func TestTUIKeyHandling(t *testing.T) {
 		agent := &fakeAgent{newConversationErr: errors.New("cannot reset")}
 		app := newTestApp(t, testAppConfig{Agent: agent})
 
-		err := app.runCommand(menuItem{Value: "/new", Command: StartNewConversation{}}, StartNewConversation{})
+		err := app.runCommand(t.Context(), menuItem{Value: "/new", Command: StartNewConversation{}}, StartNewConversation{})
 		if err != nil {
 			t.Fatalf("handle menu item: %v", err)
 		}
@@ -582,6 +582,99 @@ func TestTUIKeyHandling(t *testing.T) {
 			t.Fatalf("error box\ngot:  %#v\nwant: failed new conversation error", app.model.boxes[1])
 		}
 	})
+}
+
+func TestCompactConversationCommand(t *testing.T) {
+	t.Run("runs asynchronously and finishes via event", func(t *testing.T) {
+		app := newTestApp(t, testAppConfig{})
+
+		item := menuItem{Value: "/compact", Command: CompactConversation{}}
+		if err := app.runCommand(t.Context(), item, CompactConversation{}); err != nil {
+			t.Fatalf("runCommand: %v", err)
+		}
+
+		if !app.model.working || app.model.workingLabel != "Compacting" {
+			t.Fatalf("working=%v label=%q, want working with Compacting label", app.model.working, app.model.workingLabel)
+		}
+		if app.cancelFunc == nil {
+			t.Fatalf("cancelFunc not set during compaction")
+		}
+
+		done := receiveCompactionDone(t, app.events, time.Second)
+		if done.Err != nil {
+			t.Fatalf("compaction done err = %v, want nil", done.Err)
+		}
+
+		update := app.model.finishCompaction(done.Err)
+		if app.model.working {
+			t.Fatalf("working still true after finishCompaction")
+		}
+		if update.Action != nil {
+			if _, ok := update.Action.(noAction); !ok {
+				t.Fatalf("unexpected action after finishCompaction: %#v", update.Action)
+			}
+		}
+	})
+
+	t.Run("cancellation suppresses error box", func(t *testing.T) {
+		agent := &fakeAgent{compactBlockUntilCancel: true, compactStarted: make(chan struct{})}
+		app := newTestApp(t, testAppConfig{Agent: agent})
+
+		item := menuItem{Value: "/compact", Command: CompactConversation{}}
+		if err := app.runCommand(t.Context(), item, CompactConversation{}); err != nil {
+			t.Fatalf("runCommand: %v", err)
+		}
+
+		select {
+		case <-agent.compactStarted:
+		case <-time.After(time.Second):
+			t.Fatalf("compaction did not start")
+		}
+
+		app.cancelFunc()
+
+		done := receiveCompactionDone(t, app.events, time.Second)
+		if !errors.Is(done.Err, context.Canceled) {
+			t.Fatalf("compaction done err = %v, want context.Canceled", done.Err)
+		}
+
+		boxesBefore := len(app.model.boxes)
+		app.model.finishCompaction(done.Err)
+		if len(app.model.boxes) != boxesBefore {
+			t.Fatalf("cancellation should not append an error box: %#v", app.model.boxes)
+		}
+	})
+
+	t.Run("queued steering prompt is submitted after compaction", func(t *testing.T) {
+		app := newTestApp(t, testAppConfig{})
+		app.model.steeringPrompt = "do next"
+
+		update := app.model.finishCompaction(nil)
+		submit, ok := update.Action.(submitPromptAction)
+		if !ok || submit.Prompt != "do next" {
+			t.Fatalf("action = %#v, want submitPromptAction{do next}", update.Action)
+		}
+		if app.model.steeringPrompt != "" {
+			t.Fatalf("steering prompt not cleared: %q", app.model.steeringPrompt)
+		}
+	})
+}
+
+func receiveCompactionDone(t *testing.T, events <-chan event, timeout time.Duration) agentCompactionDone {
+	t.Helper()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for {
+		select {
+		case ev := <-events:
+			if done, ok := ev.(agentCompactionDone); ok {
+				return done
+			}
+		case <-timer.C:
+			t.Fatalf("agentCompactionDone not received within %s", timeout)
+		}
+	}
 }
 
 func hasShellStreamArtifact(artifacts []tool.Artifact, stream tool.ShellStream, content string) bool {
@@ -734,6 +827,9 @@ type fakeAgent struct {
 	compactConversationErr  error
 	switchModelErr          error
 	switchReasoningLevelErr error
+
+	compactBlockUntilCancel bool
+	compactStarted          chan struct{}
 }
 
 func (a *fakeAgent) CWD() string {
@@ -760,7 +856,14 @@ func (a *fakeAgent) NewConversation() error {
 	return a.newConversationErr
 }
 
-func (a *fakeAgent) CompactConversation() error {
+func (a *fakeAgent) CompactConversation(ctx context.Context) error {
+	if a.compactBlockUntilCancel {
+		if a.compactStarted != nil {
+			close(a.compactStarted)
+		}
+		<-ctx.Done()
+		return ctx.Err()
+	}
 	return a.compactConversationErr
 }
 

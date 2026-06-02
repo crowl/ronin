@@ -21,14 +21,17 @@ type agentErrorReceived struct{ Err error }
 
 type agentPromptDone struct{}
 
+type agentCompactionDone struct{ Err error }
+
 // event is a sealed interface to mark all application events
 type event interface{ event() }
 
-func (terminalKeyRead) event()    {}
-func (terminalReadFailed) event() {}
-func (terminalResized) event()    {}
-func (workingTick) event()        {}
-func (renderRequested) event()    {}
-func (agentEventReceived) event() {}
-func (agentErrorReceived) event() {}
-func (agentPromptDone) event()    {}
+func (terminalKeyRead) event()     {}
+func (terminalReadFailed) event()  {}
+func (terminalResized) event()     {}
+func (workingTick) event()         {}
+func (renderRequested) event()     {}
+func (agentEventReceived) event()  {}
+func (agentErrorReceived) event()  {}
+func (agentPromptDone) event()     {}
+func (agentCompactionDone) event() {}

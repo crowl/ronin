@@ -127,27 +127,42 @@ func needsBlankLineBeforeBox(previous box, current box) bool {
 
 // Working Indicator
 
-var workingIndicatorFrames = []string{
-	"Working   ",
-	"Working.  ",
-	"Working.. ",
-	"Working...",
-	"Working.. ",
-	"Working.  ",
-}
+var workingIndicatorDots = []string{"   ", ".  ", ".. ", "...", ".. ", ".  "}
 
 type workingIndicator struct {
 	Frame int
+	Label string
 }
 
 func (p workingIndicator) Lines(_ int, theme Theme) []string {
-	indicator := workingIndicatorFrames[p.Frame%len(workingIndicatorFrames)]
+	label := p.Label
+	if label == "" {
+		label = "Working"
+	}
+	indicator := label + workingIndicatorDots[p.Frame%len(workingIndicatorDots)]
 
 	return []string{
 		"",
 		theme.UI.WorkingIndicator.Apply(" " + indicator),
 		"",
 	}
+}
+
+// pendingSteeringPresenter renders a queued steering prompt as a muted
+// System box above the working indicator. It is transient and not stored
+// in the box history.
+type pendingSteeringPresenter struct {
+	Text string
+}
+
+func (p pendingSteeringPresenter) Lines(width int, theme Theme) []string {
+	boxStyle := theme.Box.System
+	lines := []string{boxStyle.ApplyMuted(text.Fill("", width))}
+	for _, line := range text.Wrap(" ", p.Text, width) {
+		lines = append(lines, boxStyle.ApplyMuted(text.Fill(line, width)))
+	}
+	lines = append(lines, boxStyle.ApplyMuted(text.Fill("", width)))
+	return lines
 }
 
 // editorPresenter

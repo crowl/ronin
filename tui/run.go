@@ -18,7 +18,7 @@ type Agent interface {
 	ReasoningLevel() llm.ReasoningLevel
 	ContextUsage() llm.Usage
 	NewConversation() error
-	CompactConversation() error
+	CompactConversation(context.Context) error
 	SwitchModel(llm.Model) error
 	SwitchReasoningLevel(llm.ReasoningLevel) error
 	Prompt(context.Context, string) (<-chan agent.Event, <-chan error)

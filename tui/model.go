@@ -31,6 +31,7 @@ type appModel struct {
 	statusBarCache statusBarCache
 
 	working       bool
+	workingLabel  string
 	toolsExpanded bool
 
 	steeringPrompt string
@@ -149,6 +150,14 @@ func (m *appModel) handleKey(key terminal.Key) (modelUpdate, error) {
 func (m *appModel) startPrompt(prompt string) {
 	m.boxes = append(m.boxes, userMessageBox{Text: prompt})
 	m.working = true
+	m.workingLabel = "Working"
+	m.indicatorFrame = 0
+}
+
+func (m *appModel) startCompaction(item menuItem) {
+	m.boxes = append(m.boxes, systemMessageBox{Text: item.Value})
+	m.working = true
+	m.workingLabel = "Compacting"
 	m.indicatorFrame = 0
 }
 
@@ -158,6 +167,24 @@ func (m *appModel) queueSteeringPrompt(prompt string) {
 		return
 	}
 	m.steeringPrompt += "\n\n" + prompt
+}
+
+func (m *appModel) finishCompaction(err error) modelUpdate {
+	m.working = false
+	m.statusBarCache.Reset()
+
+	if err != nil && !errors.Is(err, context.Canceled) {
+		m.boxes = append(m.boxes, errorMessageBox{Text: err.Error()})
+	}
+
+	nextPrompt := m.steeringPrompt
+	m.steeringPrompt = ""
+
+	update := modelUpdate{Render: true}
+	if nextPrompt != "" {
+		update.Action = submitPromptAction{Prompt: nextPrompt}
+	}
+	return update
 }
 
 func (m *appModel) finishPrompt() (modelUpdate, string) {
@@ -304,9 +331,16 @@ func (m *appModel) lines(width int, agent Agent, now time.Time) ([]string, error
 	lines := []string{""}
 	lines = append(lines, m.boxLineCache.Lines(m.boxes, width, m.theme, m.toolsExpanded, now)...)
 
+	if m.steeringPrompt != "" {
+		lines = append(lines, pendingSteeringPresenter{
+			Text: m.steeringPrompt,
+		}.Lines(width, m.theme)...)
+	}
+
 	if m.working {
 		lines = append(lines, workingIndicator{
 			Frame: m.indicatorFrame,
+			Label: m.workingLabel,
 		}.Lines(width, m.theme)...)
 	}
 
