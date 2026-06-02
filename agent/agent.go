@@ -151,6 +151,8 @@ func (a *Agent) CompactConversation() error {
 }
 
 func (a *Agent) NewConversation() error {
+	a.messages = nil
+	a.contextUsage = llm.Usage{}
 	return nil
 }
 

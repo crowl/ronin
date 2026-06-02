@@ -189,6 +189,23 @@ func TestPromptLifecycle(t *testing.T) {
 	})
 }
 
+func TestNewConversation(t *testing.T) {
+	agt, err := agent.New(agent.Config{
+		LLM:      &fakeLLM{},
+		Messages: []llm.Message{llm.UserMessage{Text: "old"}},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	if err := agt.NewConversation(); err != nil {
+		t.Fatalf("NewConversation() error = %v", err)
+	}
+	if got := agt.Messages(); len(got) != 0 {
+		t.Fatalf("messages = %#v, want empty", got)
+	}
+}
+
 func TestCompactConversation(t *testing.T) {
 	t.Run("updates_messages_on_success", func(t *testing.T) {
 		compacted := []llm.Message{llm.UserMessage{Text: "compacted"}}
