@@ -92,7 +92,7 @@ func (r Result) Artifacts() []tool.Artifact {
 		return []tool.Artifact{
 			tool.FileMetadataArtifact{
 				Path:   r.Path,
-				SHA256: r.SHA256,
+				FileID: r.FileID,
 			},
 		}
 	}

@@ -41,7 +41,7 @@ func toolArtifactLines(artifact tool.Artifact, boxStyle BoxStyle, width int) []s
 		}
 		return renderToolArtifactLines(numberedToolArtifactLines(typedArtifact.Content, startLine), boxStyle, width, false)
 	case tool.FileMetadataArtifact:
-		return wrappedToolArtifactText(fmt.Sprintf("%s %s", typedArtifact.Path, typedArtifact.SHA256), boxStyle, width)
+		return wrappedToolArtifactText(fmt.Sprintf("Already in context (%s)", typedArtifact.FileID), boxStyle, width)
 	case tool.UnifiedDiffArtifact:
 		return renderToolArtifactLines(diffToolArtifactLines(typedArtifact.Diff), boxStyle, width, true)
 	default:

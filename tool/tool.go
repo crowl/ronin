@@ -78,7 +78,7 @@ type FileRangeArtifact struct {
 
 type FileMetadataArtifact struct {
 	Path   string
-	SHA256 string
+	FileID string
 }
 
 type UnifiedDiffArtifact struct {
