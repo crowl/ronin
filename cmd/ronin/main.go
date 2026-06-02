@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/crowl/ronin/agent"
@@ -26,9 +27,13 @@ import (
 func main() {
 	var prompt string
 	var workingDir string
+	var modelFlag string
+	var reasoningLevelFlag string
 
 	flag.StringVar(&prompt, "prompt", "", "Prompt to run without launching the TUI.")
 	flag.StringVar(&workingDir, "working_dir", ".", "Working directory. Defaults to the current directory.")
+	flag.StringVar(&modelFlag, "model", "", "Model to use as <provider>:<name>. Overrides the configured model.")
+	flag.StringVar(&reasoningLevelFlag, "reasoning", "", "Reasoning level to use. Overrides the configured reasoning level.")
 
 	flag.Parse()
 
@@ -55,6 +60,18 @@ func main() {
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
 		os.Exit(1)
+	}
+
+	if modelFlag != "" {
+		override, err := parseModelFlag(modelFlag)
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(1)
+		}
+		settings.Model = override
+	}
+	if reasoningLevelFlag != "" {
+		settings.ReasoningLevel = reasoningLevelFlag
 	}
 
 	model, level, err := resolveModel(settings)
@@ -153,6 +170,17 @@ func main() {
 	}
 
 	os.Exit(0)
+}
+
+func parseModelFlag(value string) (config.Model, error) {
+	provider, name, ok := strings.Cut(value, ":")
+	if !ok {
+		return config.Model{}, fmt.Errorf("invalid -model %q: want format <provider>:<name>", value)
+	}
+	if provider == "" || name == "" {
+		return config.Model{}, fmt.Errorf("invalid -model %q: provider and name must not be empty", value)
+	}
+	return config.Model{Provider: provider, Name: name}, nil
 }
 
 func resolveModel(settings config.Settings) (llm.Model, llm.ReasoningLevel, error) {

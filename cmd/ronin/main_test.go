@@ -8,8 +8,54 @@ import (
 	"testing"
 
 	"github.com/crowl/ronin/agent"
+	"github.com/crowl/ronin/config"
 	"github.com/crowl/ronin/jsonschema"
 )
+
+func TestParseModelFlag(t *testing.T) {
+	t.Run("parses provider and name", func(t *testing.T) {
+		got, err := parseModelFlag("openai:gpt-5.5")
+		if err != nil {
+			t.Fatalf("parseModelFlag() error = %v", err)
+		}
+		want := config.Model{Provider: "openai", Name: "gpt-5.5"}
+		if got != want {
+			t.Fatalf("parseModelFlag() = %#v, want %#v", got, want)
+		}
+	})
+
+	t.Run("splits on the first colon only", func(t *testing.T) {
+		got, err := parseModelFlag("provider:name:with:colons")
+		if err != nil {
+			t.Fatalf("parseModelFlag() error = %v", err)
+		}
+		want := config.Model{Provider: "provider", Name: "name:with:colons"}
+		if got != want {
+			t.Fatalf("parseModelFlag() = %#v, want %#v", got, want)
+		}
+	})
+
+	t.Run("rejects invalid input", func(t *testing.T) {
+		cases := []struct {
+			name    string
+			value   string
+			wantErr string
+		}{
+			{name: "no colon", value: "gpt-5.5", wantErr: "want format <provider>:<name>"},
+			{name: "empty provider", value: ":gpt-5.5", wantErr: "must not be empty"},
+			{name: "empty name", value: "openai:", wantErr: "must not be empty"},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				_, err := parseModelFlag(tc.value)
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("parseModelFlag(%q) error = %v, want error containing %q", tc.value, err, tc.wantErr)
+				}
+			})
+		}
+	})
+}
 
 func TestRunPrompt(t *testing.T) {
 	t.Run("writes assistant text with trailing newline", func(t *testing.T) {
