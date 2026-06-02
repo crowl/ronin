@@ -202,15 +202,21 @@ func TestTUIRendering(t *testing.T) {
 			CWD:            ".",
 			Model:          llm.Model{Provider: "test", Name: "model", ContextLimit: 1000},
 			ReasoningLevel: llm.ReasoningLevelOff,
-			ContextUsage:   llm.Usage{InputTokens: 100, OutputTokens: 50},
+			ContextUsage:   llm.Usage{InputTokens: 100, OutputTokens: 50, CachedTokens: 25},
 		}.Lines(120, DefaultTheme())
 
 		if len(lines) != 2 {
 			t.Fatalf("line count\ngot:  %d\nwant: 2", len(lines))
 		}
 		usageLine := lines[1]
-		if strings.Contains(usageLine, "↑") || strings.Contains(usageLine, "↓") || strings.Contains(usageLine, "R") {
-			t.Fatalf("status usage line contains cumulative token counts: %q", usageLine)
+		if !strings.Contains(usageLine, "↑100") {
+			t.Fatalf("status usage line missing context input tokens: %q", usageLine)
+		}
+		if !strings.Contains(usageLine, "↓50") {
+			t.Fatalf("status usage line missing context output tokens: %q", usageLine)
+		}
+		if !strings.Contains(usageLine, "R25") {
+			t.Fatalf("status usage line missing context cached tokens: %q", usageLine)
 		}
 		if !strings.Contains(usageLine, "15.0%/1000") {
 			t.Fatalf("status usage line used wrong context usage: %q", usageLine)
