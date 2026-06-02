@@ -97,7 +97,6 @@ func New(cfg Config) (*Agent, error) {
 type Agent struct {
 	cwd    string
 	llm    llm.Assistant
-	usage  llm.Usage
 	now    func() time.Time
 	tools  []Tool
 	skills []Skill
@@ -256,10 +255,6 @@ func (a *Agent) run(ctx context.Context, prompt string, events chan<- Event) err
 			case llm.ToolCallRequested:
 				toolCalls = append(toolCalls, typedEvent.ToolCall)
 			case llm.PredictionFinished:
-				a.usage.InputTokens += typedEvent.Usage.InputTokens
-				a.usage.OutputTokens += typedEvent.Usage.OutputTokens
-				a.usage.CachedTokens += typedEvent.Usage.CachedTokens
-				a.usage.TotalTokens += typedEvent.Usage.TotalTokens
 				a.contextUsage = typedEvent.Usage
 				usage = typedEvent.Usage
 			}
@@ -472,7 +467,6 @@ type State struct {
 
 	Model          llm.Model
 	ReasoningLevel llm.ReasoningLevel
-	Usage          llm.Usage
 	ContextUsage   llm.Usage
 }
 
@@ -481,7 +475,6 @@ func (a *Agent) State() State {
 		CWD:            a.cwd,
 		Model:          a.llm.Model(),
 		ReasoningLevel: a.llm.ReasoningLevel(),
-		Usage:          a.usage,
 		ContextUsage:   a.contextUsage,
 	}
 }

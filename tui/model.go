@@ -331,7 +331,6 @@ func (m *appModel) lines(width int, state agent.State, now time.Time) ([]string,
 		UseCWDStatus:   true,
 		Model:          state.Model,
 		ReasoningLevel: state.ReasoningLevel,
-		Usage:          state.Usage,
 		ContextUsage:   state.ContextUsage,
 	}.Lines(width, m.theme)...)
 
