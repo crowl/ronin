@@ -481,6 +481,30 @@ func TestTUIAgentEvents(t *testing.T) {
 			t.Fatalf("context cancellation should not append error box: %#v", app.model.boxes)
 		}
 	})
+
+	t.Run("prompt processing error combined with agent error produces exactly one error box", func(t *testing.T) {
+		app := newTestApp(t, testAppConfig{})
+
+		// Simulate progressive event PromptProcessingError
+		err := errors.New("something went wrong")
+		update, errEvent := app.model.handleAgentEvent(agent.PromptProcessingError{Error: err}, time.Now())
+		if errEvent != nil {
+			t.Fatalf("failed to handle PromptProcessingError event: %v", errEvent)
+		}
+		app.applyUpdate(t.Context(), update)
+
+		// Simulate final goroutine error agentErrorReceived
+		app.applyUpdate(t.Context(), app.model.handleAgentError(err))
+
+		// Check boxes
+		if len(app.model.boxes) != 1 {
+			t.Fatalf("box count\ngot:  %d\nwant: 1\nboxes: %#v", len(app.model.boxes), app.model.boxes)
+		}
+		errorBox, ok := app.model.boxes[0].(errorMessageBox)
+		if !ok || errorBox.Text != "something went wrong" {
+			t.Fatalf("error box\ngot:  %#v\nwant: errorMessageBox with 'something went wrong'", app.model.boxes[0])
+		}
+	})
 }
 
 func TestTUIKeyHandling(t *testing.T) {

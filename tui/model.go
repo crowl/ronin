@@ -260,9 +260,6 @@ func (m *appModel) handleAgentEvent(event agent.Event, now time.Time) (modelUpda
 		// ignored
 	case agent.PromptProcessingError:
 		m.flushPendingTextDelta()
-		m.boxes = append(m.boxes, errorMessageBox{
-			Text: typedEvent.Error.Error(),
-		})
 	}
 
 	return modelUpdate{Render: true}, nil
@@ -272,6 +269,8 @@ func (m *appModel) handleAgentError(err error) modelUpdate {
 	if errors.Is(err, context.Canceled) {
 		return modelUpdate{}
 	}
+
+	m.flushPendingTextDelta()
 
 	m.boxes = append(m.boxes, errorMessageBox{
 		Text: err.Error(),
