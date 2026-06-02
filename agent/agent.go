@@ -103,6 +103,22 @@ type Agent struct {
 	compactor Compactor
 }
 
+func (a *Agent) CWD() string {
+	return a.cwd
+}
+
+func (a *Agent) Model() llm.Model {
+	return a.llm.Model()
+}
+
+func (a *Agent) ReasoningLevel() llm.ReasoningLevel {
+	return a.llm.ReasoningLevel()
+}
+
+func (a *Agent) ContextUsage() llm.Usage {
+	return a.contextUsage
+}
+
 func (a *Agent) Messages() []llm.Message {
 	return append([]llm.Message(nil), a.messages...)
 }
@@ -436,22 +452,5 @@ func (a *Agent) finishToolCall(ctx context.Context, events chan<- Event, execute
 		CallID: toolCall.ID,
 	}:
 		return nil
-	}
-}
-
-type State struct {
-	CWD string
-
-	Model          llm.Model
-	ReasoningLevel llm.ReasoningLevel
-	ContextUsage   llm.Usage
-}
-
-func (a *Agent) State() State {
-	return State{
-		CWD:            a.cwd,
-		Model:          a.llm.Model(),
-		ReasoningLevel: a.llm.ReasoningLevel(),
-		ContextUsage:   a.contextUsage,
 	}
 }

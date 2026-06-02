@@ -736,16 +736,24 @@ type fakeAgent struct {
 	switchReasoningLevelErr error
 }
 
-func (a *fakeAgent) State() agent.State {
-	return agent.State{
-		CWD: ".",
-		Model: llm.Model{
-			Provider:     "test",
-			Name:         "model",
-			ContextLimit: 100,
-		},
-		ReasoningLevel: llm.ReasoningLevelOff,
+func (a *fakeAgent) CWD() string {
+	return "."
+}
+
+func (a *fakeAgent) Model() llm.Model {
+	return llm.Model{
+		Provider:     "test",
+		Name:         "model",
+		ContextLimit: 100,
 	}
+}
+
+func (a *fakeAgent) ReasoningLevel() llm.ReasoningLevel {
+	return llm.ReasoningLevelOff
+}
+
+func (a *fakeAgent) ContextUsage() llm.Usage {
+	return llm.Usage{}
 }
 
 func (a *fakeAgent) NewConversation() error {

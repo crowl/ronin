@@ -345,7 +345,7 @@ func (app *app) render() error {
 		app.sizeCached = true
 	}
 
-	lines, err := app.model.lines(size.Width, app.agent.State(), time.Now())
+	lines, err := app.model.lines(size.Width, app.agent, time.Now())
 	if err != nil {
 		return fmt.Errorf("failed to get lines: %w", err)
 	}

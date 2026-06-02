@@ -13,7 +13,10 @@ import (
 )
 
 type Agent interface {
-	State() agent.State
+	CWD() string
+	Model() llm.Model
+	ReasoningLevel() llm.ReasoningLevel
+	ContextUsage() llm.Usage
 	NewConversation() error
 	CompactConversation() error
 	SwitchModel(llm.Model) error

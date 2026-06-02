@@ -298,7 +298,7 @@ func (m *appModel) recordCommand(item menuItem, err error) {
 	}
 }
 
-func (m *appModel) lines(width int, state agent.State, now time.Time) ([]string, error) {
+func (m *appModel) lines(width int, agent Agent, now time.Time) ([]string, error) {
 	m.flushPendingTextDelta()
 
 	lines := []string{""}
@@ -322,15 +322,15 @@ func (m *appModel) lines(width int, state agent.State, now time.Time) ([]string,
 		}.Lines(width, m.theme)...)
 	}
 
-	cwdStatus := m.statusBarCache.CWDStatus(state.CWD)
+	cwdStatus := m.statusBarCache.CWDStatus(agent.CWD())
 
 	lines = append(lines, statusBar{
-		CWD:            state.CWD,
+		CWD:            agent.CWD(),
 		CWDStatus:      cwdStatus,
 		UseCWDStatus:   true,
-		Model:          state.Model,
-		ReasoningLevel: state.ReasoningLevel,
-		ContextUsage:   state.ContextUsage,
+		Model:          agent.Model(),
+		ReasoningLevel: agent.ReasoningLevel(),
+		ContextUsage:   agent.ContextUsage(),
 	}.Lines(width, m.theme)...)
 
 	return lines, nil
