@@ -2,7 +2,7 @@
 
 *ronin* is an experimental coding harness written in Go. It provides a TUI for working with an agent that can read/edit/write files and run shell commands. It supports skills and context files (AGENTS.md).
 
-## Why ronin exists
+## Why *ronin* exists
 
 It started as a playground for experimenting with custom tools for agents, using Go.
 
@@ -39,9 +39,24 @@ You can run *ronin* against a specific working directory with:
 go run ./cmd/ronin -cwd /path/to/project
 ```
 
+## Configuration
+
+*ronin* keeps its configuration in `$XDG_CONFIG_HOME/ronin` when `XDG_CONFIG_HOME` is set, otherwise `$HOME/.config/ronin`. On first run it writes a default `config.json` there:
+
+```json
+{
+  "model": { "provider": "openai", "name": "gpt-5.5" },
+  "reasoning_level": "medium",
+  "max_turns": 512
+}
+```
+
+The file is read strictly: unknown fields or invalid values (unknown model or reasoning level, non-positive `max_turns`) cause startup to fail with a clear error. Skills are loaded from `<config dir>/skills`, and a global context file at `<config dir>/AGENTS.md` is included when present.
+
 ## How it is organized
 
 - `agent`: conversation state, tool execution, compaction, skills, and system prompt construction.
+- `config`: config directory resolution and the `config.json` settings file.
 - `llm`: model definitions, provider registration, streaming events, and provider implementations.
 - `tool`: shared tool contracts, typed argument decoding, results, and artifacts.
 - `tui`: the terminal application, command menu, rendering, themes, and presentation logic.

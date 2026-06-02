@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/crowl/ronin/agent"
+	"github.com/crowl/ronin/config"
 	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/llm/anthropic"
 	"github.com/crowl/ronin/llm/google"
@@ -22,51 +23,58 @@ import (
 )
 
 func main() {
-	var cwd string
-	var maxTurns int
+	var workingDir string
 
-	flag.StringVar(&cwd, "cwd", ".", "The cwd is used to run the application. The default is the current directory.")
-	flag.IntVar(&maxTurns, "max_turns", 512, "")
+	flag.StringVar(&workingDir, "working_dir", ".", "Working directory. Defaults to the current directory.")
 
 	flag.Parse()
 
-	if err := agent.EnsureConfigDir(); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "failed to create config directory: %v\n", err)
-		os.Exit(1)
+	if apiKey := os.Getenv("OPENAI_API_KEY"); apiKey != "" {
+		if err := openai.Setup(apiKey); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "openai LLM provider setup failed: %v\n", err)
+			os.Exit(1)
+		}
 	}
-
-	configDir, err := agent.ConfigDir()
-	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "failed to get config directory: %v\n", err)
-		os.Exit(1)
-	}
-
-	if err := openai.Setup(os.Getenv("OPENAI_API_KEY")); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "openai LLM provider setup failed: %v\n", err)
-		os.Exit(1)
-	}
-	if googleAPIKey := os.Getenv("GEMINI_API_KEY"); googleAPIKey != "" {
-		if err := google.Setup(googleAPIKey); err != nil {
+	if apiKey := os.Getenv("GEMINI_API_KEY"); apiKey != "" {
+		if err := google.Setup(apiKey); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "google LLM provider setup failed: %v\n", err)
 			os.Exit(1)
 		}
 	}
-	if anthropicAPIKey := os.Getenv("ANTHROPIC_API_KEY"); anthropicAPIKey != "" {
-		if err := anthropic.Setup(anthropicAPIKey); err != nil {
+	if apiKey := os.Getenv("ANTHROPIC_API_KEY"); apiKey != "" {
+		if err := anthropic.Setup(apiKey); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "anthropic LLM provider setup failed: %v\n", err)
 			os.Exit(1)
 		}
 	}
 
-	defaultLLM, err := llm.Load(openai.Gpt55, llm.ReasoningLevelMedium)
+	settings, err := config.Load()
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "failed to load default LLM: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
 		os.Exit(1)
 	}
 
-	skillsDir, err := agent.SkillsDir()
+	model, level, err := resolveModel(settings)
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "failed to create directory: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(1)
+	}
+
+	defaultLLM, err := llm.Load(model, level)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "failed to load configured LLM: %v\n", err)
+		os.Exit(1)
+	}
+
+	configDir, err := config.Dir()
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "failed to resolve config directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	skillsDir, err := config.SkillsDir()
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "failed to resolve skills directory: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -76,7 +84,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	contextFiles, err := agent.LoadContextFiles(configDir, cwd)
+	contextFiles, err := agent.LoadContextFiles(configDir, workingDir)
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "failed to load context files: %v\n", err)
 		os.Exit(1)
@@ -86,17 +94,21 @@ func main() {
 	mutationQueue := fsutil.NewMutationQueue()
 
 	tools := []agent.Tool{
-		readfile.New(cwd, readCache),
-		editfile.New(cwd, mutationQueue),
-		writefile.New(cwd, mutationQueue),
-		shell.New(cwd),
+		readfile.New(workingDir, readCache),
+		editfile.New(workingDir, mutationQueue),
+		writefile.New(workingDir, mutationQueue),
+		shell.New(workingDir),
 	}
 
 	systemPrompt, err := agent.BuildSystemPrompt(agent.SystemPromptInput{
-		CWD:          cwd,
+		CWD:          workingDir,
 		Skills:       skills,
 		ContextFiles: contextFiles,
 	})
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "failed to build system prompt: %v\n", err)
+		os.Exit(1)
+	}
 
 	compactor, err := agent.NewDefaultCompactor(agent.DefaultCompactorConfig{
 		LLM: defaultLLM,
@@ -108,12 +120,12 @@ func main() {
 	}
 
 	agt, err := agent.New(agent.Config{
-		CWD:          cwd,
+		CWD:          workingDir,
 		LLM:          defaultLLM,
 		Compactor:    compactor,
 		Tools:        tools,
 		SystemPrompt: systemPrompt,
-		MaxTurns:     maxTurns,
+		MaxTurns:     settings.MaxTurns,
 		Now:          func() time.Time { return time.Now() },
 	})
 	if err != nil {
@@ -127,6 +139,21 @@ func main() {
 	}
 
 	os.Exit(0)
+}
+
+func resolveModel(settings config.Settings) (llm.Model, llm.ReasoningLevel, error) {
+	level := llm.ReasoningLevel(settings.ReasoningLevel)
+	if !llm.IsValidReasoningLevel(level) {
+		return llm.Model{}, "", fmt.Errorf("unknown reasoning level %q in config", settings.ReasoningLevel)
+	}
+
+	for _, model := range llm.Models() {
+		if model.Provider == settings.Model.Provider && model.Name == settings.Model.Name {
+			return model, level, nil
+		}
+	}
+
+	return llm.Model{}, "", fmt.Errorf("unknown model %q in config (is the provider's API key set?)", settings.Model.Provider+":"+settings.Model.Name)
 }
 
 func runTUI(agt *agent.Agent) error {
