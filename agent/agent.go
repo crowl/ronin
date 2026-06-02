@@ -317,15 +317,25 @@ func (a *Agent) executeToolCall(ctx context.Context, events chan<- Event, toolCa
 		}
 	}
 
-	callTitle, err := toolCallTitle(t, toolCall.Arguments)
-	if err != nil {
-		return a.finishToolCall(ctx, events, t, toolCall, nil, err)
+	callTitle := t.Name()
+
+	if titleProvider, ok := t.(ToolCallTitleProvider); ok {
+		var err error
+		callTitle, err = titleProvider.CallTitle(toolCall.Arguments)
+		if err != nil {
+			return a.finishToolCall(ctx, events, t, toolCall, nil, err)
+		}
 	}
 
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case events <- ToolExecutionStarted{Tool: t, CallID: toolCall.ID, CallArguments: toolCall.Arguments, CallTitle: callTitle}:
+	case events <- ToolExecutionStarted{
+		Tool:          t,
+		CallID:        toolCall.ID,
+		CallArguments: toolCall.Arguments,
+		CallTitle:     callTitle,
+	}:
 	}
 
 	if incrementalTool, ok := t.(IncrementalTool); ok {
@@ -335,14 +345,6 @@ func (a *Agent) executeToolCall(ctx context.Context, events chan<- Event, toolCa
 
 	toolResult, execErr := t.Call(ctx, toolCall.Arguments)
 	return a.finishToolCall(ctx, events, t, toolCall, toolResult, execErr)
-}
-
-func toolCallTitle(t Tool, rawArgs json.RawMessage) (string, error) {
-	provider, ok := t.(ToolCallTitleProvider)
-	if !ok {
-		return t.Name(), nil
-	}
-	return provider.CallTitle(rawArgs)
 }
 
 func (a *Agent) callIncrementalTool(ctx context.Context, events chan<- Event, incrementalTool IncrementalTool, toolCall llm.ToolCallBlock) (any, error) {
