@@ -10,6 +10,7 @@ import (
 
 	"github.com/crowl/ronin/agent"
 	"github.com/crowl/ronin/llm"
+	"github.com/crowl/ronin/llm/anthropic"
 	"github.com/crowl/ronin/llm/google"
 	"github.com/crowl/ronin/llm/openai"
 	"github.com/crowl/ronin/tool/editfile"
@@ -44,9 +45,17 @@ func main() {
 		_, _ = fmt.Fprintf(os.Stderr, "openai LLM provider setup failed: %v\n", err)
 		os.Exit(1)
 	}
-	if err := google.Setup(os.Getenv("GEMINI_API_KEY")); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "google LLM provider setup failed: %v\n", err)
-		os.Exit(1)
+	if googleAPIKey := os.Getenv("GEMINI_API_KEY"); googleAPIKey != "" {
+		if err := google.Setup(googleAPIKey); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "google LLM provider setup failed: %v\n", err)
+			os.Exit(1)
+		}
+	}
+	if anthropicAPIKey := os.Getenv("ANTHROPIC_API_KEY"); anthropicAPIKey != "" {
+		if err := anthropic.Setup(anthropicAPIKey); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "anthropic LLM provider setup failed: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	defaultLLM, err := llm.Load(openai.Gpt55, llm.ReasoningLevelMedium)
