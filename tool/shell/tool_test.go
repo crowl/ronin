@@ -110,14 +110,14 @@ func TestToolCall(t *testing.T) {
 
 		var artifacts []tool.Artifact
 		var artifactsMu sync.Mutex
-		result, err := shellTool.CallWithOutput(t.Context(), raw, func(artifact tool.Artifact) error {
+		result, err := shellTool.CallIncremental(t.Context(), raw, func(artifact tool.Artifact) error {
 			artifactsMu.Lock()
 			defer artifactsMu.Unlock()
 			artifacts = append(artifacts, artifact)
 			return nil
 		})
 		if err != nil {
-			t.Fatalf("CallWithOutput() error = %v", err)
+			t.Fatalf("CallIncremental() error = %v", err)
 		}
 
 		res, ok := result.(shell.Result)

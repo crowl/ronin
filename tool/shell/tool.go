@@ -94,9 +94,9 @@ func (t *Tool) Call(ctx context.Context, rawArgs json.RawMessage) (any, error) {
 	return tool.CallTyped(ctx, rawArgs, t.call)
 }
 
-func (t *Tool) CallWithOutput(ctx context.Context, rawArgs json.RawMessage, emit func(tool.Artifact) error) (any, error) {
+func (t *Tool) CallIncremental(ctx context.Context, rawArgs json.RawMessage, emit func(tool.Artifact) error) (any, error) {
 	return tool.CallTyped(ctx, rawArgs, func(ctx context.Context, args Args) (Result, error) {
-		return t.callWithOutput(ctx, args, emit)
+		return t.callIncremental(ctx, args, emit)
 	})
 }
 
@@ -117,10 +117,10 @@ const (
 )
 
 func (t *Tool) call(ctx context.Context, args Args) (Result, error) {
-	return t.callWithOutput(ctx, args, nil)
+	return t.callIncremental(ctx, args, nil)
 }
 
-func (t *Tool) callWithOutput(ctx context.Context, args Args, emit func(tool.Artifact) error) (Result, error) {
+func (t *Tool) callIncremental(ctx context.Context, args Args, emit func(tool.Artifact) error) (Result, error) {
 	if t.policy != nil {
 		if err := t.policy.Allow(args); err != nil {
 			return Result{}, err

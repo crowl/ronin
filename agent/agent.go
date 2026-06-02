@@ -21,9 +21,9 @@ type Tool interface {
 	Call(ctx context.Context, rawArgs json.RawMessage) (any, error)
 }
 
-type StreamingTool interface {
+type IncrementalTool interface {
 	Tool
-	CallWithOutput(ctx context.Context, rawArgs json.RawMessage, emit func(tool.Artifact) error) (any, error)
+	CallIncremental(ctx context.Context, rawArgs json.RawMessage, emit func(tool.Artifact) error) (any, error)
 }
 
 type ToolCallTitleProvider interface {
@@ -356,8 +356,8 @@ func (a *Agent) executeToolCall(ctx context.Context, events chan<- Event, toolCa
 	case events <- ToolExecutionStarted{Tool: t, CallID: toolCall.ID, CallArguments: toolCall.Arguments, CallTitle: callTitle}:
 	}
 
-	if streamingTool, ok := t.(StreamingTool); ok {
-		toolResult, err := a.callStreamingTool(ctx, events, streamingTool, toolCall)
+	if incrementalTool, ok := t.(IncrementalTool); ok {
+		toolResult, err := a.callIncrementalTool(ctx, events, incrementalTool, toolCall)
 		return a.finishToolCall(ctx, events, t, toolCall, toolResult, err)
 	}
 
@@ -373,13 +373,13 @@ func toolCallTitle(t Tool, rawArgs json.RawMessage) (string, error) {
 	return provider.CallTitle(rawArgs)
 }
 
-func (a *Agent) callStreamingTool(ctx context.Context, events chan<- Event, streamingTool StreamingTool, toolCall llm.ToolCallBlock) (any, error) {
+func (a *Agent) callIncrementalTool(ctx context.Context, events chan<- Event, incrementalTool IncrementalTool, toolCall llm.ToolCallBlock) (any, error) {
 	emit := func(artifact tool.Artifact) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case events <- ToolExecutionOutputDeltaReceived{
-			Tool:     streamingTool,
+			Tool:     incrementalTool,
 			CallID:   toolCall.ID,
 			Artifact: artifact,
 		}:
@@ -387,7 +387,7 @@ func (a *Agent) callStreamingTool(ctx context.Context, events chan<- Event, stre
 		}
 	}
 
-	return streamingTool.CallWithOutput(ctx, toolCall.Arguments, emit)
+	return incrementalTool.CallIncremental(ctx, toolCall.Arguments, emit)
 }
 
 func (a *Agent) finishToolCall(ctx context.Context, events chan<- Event, executedTool Tool, toolCall llm.ToolCallBlock, toolResult any, execErr error) error {

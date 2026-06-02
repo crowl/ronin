@@ -134,8 +134,8 @@ func TestPromptLifecycle(t *testing.T) {
 			t.Fatalf("assistant timestamp = %v, want %v", got, want)
 		}
 	})
-	t.Run("streaming tool emits chunks before final result", func(t *testing.T) {
-		streamTool := fakeStreamingTool{fakeTool: fakeTool{name: "stream", result: fakeResult{artifacts: []tool.Artifact{tool.ShellStreamArtifact{Stream: tool.ShellStreamStdout, Content: "final"}}}}, artifacts: []tool.Artifact{tool.ShellStreamArtifact{Stream: tool.ShellStreamStdout, Content: "live"}}}
+	t.Run("incremental tool emits chunks before final result", func(t *testing.T) {
+		incrementalTool := fakeIncrementalTool{fakeTool: fakeTool{name: "stream", result: fakeResult{artifacts: []tool.Artifact{tool.ShellStreamArtifact{Stream: tool.ShellStreamStdout, Content: "final"}}}}, artifacts: []tool.Artifact{tool.ShellStreamArtifact{Stream: tool.ShellStreamStdout, Content: "live"}}}
 		agt, err := agent.New(agent.Config{
 			LLM: &fakeLLM{eventBatches: [][]llm.Event{
 				{
@@ -147,7 +147,7 @@ func TestPromptLifecycle(t *testing.T) {
 					llm.PredictionFinished{},
 				},
 			}},
-			Tools:    []agent.Tool{streamTool},
+			Tools:    []agent.Tool{incrementalTool},
 			MaxTurns: 2,
 		})
 		if err != nil {
@@ -380,12 +380,12 @@ func (f *fakeCompactor) Compact(_ context.Context, messages []llm.Message) ([]ll
 	return append([]llm.Message(nil), f.messages...), nil
 }
 
-type fakeStreamingTool struct {
+type fakeIncrementalTool struct {
 	fakeTool
 	artifacts []tool.Artifact
 }
 
-func (f fakeStreamingTool) CallWithOutput(_ context.Context, _ json.RawMessage, emit func(tool.Artifact) error) (any, error) {
+func (f fakeIncrementalTool) CallIncremental(_ context.Context, _ json.RawMessage, emit func(tool.Artifact) error) (any, error) {
 	for _, artifact := range f.artifacts {
 		if err := emit(artifact); err != nil {
 			return nil, err
