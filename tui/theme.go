@@ -33,12 +33,14 @@ type TextTheme struct {
 }
 
 type UITheme struct {
-	EditorCursor     Style `json:"editorCursor,omitempty"`
-	EditorSeparator  Style `json:"editorSeparator,omitempty"`
-	WorkingIndicator Style `json:"workingIndicator,omitempty"`
-	MenuItem         Style `json:"menuItem,omitempty"`
-	MenuItemSelected Style `json:"menuItemSelected,omitempty"`
-	StatusBar        Style `json:"statusBar,omitempty"`
+	EditorCursor                Style `json:"editorCursor,omitempty"`
+	EditorSeparator             Style `json:"editorSeparator,omitempty"`
+	WorkingIndicator            Style `json:"workingIndicator,omitempty"`
+	MenuItem                    Style `json:"menuItem,omitempty"`
+	MenuItemSelected            Style `json:"menuItemSelected,omitempty"`
+	MenuItemDescription         Style `json:"menuItemDescription,omitempty"`
+	MenuItemDescriptionSelected Style `json:"menuItemDescriptionSelected,omitempty"`
+	StatusBar                   Style `json:"statusBar,omitempty"`
 }
 
 type BoxTheme struct {
@@ -76,11 +78,13 @@ func DefaultTheme() Theme {
 			Code:     Style{FG: "brightWhite", Bold: true},
 		},
 		UI: UITheme{
-			EditorCursor:     Style{Reverse: true},
-			EditorSeparator:  Style{FG: "brightBlack"},
-			WorkingIndicator: Style{FG: "yellow"},
-			MenuItemSelected: Style{Bold: true, Reverse: true},
-			StatusBar:        Style{FG: "brightBlack"},
+			EditorCursor:                Style{Reverse: true},
+			EditorSeparator:             Style{FG: "brightBlack"},
+			WorkingIndicator:            Style{FG: "yellow"},
+			MenuItemSelected:            Style{Bold: true, BG: "color-237"},
+			MenuItemDescription:         Style{FG: "brightBlack"},
+			MenuItemDescriptionSelected: Style{FG: "color-250"},
+			StatusBar:                   Style{FG: "brightBlack"},
 		},
 		Box: BoxTheme{
 			User: BoxStyle{

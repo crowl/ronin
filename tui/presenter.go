@@ -310,6 +310,7 @@ const (
 
 	menuItemPrefix         = "  "
 	menuItemPrefixSelected = "→ "
+	menuDescriptionGap     = 2
 )
 
 func (p menuPresenter) Lines(width int, theme Theme) []string {
@@ -332,43 +333,49 @@ func (p menuPresenter) Lines(width int, theme Theme) []string {
 
 	end := min(len(p.Items), start+menuMaxVisibleItems)
 
+	descriptionColumn := p.descriptionColumn(start, end)
+
 	out := make([]string, 0, end-start)
 	for i := start; i < end; i++ {
-		item := p.Items[i]
-
-		prefix := menuItemPrefix
-		if i == selectedIndex {
-			prefix = menuItemPrefixSelected
-		}
-
-		line := fmt.Sprintf("%s%s", prefix, item.Value)
-
-		if item.Description != "" {
-			pad := 2
-			if text.VisibleLen(line) < 28 {
-				pad = 28 - text.VisibleLen(line)
-			}
-			line += strings.Repeat(" ", pad) + item.Description
-		}
-
-		if text.VisibleLen(line) > width {
-			line = text.Truncate(line, width)
-		}
-
-		if text.VisibleLen(line) < width {
-			line += strings.Repeat(" ", width-text.VisibleLen(line))
-		}
-
-		if i == selectedIndex {
-			line = theme.UI.MenuItemSelected.Apply(line)
-		} else {
-			line = theme.UI.MenuItem.Apply(line)
-		}
-
-		out = append(out, line)
+		out = append(out, p.line(p.Items[i], i == selectedIndex, descriptionColumn, width, theme))
 	}
 
 	return out
+}
+
+// descriptionColumn aligns descriptions just past the widest visible command
+// value, so every row's description starts at the same column.
+func (p menuPresenter) descriptionColumn(start, end int) int {
+	widestValue := 0
+	for i := start; i < end; i++ {
+		if w := text.VisibleLen(p.Items[i].Value); w > widestValue {
+			widestValue = w
+		}
+	}
+	return len(menuItemPrefix) + widestValue + menuDescriptionGap
+}
+
+func (p menuPresenter) line(item menuItem, selected bool, descriptionColumn, width int, theme Theme) string {
+	prefix := menuItemPrefix
+	rowStyle := theme.UI.MenuItem
+	descriptionOverlay := theme.UI.MenuItemDescription
+	if selected {
+		prefix = menuItemPrefixSelected
+		rowStyle = theme.UI.MenuItemSelected
+		descriptionOverlay = theme.UI.MenuItemDescriptionSelected
+	}
+	descriptionStyle := rowStyle.Merge(descriptionOverlay)
+
+	value := prefix + item.Value
+	if text.VisibleLen(value) >= width {
+		return rowStyle.Apply(text.Truncate(value, width))
+	}
+
+	column := min(descriptionColumn, width)
+	valueColumn := text.Fill(value, column)
+	descriptionColumnText := text.Fill(item.Description, width-column)
+
+	return rowStyle.Apply(valueColumn) + descriptionStyle.Apply(descriptionColumnText)
 }
 
 // statusBar
