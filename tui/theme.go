@@ -70,6 +70,10 @@ func (t Theme) Empty() bool {
 }
 
 func DefaultTheme() Theme {
+	return DarkTheme()
+}
+
+func DarkTheme() Theme {
 	return Theme{
 		Text: TextTheme{
 			Muted:    Style{FG: "brightBlack"},
@@ -81,14 +85,14 @@ func DefaultTheme() Theme {
 			EditorCursor:                Style{Reverse: true},
 			EditorSeparator:             Style{FG: "brightBlack"},
 			WorkingIndicator:            Style{FG: "yellow"},
-			MenuItemSelected:            Style{Bold: true, BG: "color-237"},
+			MenuItemSelected:            Style{FG: "brightWhite", BG: "brightBlack", Bold: true},
 			MenuItemDescription:         Style{FG: "brightBlack"},
-			MenuItemDescriptionSelected: Style{FG: "color-250"},
+			MenuItemDescriptionSelected: Style{FG: "white"},
 			StatusBar:                   Style{FG: "brightBlack"},
 		},
 		Box: BoxTheme{
 			User: BoxStyle{
-				Container: Style{FG: "brightWhite", BG: "color-234"},
+				Container: Style{FG: "brightWhite", BG: "black"},
 			},
 			Assistant: BoxStyle{},
 			AssistantThinking: BoxStyle{
@@ -98,14 +102,59 @@ func DefaultTheme() Theme {
 				Code:     Style{FG: "brightBlue", Bold: true},
 			},
 			ToolCall: BoxStyle{
-				Container:   Style{FG: "white", BG: "color-233"},
+				Container:   Style{FG: "white", BG: "black"},
 				Title:       Style{FG: "brightWhite", Bold: true},
 				Muted:       Style{FG: "brightBlack"},
 				DiffAdded:   Style{FG: "brightGreen"},
 				DiffRemoved: Style{FG: "brightRed"},
 			},
 			System: BoxStyle{
-				Container: Style{FG: "white", BG: "color-233"},
+				Container: Style{FG: "white", BG: "black"},
+			},
+			Error: BoxStyle{
+				Container: Style{FG: "red"},
+			},
+		},
+	}
+}
+
+func LightTheme() Theme {
+	return Theme{
+		Text: TextTheme{
+			Muted:    Style{FG: "brightBlack"},
+			Strong:   Style{FG: "black", Bold: true},
+			Emphasis: Style{Italic: true},
+			Code:     Style{FG: "black", Bold: true},
+		},
+		UI: UITheme{
+			EditorCursor:                Style{Reverse: true},
+			EditorSeparator:             Style{FG: "brightBlack"},
+			WorkingIndicator:            Style{FG: "yellow"},
+			MenuItemSelected:            Style{FG: "black", BG: "brightBlack", Bold: true},
+			MenuItemDescription:         Style{FG: "brightBlack"},
+			MenuItemDescriptionSelected: Style{FG: "white"},
+			StatusBar:                   Style{FG: "brightBlack"},
+		},
+		Box: BoxTheme{
+			User: BoxStyle{
+				Container: Style{FG: "black", BG: "white"},
+			},
+			Assistant: BoxStyle{},
+			AssistantThinking: BoxStyle{
+				Body:     Style{FG: "blue", Italic: true},
+				Strong:   Style{FG: "blue", Bold: true},
+				Emphasis: Style{FG: "blue", Italic: true},
+				Code:     Style{FG: "blue", Bold: true},
+			},
+			ToolCall: BoxStyle{
+				Container:   Style{FG: "black", BG: "white"},
+				Title:       Style{FG: "black", Bold: true},
+				Muted:       Style{FG: "brightBlack"},
+				DiffAdded:   Style{FG: "green"},
+				DiffRemoved: Style{FG: "red"},
+			},
+			System: BoxStyle{
+				Container: Style{FG: "black", BG: "white"},
 			},
 			Error: BoxStyle{
 				Container: Style{FG: "red"},

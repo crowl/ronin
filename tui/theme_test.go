@@ -1,6 +1,8 @@
 package tui_test
 
 import (
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/crowl/ronin/tui"
@@ -66,6 +68,48 @@ func TestStyle(t *testing.T) {
 				t.Fatalf("style apply\ngot:  %q\nwant: %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestBuiltInThemesUseTerminalPalette(t *testing.T) {
+	themes := map[string]tui.Theme{
+		"default": tui.DefaultTheme(),
+		"dark":    tui.DarkTheme(),
+		"light":   tui.LightTheme(),
+	}
+
+	for name, theme := range themes {
+		t.Run(name, func(t *testing.T) {
+			assertNoFixedPaletteColors(t, reflect.ValueOf(theme), "theme")
+		})
+	}
+}
+
+func assertNoFixedPaletteColors(t *testing.T, value reflect.Value, path string) {
+	t.Helper()
+
+	if value.Kind() == reflect.Pointer || value.Kind() == reflect.Interface {
+		if value.IsNil() {
+			return
+		}
+		value = value.Elem()
+	}
+
+	switch value.Kind() {
+	case reflect.Struct:
+		if style, ok := value.Interface().(tui.Style); ok {
+			if strings.HasPrefix(string(style.FG), "color-") {
+				t.Fatalf("%s.FG uses fixed 256-color palette: %q", path, style.FG)
+			}
+			if strings.HasPrefix(string(style.BG), "color-") {
+				t.Fatalf("%s.BG uses fixed 256-color palette: %q", path, style.BG)
+			}
+			return
+		}
+		for i := 0; i < value.NumField(); i++ {
+			field := value.Type().Field(i)
+			assertNoFixedPaletteColors(t, value.Field(i), path+"."+field.Name)
+		}
 	}
 }
 
