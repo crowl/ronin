@@ -34,6 +34,12 @@ func LoadSkills(dir string) ([]Skill, error) {
 	if err != nil {
 		return nil, err
 	}
+	if _, err := os.Stat(absDir); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to stat dir %q: %w", dir, err)
+	}
 	absDir, err = filepath.EvalSymlinks(absDir)
 	if err != nil {
 		return nil, err

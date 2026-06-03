@@ -10,6 +10,17 @@ import (
 )
 
 func TestLoadSkills(t *testing.T) {
+	t.Run("missing directory returns no skills", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), "missing")
+		skills, err := agent.LoadSkills(dir)
+		if err != nil {
+			t.Fatalf("LoadSkills() error = %v", err)
+		}
+		if len(skills) != 0 {
+			t.Fatalf("len(skills) = %d, want 0", len(skills))
+		}
+	})
+
 	t.Run("skips directories without skill file", func(t *testing.T) {
 		dir := t.TempDir()
 		if err := os.Mkdir(filepath.Join(dir, "empty"), 0o755); err != nil {
