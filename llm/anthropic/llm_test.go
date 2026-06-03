@@ -241,14 +241,14 @@ func TestPredictNext(t *testing.T) {
 }
 
 func TestPredictNextStructured(t *testing.T) {
-	t.Run("uses forced tool and returns input", func(t *testing.T) {
+	t.Run("sends JSON schema format and returns text JSON", func(t *testing.T) {
 		var body map[string]any
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatalf("decode request: %v", err)
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"content":[{"type":"tool_use","id":"call-1","name":"structured_output","input":{"answer":"ok"}}]}`))
+			_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"{\"answer\":\"ok\"}"}]}`))
 		}))
 		defer server.Close()
 
@@ -286,9 +286,20 @@ func TestPredictNextStructured(t *testing.T) {
 		if body["system"] != "system" || body["max_tokens"] != float64(123) {
 			t.Fatalf("payload = %#v", body)
 		}
-		choice := body["tool_choice"].(map[string]any)
-		if choice["type"] != "tool" || choice["name"] != "structured_output" {
-			t.Fatalf("tool_choice = %#v", choice)
+		if body["tool_choice"] != nil {
+			t.Fatalf("tool_choice = %#v, want omitted", body["tool_choice"])
+		}
+		if body["tools"] != nil {
+			t.Fatalf("tools = %#v, want omitted", body["tools"])
+		}
+		outputConfig := body["output_config"].(map[string]any)
+		format := outputConfig["format"].(map[string]any)
+		if format["type"] != "json_schema" {
+			t.Fatalf("format type = %#v, want json_schema", format["type"])
+		}
+		schema := format["schema"].(map[string]any)
+		if schema["type"] != "object" {
+			t.Fatalf("schema = %#v, want object schema", schema)
 		}
 	})
 
@@ -303,7 +314,7 @@ func TestPredictNextStructured(t *testing.T) {
 		}
 	})
 
-	t.Run("rejects_missing_tool", func(t *testing.T) {
+	t.Run("rejects_invalid_text_json", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"no"}]}`))
@@ -315,8 +326,8 @@ func TestPredictNextStructured(t *testing.T) {
 			t.Fatalf("new llm: %v", err)
 		}
 		_, err = client.PredictNextStructured(context.Background(), llm.PredictNextStructuredRequest{Schema: &jsonschema.Schema{Type: "object"}})
-		if err == nil || !strings.Contains(err.Error(), "structured_output") {
-			t.Fatalf("error = %v, want structured_output error", err)
+		if err == nil || !strings.Contains(err.Error(), "not valid JSON") {
+			t.Fatalf("error = %v, want invalid JSON error", err)
 		}
 	})
 }

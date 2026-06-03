@@ -140,18 +140,18 @@ func (s *LLM) PredictNextStructured(ctx context.Context, req llm.PredictNextStru
 		return nil, fmt.Errorf("parse anthropic structured response: %w", err)
 	}
 	for _, block := range structuredResp.Content {
-		if block.Type == "tool_use" && block.Name == "structured_output" {
-			input := strings.TrimSpace(string(block.Input))
-			if input == "" {
-				return nil, errors.New("anthropic structured response contained empty tool input")
+		if block.Type == "text" {
+			text := strings.TrimSpace(block.Text)
+			if text == "" {
+				return nil, errors.New("anthropic structured response contained empty text")
 			}
-			if !json.Valid([]byte(input)) {
-				return nil, errors.New("anthropic structured response tool input is not valid JSON")
+			if !json.Valid([]byte(text)) {
+				return nil, errors.New("anthropic structured response text is not valid JSON")
 			}
-			return json.RawMessage(input), nil
+			return json.RawMessage(text), nil
 		}
 	}
-	return nil, errors.New("anthropic structured response contained no structured_output tool call")
+	return nil, errors.New("anthropic structured response contained no text JSON")
 }
 
 func (s *LLM) stream(ctx context.Context, req llm.PredictNextRequest, events chan<- llm.Event) error {
@@ -284,12 +284,12 @@ func (s *LLM) buildStructuredPayload(req llm.PredictNextStructuredRequest) (*ant
 		MaxTokens: maxTokens,
 		Messages:  messages,
 		Stream:    false,
-		Tools: []anthropicTool{{
-			Name:        "structured_output",
-			Description: "Return the structured output.",
-			InputSchema: req.Schema,
-		}},
-		ToolChoice: &anthropicToolChoice{Type: "tool", Name: "structured_output"},
+		OutputConfig: &anthropicOutputConfig{
+			Format: &anthropicOutputConfigFormat{
+				Type:   "json_schema",
+				Schema: req.Schema,
+			},
+		},
 	}
 	if req.SystemPrompt != "" {
 		payload.System = req.SystemPrompt
@@ -378,7 +378,13 @@ type anthropicThinkingConfig struct {
 }
 
 type anthropicOutputConfig struct {
-	Effort string `json:"effort"`
+	Effort string                       `json:"effort,omitempty"`
+	Format *anthropicOutputConfigFormat `json:"format,omitempty"`
+}
+
+type anthropicOutputConfigFormat struct {
+	Type   string             `json:"type"`
+	Schema *jsonschema.Schema `json:"schema"`
 }
 
 type anthropicResponse struct {
