@@ -1,7 +1,6 @@
 package render
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
@@ -10,7 +9,6 @@ import (
 )
 
 type TerminalIO interface {
-	ReadKey(ctx context.Context) (terminal.Key, error)
 	Write(data string) error
 	Size() (terminal.Size, error)
 }

@@ -1,7 +1,6 @@
 package render
 
 import (
-	"context"
 	"strconv"
 	"strings"
 	"testing"
@@ -230,10 +229,6 @@ func newVirtualTerminal(width int, height int) *virtualTerminal {
 		term.lines = append(term.lines, blankRunes(width))
 	}
 	return term
-}
-
-func (t *virtualTerminal) ReadKey(context.Context) (terminal.Key, error) {
-	return terminal.Key{}, nil
 }
 
 func (t *virtualTerminal) Write(data string) error {
