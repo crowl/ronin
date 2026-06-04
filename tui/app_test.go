@@ -43,10 +43,11 @@ func TestTUIRendering(t *testing.T) {
 		if len(multilineLines) != len(initialLines)+1 {
 			t.Fatalf("editor did not grow by one rendered line\ninitial lines:   %#v\nmultiline lines: %#v", initialLines, multilineLines)
 		}
-		if !renderedLinesContain(multilineLines, " "+"a") {
+		if !renderedVisibleLinesContain(multilineLines, " "+"a") {
 			t.Fatalf("first editor line missing from render: %#v", multilineLines)
 		}
-		if !renderedLinesContain(multilineLines, " "+terminal.SGRReverse+" "+terminal.SGRReset) {
+		reverseCursor := Style{FG: DarkTheme().Text.Normal.FG, Reverse: true}.Apply(" ")
+		if !renderedLinesContain(multilineLines, " "+reverseCursor) {
 			t.Fatalf("blank second editor line with cursor missing from render: %#v", multilineLines)
 		}
 	})
@@ -74,10 +75,10 @@ func TestTUIRendering(t *testing.T) {
 		if len(multilineLines) != len(initialLines)+1 {
 			t.Fatalf("editor did not grow by one rendered line\ninitial lines:   %#v\nmultiline lines: %#v", initialLines, multilineLines)
 		}
-		if !renderedLinesContain(multilineLines, " "+"a") {
+		if !renderedVisibleLinesContain(multilineLines, " "+"a") {
 			t.Fatalf("first editor line missing from render: %#v", multilineLines)
 		}
-		if !renderedLinesContain(multilineLines, " b") {
+		if !renderedVisibleLinesContain(multilineLines, " b") {
 			t.Fatalf("second editor line missing from render: %#v", multilineLines)
 		}
 	})
@@ -690,6 +691,15 @@ func hasShellStreamArtifact(artifacts []tool.Artifact, stream tool.ShellStream, 
 func renderedLinesContain(lines []string, value string) bool {
 	for _, line := range lines {
 		if strings.Contains(line, value) {
+			return true
+		}
+	}
+	return false
+}
+
+func renderedVisibleLinesContain(lines []string, value string) bool {
+	for _, line := range lines {
+		if strings.Contains(text.StripANSI(line), value) {
 			return true
 		}
 	}

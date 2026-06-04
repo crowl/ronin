@@ -276,8 +276,9 @@ func wrapeditorPresenterLogicalLine(line []rune, width int, firstVisualLine bool
 }
 
 func rendereditorPresenterSegment(prefix string, segment editorSegment, cursorColumn int, containsCursor bool, theme Theme) string {
+	editorText := theme.Text.Normal
 	if !containsCursor {
-		return prefix + string(segment.text)
+		return prefix + applyEditorText(editorText, string(segment.text))
 	}
 
 	segmentCursor := cursorColumn - segment.startColumn
@@ -289,13 +290,21 @@ func rendereditorPresenterSegment(prefix string, segment editorSegment, cursorCo
 	}
 
 	beforeCursor := string(segment.text[:segmentCursor])
+	cursorStyle := editorText.Merge(theme.UI.EditorCursor)
 	if segmentCursor < len(segment.text) {
 		cursorCell := string(segment.text[segmentCursor])
 		afterCursor := string(segment.text[segmentCursor+1:])
-		return prefix + beforeCursor + theme.UI.EditorCursor.Apply(cursorCell) + afterCursor
+		return prefix + applyEditorText(editorText, beforeCursor) + cursorStyle.Apply(cursorCell) + applyEditorText(editorText, afterCursor)
 	}
 
-	return prefix + beforeCursor + theme.UI.EditorCursor.Apply(" ")
+	return prefix + applyEditorText(editorText, beforeCursor) + cursorStyle.Apply(" ")
+}
+
+func applyEditorText(style Style, value string) string {
+	if value == "" {
+		return ""
+	}
+	return style.Apply(value)
 }
 
 // Menu

@@ -73,91 +73,108 @@ func DefaultTheme() Theme {
 	return DarkTheme()
 }
 
+const (
+	paletteLightest Color = "#F8F9FA"
+	paletteLighter  Color = "#E9ECEF"
+	paletteLight    Color = "#DEE2E6"
+	paletteSoft     Color = "#CED4DA"
+	paletteMid      Color = "#ADB5BD"
+	paletteMuted    Color = "#6C757D"
+	paletteDim      Color = "#495057"
+	paletteDark     Color = "#343A40"
+	paletteDarkest  Color = "#212529"
+)
+
+type themeColors struct {
+	Text            Color
+	TextMuted       Color
+	TextStrong      Color
+	Surface         Color
+	SurfaceRaised   Color
+	SurfaceSelected Color
+	Separator       Color
+	DiffAdded       Color
+	DiffRemoved     Color
+	Error           Color
+}
+
 func DarkTheme() Theme {
-	return Theme{
-		Text: TextTheme{
-			Muted:    Style{FG: "brightBlack"},
-			Strong:   Style{FG: "brightWhite", Bold: true},
-			Emphasis: Style{Italic: true},
-			Code:     Style{FG: "brightWhite", Bold: true},
-		},
-		UI: UITheme{
-			EditorCursor:                Style{Reverse: true},
-			EditorSeparator:             Style{FG: "brightBlack"},
-			WorkingIndicator:            Style{FG: "yellow"},
-			MenuItemSelected:            Style{FG: "brightWhite", BG: "brightBlack", Bold: true},
-			MenuItemDescription:         Style{FG: "brightBlack"},
-			MenuItemDescriptionSelected: Style{FG: "white"},
-			StatusBar:                   Style{FG: "brightBlack"},
-		},
-		Box: BoxTheme{
-			User: BoxStyle{
-				Container: Style{FG: "brightWhite", BG: "black"},
-			},
-			Assistant: BoxStyle{},
-			AssistantThinking: BoxStyle{
-				Body:     Style{FG: "brightBlue", Italic: true},
-				Strong:   Style{FG: "brightBlue", Bold: true},
-				Emphasis: Style{FG: "brightBlue", Italic: true},
-				Code:     Style{FG: "brightBlue", Bold: true},
-			},
-			ToolCall: BoxStyle{
-				Container:   Style{FG: "white", BG: "black"},
-				Title:       Style{FG: "brightWhite", Bold: true},
-				Muted:       Style{FG: "brightBlack"},
-				DiffAdded:   Style{FG: "brightGreen"},
-				DiffRemoved: Style{FG: "brightRed"},
-			},
-			System: BoxStyle{
-				Container: Style{FG: "white", BG: "black"},
-			},
-			Error: BoxStyle{
-				Container: Style{FG: "red"},
-			},
-		},
-	}
+	return themeFromColors(themeColors{
+		Text:            paletteLighter,
+		TextMuted:       paletteSoft,
+		TextStrong:      paletteLightest,
+		Surface:         paletteDarkest,
+		SurfaceRaised:   paletteDark,
+		SurfaceSelected: paletteDim,
+		Separator:       paletteDim,
+		DiffAdded:       "color-22",
+		DiffRemoved:     "color-52",
+		Error:           "color-203",
+	})
 }
 
 func LightTheme() Theme {
+	return themeFromColors(themeColors{
+		Text:            paletteDark,
+		TextMuted:       paletteMuted,
+		TextStrong:      paletteDarkest,
+		Surface:         paletteLightest,
+		SurfaceRaised:   paletteLighter,
+		SurfaceSelected: paletteLight,
+		Separator:       paletteMid,
+		DiffAdded:       "color-194",
+		DiffRemoved:     "color-224",
+		Error:           "color-124",
+	})
+}
+
+func themeFromColors(c themeColors) Theme {
 	return Theme{
 		Text: TextTheme{
-			Muted:    Style{FG: "brightBlack"},
-			Strong:   Style{FG: "black", Bold: true},
-			Emphasis: Style{Italic: true},
-			Code:     Style{FG: "black", Bold: true},
+			Normal:   Style{FG: c.Text},
+			Muted:    Style{FG: c.TextMuted},
+			Strong:   Style{FG: c.TextStrong, Bold: true},
+			Emphasis: Style{FG: c.Text, Italic: true},
+			Code:     Style{FG: c.TextStrong, Bold: true},
 		},
 		UI: UITheme{
 			EditorCursor:                Style{Reverse: true},
-			EditorSeparator:             Style{FG: "brightBlack"},
-			WorkingIndicator:            Style{FG: "yellow"},
-			MenuItemSelected:            Style{FG: "black", BG: "brightBlack", Bold: true},
-			MenuItemDescription:         Style{FG: "brightBlack"},
-			MenuItemDescriptionSelected: Style{FG: "white"},
-			StatusBar:                   Style{FG: "brightBlack"},
+			EditorSeparator:             Style{FG: c.Separator},
+			WorkingIndicator:            Style{FG: c.TextMuted},
+			MenuItem:                    Style{FG: c.Text},
+			MenuItemSelected:            Style{FG: c.TextStrong, BG: c.SurfaceSelected, Bold: true},
+			MenuItemDescription:         Style{FG: c.TextMuted},
+			MenuItemDescriptionSelected: Style{FG: c.Text},
+			StatusBar:                   Style{FG: c.TextMuted},
 		},
 		Box: BoxTheme{
 			User: BoxStyle{
-				Container: Style{FG: "black", BG: "white"},
+				Container: Style{FG: c.TextStrong, BG: c.SurfaceRaised},
 			},
-			Assistant: BoxStyle{},
+			Assistant: BoxStyle{
+				Container: Style{FG: c.Text},
+			},
 			AssistantThinking: BoxStyle{
-				Body:     Style{FG: "blue", Italic: true},
-				Strong:   Style{FG: "blue", Bold: true},
-				Emphasis: Style{FG: "blue", Italic: true},
-				Code:     Style{FG: "blue", Bold: true},
+				Container: Style{FG: c.TextMuted},
+				Body:      Style{FG: c.TextMuted, Italic: true},
+				Strong:    Style{FG: c.Text, Bold: true},
+				Emphasis:  Style{FG: c.TextMuted, Italic: true},
+				Code:      Style{FG: c.Text, Bold: true},
 			},
 			ToolCall: BoxStyle{
-				Container:   Style{FG: "black", BG: "white"},
-				Title:       Style{FG: "black", Bold: true},
-				Muted:       Style{FG: "brightBlack"},
-				DiffAdded:   Style{FG: "green"},
-				DiffRemoved: Style{FG: "red"},
+				Container:   Style{FG: c.Text, BG: c.SurfaceRaised},
+				Title:       Style{FG: c.TextStrong, Bold: true},
+				Meta:        Style{FG: c.TextMuted},
+				Muted:       Style{FG: c.TextMuted},
+				DiffAdded:   Style{FG: c.Text, BG: c.DiffAdded},
+				DiffRemoved: Style{FG: c.Text, BG: c.DiffRemoved},
 			},
 			System: BoxStyle{
-				Container: Style{FG: "black", BG: "white"},
+				Container: Style{FG: c.TextMuted},
+				Muted:     Style{FG: c.TextMuted},
 			},
 			Error: BoxStyle{
-				Container: Style{FG: "red"},
+				Container: Style{FG: c.Error},
 			},
 		},
 	}
@@ -267,6 +284,17 @@ func sgrColorParams(color Color, background bool) ([]string, bool) {
 		return []string{"38", "5", strconv.Itoa(n)}, true
 	}
 
+	if strings.HasPrefix(name, "#") {
+		r, g, b, ok := hexColor(name)
+		if !ok {
+			return nil, false
+		}
+		if background {
+			return []string{"48", "2", strconv.Itoa(r), strconv.Itoa(g), strconv.Itoa(b)}, true
+		}
+		return []string{"38", "2", strconv.Itoa(r), strconv.Itoa(g), strconv.Itoa(b)}, true
+	}
+
 	base, ok := namedColorCode(name)
 	if !ok {
 		return nil, false
@@ -278,6 +306,34 @@ func sgrColorParams(color Color, background bool) ([]string, bool) {
 		return []string{strconv.Itoa(base + 10)}, true
 	}
 	return []string{strconv.Itoa(base)}, true
+}
+
+func hexColor(name string) (int, int, int, bool) {
+	if len(name) != 7 {
+		return 0, 0, 0, false
+	}
+
+	r, ok := hexByte(name[1:3])
+	if !ok {
+		return 0, 0, 0, false
+	}
+	g, ok := hexByte(name[3:5])
+	if !ok {
+		return 0, 0, 0, false
+	}
+	b, ok := hexByte(name[5:7])
+	if !ok {
+		return 0, 0, 0, false
+	}
+	return r, g, b, true
+}
+
+func hexByte(s string) (int, bool) {
+	n, err := strconv.ParseUint(s, 16, 8)
+	if err != nil {
+		return 0, false
+	}
+	return int(n), true
 }
 
 func namedColorCode(name string) (int, bool) {
