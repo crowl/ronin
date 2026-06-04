@@ -8,12 +8,12 @@ import (
 	"github.com/crowl/ronin/tui/internal/text"
 )
 
-type TerminalIO interface {
+type Terminal interface {
 	Write(data string) error
 	Size() (terminal.Size, error)
 }
 
-func New(term TerminalIO) (*Renderer, error) {
+func New(term Terminal) (*Renderer, error) {
 	if term == nil {
 		return nil, fmt.Errorf("terminal is required")
 	}
@@ -21,9 +21,10 @@ func New(term TerminalIO) (*Renderer, error) {
 }
 
 type Renderer struct {
-	term TerminalIO
+	term Terminal
 
 	previousLines []string
+	renderLines   []string
 	previousW     int
 	previousH     int
 
@@ -57,8 +58,8 @@ type Request struct {
 }
 
 func (r *Renderer) Render(req Request) error {
-	lines := normalizeLines(req.Lines, req.Width, true)
-	lines = resetRenderedLines(lines)
+	lines := normalizeLines(req.Lines, req.Width, true, r.renderLines)
+	r.renderLines = lines
 
 	widthChanged := r.previousW != 0 && r.previousW != req.Width
 	heightChanged := r.previousH != 0 && r.previousH != req.Height
@@ -165,6 +166,7 @@ func (r *Renderer) Render(req Request) error {
 		}
 		b.WriteString(terminal.ClearLine)
 		b.WriteString(lines[i])
+		b.WriteString(terminal.SGRReset)
 	}
 
 	finalCursorRow := renderEnd
@@ -247,6 +249,7 @@ func (r *Renderer) renderDeletedLines(lines []string, req Request, prevViewportT
 
 func (r *Renderer) fullRender(lines []string, req Request, clear bool) error {
 	var b strings.Builder
+	b.Grow(renderedLinesSize(lines) + len(terminal.SyncBegin+terminal.AutoWrapDisable+terminal.AutoWrapEnable+terminal.SyncEnd+terminal.ClearScreen+terminal.MoveToTop))
 	b.WriteString(terminal.SyncBegin + terminal.AutoWrapDisable)
 	if clear {
 		b.WriteString(terminal.ClearScreen + terminal.MoveToTop)
@@ -258,7 +261,7 @@ func (r *Renderer) fullRender(lines []string, req Request, clear bool) error {
 		return err
 	}
 
-	r.previousLines = append([]string(nil), lines...)
+	r.storeLines(lines)
 	r.previousW = req.Width
 	r.previousH = req.Height
 	r.cursorRow = max(0, len(lines)-1)
@@ -274,13 +277,17 @@ func (r *Renderer) fullRender(lines []string, req Request, clear bool) error {
 }
 
 func (r *Renderer) storeState(lines []string, req Request, previousViewportTop int, hardwareCursorRow int) {
-	r.previousLines = append([]string(nil), lines...)
+	r.storeLines(lines)
 	r.previousW = req.Width
 	r.previousH = req.Height
 	r.cursorRow = max(0, len(lines)-1)
 	r.hardwareCursorRow = max(0, hardwareCursorRow)
 	r.maxLinesRendered = max(r.maxLinesRendered, len(lines))
 	r.previousViewportTop = max(previousViewportTop, r.hardwareCursorRow-req.Height+1)
+}
+
+func (r *Renderer) storeLines(lines []string) {
+	r.previousLines = append(r.previousLines[:0], lines...)
 }
 
 func viewportTopFor(lineCount int, height int) int {
@@ -296,34 +303,53 @@ func writeLines(b *strings.Builder, lines []string) {
 			b.WriteString(terminal.CRLF)
 		}
 		b.WriteString(line)
+		b.WriteString(terminal.SGRReset)
 	}
+}
+
+func renderedLinesSize(lines []string) int {
+	if len(lines) == 0 {
+		return 0
+	}
+
+	size := len(terminal.CRLF) * (len(lines) - 1)
+	size += len(terminal.SGRReset) * len(lines)
+	for _, line := range lines {
+		size += len(line)
+	}
+	return size
 }
 
 func changedRange(old []string, next []string) (int, int) {
-	first := -1
-	last := -1
-	limit := max(len(old), len(next))
-	for i := 0; i < limit; i++ {
-		oldLine := ""
-		newLine := ""
-		if i < len(old) {
-			oldLine = old[i]
-		}
-		if i < len(next) {
-			newLine = next[i]
-		}
-		if oldLine != newLine {
-			if first == -1 {
-				first = i
-			}
-			last = i
-		}
+	limit := min(len(old), len(next))
+	first := 0
+	for first < limit && old[first] == next[first] {
+		first++
 	}
-	return first, last
+
+	if first == limit {
+		if len(old) == len(next) {
+			return -1, -1
+		}
+		return first, max(len(old), len(next)) - 1
+	}
+
+	if len(old) != len(next) {
+		return first, max(len(old), len(next)) - 1
+	}
+
+	oldLast := len(old) - 1
+	nextLast := len(next) - 1
+	for oldLast >= first && nextLast >= first && old[oldLast] == next[nextLast] {
+		oldLast--
+		nextLast--
+	}
+
+	return first, max(oldLast, nextLast)
 }
 
-func normalizeLines(lines []string, width int, ensureNonEmpty bool) []string {
-	out := make([]string, 0, len(lines))
+func normalizeLines(lines []string, width int, ensureNonEmpty bool, out []string) []string {
+	out = out[:0]
 	for _, line := range lines {
 		line = strings.ReplaceAll(line, "\n", " ")
 		if text.VisibleLen(line) > width {
@@ -333,14 +359,6 @@ func normalizeLines(lines []string, width int, ensureNonEmpty bool) []string {
 	}
 	if len(out) == 0 && ensureNonEmpty {
 		out = append(out, "")
-	}
-	return out
-}
-
-func resetRenderedLines(lines []string) []string {
-	out := make([]string, len(lines))
-	for i, line := range lines {
-		out[i] = line + terminal.SGRReset
 	}
 	return out
 }
