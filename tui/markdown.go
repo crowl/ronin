@@ -23,7 +23,7 @@ func markdownLines(input string, width int, style TextTheme) []string {
 		}
 
 		if isCodeFence(trimmed) {
-			lines = append(lines, styledWrap(" ", raw, width, style.Code, style.Normal)...)
+			lines = append(lines, styledWrap(" ", raw, width, style.Muted, style.Normal)...)
 			inCodeBlock = !inCodeBlock
 			continue
 		}

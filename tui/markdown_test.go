@@ -37,10 +37,10 @@ func TestMarkdownLines(t *testing.T) {
 			want:  []string{"\x1b[38;5;1m ## Title\x1b[0m"},
 		},
 		{
-			name:  "code block preserves fences",
+			name:  "code block mutes fences",
 			input: "```go\nfmt.Println(1)\n```",
 			width: 80,
-			want:  []string{"\x1b[38;5;3m ```go\x1b[0m", "\x1b[38;5;3m fmt.Println(1)\x1b[0m", "\x1b[38;5;3m ```\x1b[0m"},
+			want:  []string{"\x1b[38;5;4m ```go\x1b[0m", "\x1b[38;5;3m fmt.Println(1)\x1b[0m", "\x1b[38;5;4m ```\x1b[0m"},
 		},
 		{
 			name:  "lists preserve text",
@@ -86,6 +86,7 @@ func TestMarkdownLines(t *testing.T) {
 
 func fakeTextTheme() TextTheme {
 	return TextTheme{
+		Muted:    Style{FG: "color-4"},
 		Strong:   Style{FG: "color-1"},
 		Emphasis: Style{FG: "color-2"},
 		Code:     Style{FG: "color-3"},
