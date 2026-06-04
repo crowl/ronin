@@ -296,7 +296,6 @@ func runTUI(agt *agent.Agent) error {
 		Commands: cmds,
 		Input:    os.Stdin,
 		Output:   os.Stdout,
-		Theme:    tui.DefaultTheme(),
 	}); err != nil {
 		return fmt.Errorf("run tui: %w", err)
 	}
