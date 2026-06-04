@@ -23,15 +23,23 @@ The easiest way to try it is to clone the repository and run it from source.
 ```sh
 git clone https://github.com/crowl/ronin.git
 cd ronin
+```
 
+Set at least one provider API key before starting *ronin*. Models are registered for whichever providers have keys set:
+
+```sh
 export OPENAI_API_KEY=...
 export GEMINI_API_KEY=...
 export ANTHROPIC_API_KEY=...
+```
 
+Then start the app:
+
+```sh
 go run ./cmd/ronin
 ```
 
-The default model currently uses OpenAI, so `OPENAI_API_KEY` is required to start the app. Google and Anthropic models are also registered when `GEMINI_API_KEY` and `ANTHROPIC_API_KEY` are set.
+The default config currently uses an OpenAI model. If you only set `GEMINI_API_KEY` or `ANTHROPIC_API_KEY`, update the configured model or pass `-model <provider>:<name>` for one of the registered models.
 
 You can run *ronin* against a specific working directory with:
 

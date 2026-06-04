@@ -56,6 +56,11 @@ func main() {
 		}
 	}
 
+	if len(llm.Models()) == 0 {
+		_, _ = fmt.Fprintf(os.Stderr, "no models available, please define at least one of OPENAI_API_KEY, GEMINI_API_KEY or ANTHROPIC_API_KEY env vars\n")
+		os.Exit(1)
+	}
+
 	settings, err := config.Load()
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
