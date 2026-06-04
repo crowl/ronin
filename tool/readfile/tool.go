@@ -147,7 +147,9 @@ func (t *Tool) CallTitle(rawArgs json.RawMessage) (string, error) {
 	}
 	title := t.Name() + " " + args.Path
 	if args.Range != nil {
-		title += fmt.Sprintf("(%d:%d)", args.Range.StartLine, args.Range.EndLine)
+		if args.Range.StartLine > 0 && args.Range.EndLine > 0 {
+			title += fmt.Sprintf(" (%d:%d)", args.Range.StartLine, args.Range.EndLine)
+		}
 	}
 	return title, nil
 }
