@@ -1,4 +1,4 @@
-package render
+package render_test
 
 import (
 	"strconv"
@@ -6,6 +6,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/crowl/ronin/tui/internal/render"
 	"github.com/crowl/ronin/tui/internal/terminal"
 	"github.com/crowl/ronin/tui/internal/text"
 )
@@ -15,7 +16,7 @@ func TestRenderer(t *testing.T) {
 		term := newVirtualTerminal(20, 12)
 		renderer := newRenderer(t, term)
 
-		if err := renderer.Render(Request{Lines: []string{"one", "two"}, Width: 20, Height: 12}); err != nil {
+		if err := renderer.Render(render.Request{Lines: []string{"one", "two"}, Width: 20, Height: 12}); err != nil {
 			t.Fatalf("render initial frame: %v", err)
 		}
 
@@ -32,10 +33,10 @@ func TestRenderer(t *testing.T) {
 		term := newVirtualTerminal(20, 12)
 		renderer := newRenderer(t, term)
 
-		if err := renderer.Render(Request{Lines: []string{"one", "two"}, Width: 20, Height: 12}); err != nil {
+		if err := renderer.Render(render.Request{Lines: []string{"one", "two"}, Width: 20, Height: 12}); err != nil {
 			t.Fatalf("render initial frame: %v", err)
 		}
-		if err := renderer.Render(Request{Lines: []string{"one", "two", "three"}, Width: 20, Height: 12}); err != nil {
+		if err := renderer.Render(render.Request{Lines: []string{"one", "two", "three"}, Width: 20, Height: 12}); err != nil {
 			t.Fatalf("render appended frame: %v", err)
 		}
 
@@ -52,10 +53,10 @@ func TestRenderer(t *testing.T) {
 		term := newVirtualTerminal(40, 12)
 		renderer := newRenderer(t, term)
 
-		if err := renderer.Render(Request{Lines: []string{"hello", "Hello! How can I", "editor"}, Width: 40, Height: 12}); err != nil {
+		if err := renderer.Render(render.Request{Lines: []string{"hello", "Hello! How can I", "editor"}, Width: 40, Height: 12}); err != nil {
 			t.Fatalf("render partial stream: %v", err)
 		}
-		if err := renderer.Render(Request{Lines: []string{"hello", "Hello! How can I help?", "editor"}, Width: 40, Height: 12}); err != nil {
+		if err := renderer.Render(render.Request{Lines: []string{"hello", "Hello! How can I help?", "editor"}, Width: 40, Height: 12}); err != nil {
 			t.Fatalf("render updated stream: %v", err)
 		}
 
@@ -74,10 +75,10 @@ func TestRenderer(t *testing.T) {
 		term := newVirtualTerminal(40, 10)
 		renderer := newRenderer(t, term)
 
-		if err := renderer.Render(Request{Lines: []string{"Header", "Working...", "Footer"}, Width: 40, Height: 10}); err != nil {
+		if err := renderer.Render(render.Request{Lines: []string{"Header", "Working...", "Footer"}, Width: 40, Height: 10}); err != nil {
 			t.Fatalf("render initial frame: %v", err)
 		}
-		if err := renderer.Render(Request{Lines: []string{"Header", "Working.", "Footer"}, Width: 40, Height: 10}); err != nil {
+		if err := renderer.Render(render.Request{Lines: []string{"Header", "Working.", "Footer"}, Width: 40, Height: 10}); err != nil {
 			t.Fatalf("render updated frame: %v", err)
 		}
 
@@ -88,10 +89,10 @@ func TestRenderer(t *testing.T) {
 		term := newVirtualTerminal(40, 12)
 		renderer := newRenderer(t, term)
 
-		if err := renderer.Render(Request{Lines: []string{"editor", "menu one", "menu two", "status"}, Width: 40, Height: 12}); err != nil {
+		if err := renderer.Render(render.Request{Lines: []string{"editor", "menu one", "menu two", "status"}, Width: 40, Height: 12}); err != nil {
 			t.Fatalf("render menu open: %v", err)
 		}
-		if err := renderer.Render(Request{Lines: []string{"editor", "status"}, Width: 40, Height: 12}); err != nil {
+		if err := renderer.Render(render.Request{Lines: []string{"editor", "status"}, Width: 40, Height: 12}); err != nil {
 			t.Fatalf("render menu closed: %v", err)
 		}
 
@@ -106,14 +107,14 @@ func TestRenderer(t *testing.T) {
 		term := newVirtualTerminal(40, 6)
 		renderer := newRenderer(t, term)
 
-		if err := renderer.Render(Request{
+		if err := renderer.Render(render.Request{
 			Lines:  []string{"", " read_file llm/model.go", "", " Elapsed 0.0s", "", " editor", " status"},
 			Width:  40,
 			Height: 6,
 		}); err != nil {
 			t.Fatalf("render running tool frame: %v", err)
 		}
-		if err := renderer.Render(Request{
+		if err := renderer.Render(render.Request{
 			Lines:  []string{"", " read_file llm/model.go", "", " Took 0.0s", "", " I will read llm/registry.go next.", "", " editor", " status"},
 			Width:  40,
 			Height: 6,
@@ -140,7 +141,7 @@ func TestRenderer(t *testing.T) {
 		var lines []string
 		for i := range 10 {
 			lines = append(lines, "Line "+strconv.Itoa(i))
-			if err := renderer.Render(Request{Lines: lines, Width: 20, Height: 5}); err != nil {
+			if err := renderer.Render(render.Request{Lines: lines, Width: 20, Height: 5}); err != nil {
 				t.Fatalf("render line %d: %v", i, err)
 			}
 		}
@@ -156,13 +157,13 @@ func TestRenderer(t *testing.T) {
 		for i := range lines {
 			lines[i] = "Line " + strconv.Itoa(i)
 		}
-		if err := renderer.Render(Request{Lines: lines, Width: 20, Height: 5}); err != nil {
+		if err := renderer.Render(render.Request{Lines: lines, Width: 20, Height: 5}); err != nil {
 			t.Fatalf("render initial frame: %v", err)
 		}
 
 		redraws := renderer.FullRedraws()
 		lines[0] = "Changed 0"
-		if err := renderer.Render(Request{Lines: lines, Width: 20, Height: 5}); err != nil {
+		if err := renderer.Render(render.Request{Lines: lines, Width: 20, Height: 5}); err != nil {
 			t.Fatalf("render changed frame: %v", err)
 		}
 		if renderer.FullRedraws() <= redraws {
@@ -174,11 +175,11 @@ func TestRenderer(t *testing.T) {
 		term := newVirtualTerminal(20, 12)
 		renderer := newRenderer(t, term)
 
-		if err := renderer.Render(Request{Lines: []string{"one", "two"}, Width: 20, Height: 12}); err != nil {
+		if err := renderer.Render(render.Request{Lines: []string{"one", "two"}, Width: 20, Height: 12}); err != nil {
 			t.Fatalf("render initial frame: %v", err)
 		}
 		writes := len(term.writes)
-		if err := renderer.Render(Request{Lines: []string{"one", "two"}, Width: 20, Height: 12}); err != nil {
+		if err := renderer.Render(render.Request{Lines: []string{"one", "two"}, Width: 20, Height: 12}); err != nil {
 			t.Fatalf("render unchanged frame: %v", err)
 		}
 		if len(term.writes) != writes {
@@ -190,10 +191,10 @@ func TestRenderer(t *testing.T) {
 		term := newVirtualTerminal(20, 12)
 		renderer := newRenderer(t, term)
 
-		if err := renderer.Render(Request{Lines: []string{"one"}, Width: 20, Height: 12}); err != nil {
+		if err := renderer.Render(render.Request{Lines: []string{"one"}, Width: 20, Height: 12}); err != nil {
 			t.Fatalf("render initial frame: %v", err)
 		}
-		if err := renderer.Render(Request{Lines: []string{"one"}, Width: 20, Height: 12, Force: true}); err != nil {
+		if err := renderer.Render(render.Request{Lines: []string{"one"}, Width: 20, Height: 12, Force: true}); err != nil {
 			t.Fatalf("render forced frame: %v", err)
 		}
 
@@ -204,10 +205,10 @@ func TestRenderer(t *testing.T) {
 	})
 }
 
-func newRenderer(t *testing.T, term *virtualTerminal) *Renderer {
+func newRenderer(t *testing.T, term *virtualTerminal) *render.Renderer {
 	t.Helper()
 
-	renderer, err := New(term)
+	renderer, err := render.New(term)
 	if err != nil {
 		t.Fatalf("create renderer: %v", err)
 	}
