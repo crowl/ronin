@@ -283,6 +283,10 @@ func (app *app) runCommand(ctx context.Context, item menuItem, command Command) 
 		if err != nil {
 			err = fmt.Errorf("failed to switch reasoning level: %w", err)
 		}
+	case SwitchTheme:
+		if !app.model.setTheme(typedCommand.Theme) {
+			err = fmt.Errorf("theme %q is unavailable", typedCommand.Name)
+		}
 	case InvokeSkill:
 		_ = typedCommand.Skill
 	case Exit:

@@ -13,6 +13,11 @@ type SwitchModel struct{ Model llm.Model }
 
 type SwitchReasoningLevel struct{ Level llm.ReasoningLevel }
 
+type SwitchTheme struct {
+	Name  string
+	Theme Theme
+}
+
 type InvokeSkill struct{ Skill agent.Skill }
 
 type Exit struct{}
@@ -24,5 +29,6 @@ func (StartNewConversation) command() {}
 func (CompactConversation) command()  {}
 func (SwitchModel) command()          {}
 func (SwitchReasoningLevel) command() {}
+func (SwitchTheme) command()          {}
 func (InvokeSkill) command()          {}
 func (Exit) command()                 {}

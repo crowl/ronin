@@ -24,6 +24,7 @@ func TestMenu(t *testing.T) {
 			CompactConversation{},
 			SwitchModel{Model: llm.Model{Provider: "test", Name: "model"}},
 			SwitchReasoningLevel{Level: llm.ReasoningLevelHigh},
+			SwitchTheme{Name: "light", Theme: LightTheme()},
 			InvokeSkill{Skill: agent.Skill{Name: "go", Description: "Go help"}},
 			Exit{},
 		})
@@ -32,7 +33,7 @@ func TestMenu(t *testing.T) {
 		}
 
 		got := menu.Items()
-		wantValues := []string{"/new", "/compact", "/model test:model", "/reasoning high", "/skill:go", "/exit"}
+		wantValues := []string{"/new", "/compact", "/model test:model", "/reasoning high", "/theme light", "/skill:go", "/exit"}
 		if len(got) != len(wantValues) {
 			t.Fatalf("item count\ngot:  %d %#v\nwant: %d", len(got), got, len(wantValues))
 		}
@@ -40,6 +41,26 @@ func TestMenu(t *testing.T) {
 			if got[i].Value != want {
 				t.Fatalf("item %d value\ngot:  %q\nwant: %q", i, got[i].Value, want)
 			}
+		}
+	})
+
+	t.Run("theme command item value and description", func(t *testing.T) {
+		menu, err := newMenu([]Command{
+			SwitchTheme{Name: "dark", Theme: DarkTheme()},
+		})
+		if err != nil {
+			t.Fatalf("create menu: %v", err)
+		}
+
+		got := menu.Items()
+		if len(got) != 1 {
+			t.Fatalf("item count\ngot:  %d\nwant: 1", len(got))
+		}
+		if got[0].Value != "/theme dark" {
+			t.Fatalf("item value\ngot:  %q\nwant: %q", got[0].Value, "/theme dark")
+		}
+		if got[0].Description != "switch theme to dark" {
+			t.Fatalf("item description\ngot:  %q\nwant: %q", got[0].Description, "switch theme to dark")
 		}
 	})
 

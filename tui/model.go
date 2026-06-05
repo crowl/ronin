@@ -314,6 +314,14 @@ func (m *appModel) tickWorking() modelUpdate {
 	return modelUpdate{Render: true}
 }
 
+func (m *appModel) setTheme(theme Theme) bool {
+	if theme.Empty() {
+		return false
+	}
+	m.theme = theme
+	return true
+}
+
 func (m *appModel) recordCommand(item menuItem, err error) {
 	m.boxes = append(m.boxes, systemMessageBox{
 		Text: item.Value,

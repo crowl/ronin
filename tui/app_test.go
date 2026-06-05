@@ -585,6 +585,48 @@ func TestTUIKeyHandling(t *testing.T) {
 	})
 }
 
+func TestSwitchThemeCommand(t *testing.T) {
+	t.Run("applies theme and records command", func(t *testing.T) {
+		app := newTestApp(t, testAppConfig{})
+
+		item := menuItem{Value: "/theme light", Command: SwitchTheme{Name: "light", Theme: LightTheme()}}
+		if err := app.runCommand(t.Context(), item, SwitchTheme{Name: "light", Theme: LightTheme()}); err != nil {
+			t.Fatalf("runCommand: %v", err)
+		}
+
+		if app.model.theme != LightTheme() {
+			t.Fatalf("theme not switched to light theme")
+		}
+		if len(app.model.boxes) != 1 {
+			t.Fatalf("box count\ngot:  %d\nwant: 1", len(app.model.boxes))
+		}
+		if _, ok := app.model.boxes[0].(systemMessageBox); !ok {
+			t.Fatalf("box type\ngot:  %T\nwant: %T", app.model.boxes[0], systemMessageBox{})
+		}
+	})
+
+	t.Run("empty theme is ignored and records error box", func(t *testing.T) {
+		app := newTestApp(t, testAppConfig{})
+		before := app.model.theme
+
+		item := menuItem{Value: "/theme broken", Command: SwitchTheme{Name: "broken"}}
+		if err := app.runCommand(t.Context(), item, SwitchTheme{Name: "broken"}); err != nil {
+			t.Fatalf("runCommand: %v", err)
+		}
+
+		if app.model.theme != before {
+			t.Fatalf("theme changed despite empty theme")
+		}
+		if len(app.model.boxes) != 2 {
+			t.Fatalf("box count\ngot:  %d\nwant: 2", len(app.model.boxes))
+		}
+		errorBox, ok := app.model.boxes[1].(errorMessageBox)
+		if !ok || !strings.Contains(errorBox.Text, `theme "broken" is unavailable`) {
+			t.Fatalf("error box\ngot:  %#v\nwant: theme unavailable error", app.model.boxes[1])
+		}
+	})
+}
+
 func TestCompactConversationCommand(t *testing.T) {
 	t.Run("runs asynchronously and finishes via event", func(t *testing.T) {
 		app := newTestApp(t, testAppConfig{})
