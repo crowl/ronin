@@ -222,31 +222,10 @@ func runPrompt(ctx context.Context, agt prompter, prompt string, output io.Write
 		return nil
 	}
 
-	writeStatus := func(text string) error {
-		if !atLineStart {
-			if _, err := io.WriteString(output, "\n"); err != nil {
-				return err
-			}
-		}
-		if _, err := fmt.Fprintf(output, "%s\n", text); err != nil {
-			return err
-		}
-		atLineStart = true
-		return nil
-	}
-
 	for event := range events {
 		switch typedEvent := event.(type) {
 		case agent.AssistantMessageDeltaReceived:
 			if err := writeText(typedEvent.Text); err != nil {
-				return err
-			}
-		case agent.ToolExecutionStarted:
-			if err := writeStatus("[tool] " + typedEvent.Tool.Name()); err != nil {
-				return err
-			}
-		case agent.ToolExecutionFailed:
-			if err := writeStatus(fmt.Sprintf("[tool error] %s: %v", typedEvent.Tool.Name(), typedEvent.Error)); err != nil {
 				return err
 			}
 		}

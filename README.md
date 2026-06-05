@@ -53,7 +53,7 @@ You can also provide a prompt directly and skip the TUI:
 go run ./cmd/ronin -prompt "summarize this project"
 ```
 
-In prompt mode, assistant text and compact tool status lines are written to stdout, then the process exits when the agent finishes.
+In prompt mode, assistant text is written to stdout, then the process exits when the agent finishes.
 
 ## Configuration
 

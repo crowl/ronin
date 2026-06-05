@@ -74,11 +74,13 @@ func TestRunPrompt(t *testing.T) {
 		}
 	})
 
-	t.Run("writes compact tool status lines", func(t *testing.T) {
+	t.Run("ignores tool events", func(t *testing.T) {
 		var output strings.Builder
+		toolErr := errors.New("exit status 1")
 		agt := fakePromptAgent{events: []agent.Event{
 			agent.AssistantMessageDeltaReceived{Text: "checking"},
 			agent.ToolExecutionStarted{Tool: fakePromptTool{name: "read_file"}},
+			agent.ToolExecutionFailed{Tool: fakePromptTool{name: "shell"}, Error: toolErr},
 			agent.AssistantMessageDeltaReceived{Text: "done"},
 		}}
 
@@ -86,38 +88,7 @@ func TestRunPrompt(t *testing.T) {
 			t.Fatalf("runPrompt() error = %v", err)
 		}
 
-		if got, want := output.String(), "checking\n[tool] read_file\ndone\n"; got != want {
-			t.Fatalf("output\ngot:  %q\nwant: %q", got, want)
-		}
-	})
-
-	t.Run("falls back to tool name for status", func(t *testing.T) {
-		var output strings.Builder
-		agt := fakePromptAgent{events: []agent.Event{
-			agent.ToolExecutionStarted{Tool: fakePromptTool{name: "shell"}},
-		}}
-
-		if err := runPrompt(t.Context(), agt, "prompt", &output); err != nil {
-			t.Fatalf("runPrompt() error = %v", err)
-		}
-
-		if got, want := output.String(), "[tool] shell\n"; got != want {
-			t.Fatalf("output\ngot:  %q\nwant: %q", got, want)
-		}
-	})
-
-	t.Run("writes compact tool error lines", func(t *testing.T) {
-		var output strings.Builder
-		toolErr := errors.New("exit status 1")
-		agt := fakePromptAgent{events: []agent.Event{
-			agent.ToolExecutionFailed{Tool: fakePromptTool{name: "shell"}, Error: toolErr},
-		}}
-
-		if err := runPrompt(t.Context(), agt, "prompt", &output); err != nil {
-			t.Fatalf("runPrompt() error = %v", err)
-		}
-
-		if got, want := output.String(), "[tool error] shell: exit status 1\n"; got != want {
+		if got, want := output.String(), "checkingdone\n"; got != want {
 			t.Fatalf("output\ngot:  %q\nwant: %q", got, want)
 		}
 	})
