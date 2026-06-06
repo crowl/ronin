@@ -156,7 +156,7 @@ func TestBuiltInThemeLogicalColors(t *testing.T) {
 						Code:      tui.Style{FG: "#E9ECEF", Bold: true},
 					},
 					ToolCall: tui.BoxStyle{
-						Container:   tui.Style{FG: "#E9ECEF", BG: "#343A40"},
+						Container:   tui.Style{FG: "#E9ECEF", BG: "#212529"},
 						Title:       tui.Style{FG: "#F8F9FA", Bold: true},
 						Meta:        tui.Style{FG: "#CED4DA"},
 						Muted:       tui.Style{FG: "#CED4DA"},
@@ -209,7 +209,7 @@ func TestBuiltInThemeLogicalColors(t *testing.T) {
 						Code:      tui.Style{FG: "#343A40", Bold: true},
 					},
 					ToolCall: tui.BoxStyle{
-						Container:   tui.Style{FG: "#343A40", BG: "#E9ECEF"},
+						Container:   tui.Style{FG: "#343A40", BG: "#F8F9FA"},
 						Title:       tui.Style{FG: "#212529", Bold: true},
 						Meta:        tui.Style{FG: "#6C757D"},
 						Muted:       tui.Style{FG: "#6C757D"},

@@ -162,7 +162,7 @@ func themeFromColors(c themeColors) Theme {
 				Code:      Style{FG: c.Text, Bold: true},
 			},
 			ToolCall: BoxStyle{
-				Container:   Style{FG: c.Text, BG: c.SurfaceRaised},
+				Container:   Style{FG: c.Text, BG: c.Surface},
 				Title:       Style{FG: c.TextStrong, Bold: true},
 				Meta:        Style{FG: c.TextMuted},
 				Muted:       Style{FG: c.TextMuted},
