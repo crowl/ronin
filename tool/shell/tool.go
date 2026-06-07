@@ -148,7 +148,7 @@ func (t *Tool) callIncremental(ctx context.Context, args Args, emit func(tool.Ar
 	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.Command("sh", "-c", args.Command)
+	cmd := createCommand(args.Command)
 
 	configureProcessGroup(cmd)
 
