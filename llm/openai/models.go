@@ -9,11 +9,11 @@ import (
 const provider = "openai"
 
 var (
-	Gpt55     = llm.Model{Provider: provider, Name: "gpt-5.5", ContextLimit: 272000}
-	Gpt55Pro  = llm.Model{Provider: provider, Name: "gpt-5.5-pro", ContextLimit: 1_000_000}
-	Gpt54     = llm.Model{Provider: provider, Name: "gpt-5.4", ContextLimit: 272000}
-	Gpt54Mini = llm.Model{Provider: provider, Name: "gpt-5.4-mini", ContextLimit: 272000}
-	Gpt54Nano = llm.Model{Provider: provider, Name: "gpt-5.4-nano", ContextLimit: 272000}
+	Gpt55     = llm.Model{Provider: provider, Name: "gpt-5.5", ContextWindow: 272000}
+	Gpt55Pro  = llm.Model{Provider: provider, Name: "gpt-5.5-pro", ContextWindow: 1_000_000}
+	Gpt54     = llm.Model{Provider: provider, Name: "gpt-5.4", ContextWindow: 272000}
+	Gpt54Mini = llm.Model{Provider: provider, Name: "gpt-5.4-mini", ContextWindow: 272000}
+	Gpt54Nano = llm.Model{Provider: provider, Name: "gpt-5.4-nano", ContextWindow: 272000}
 )
 
 func Setup(apiKey string) error {

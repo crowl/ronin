@@ -10,12 +10,12 @@ const provider = "google"
 
 func Setup(apiKey string) error {
 	models := []llm.Model{
-		{Provider: provider, Name: "gemini-3.1-pro-preview", ContextLimit: 1048576},
-		{Provider: provider, Name: "gemini-3.1-pro-preview-customtools", ContextLimit: 1048576},
-		{Provider: provider, Name: "gemini-3.1-flash-lite", ContextLimit: 1048576},
-		{Provider: provider, Name: "gemini-3.5-flash", ContextLimit: 1048576},
-		{Provider: provider, Name: "gemma-4-26b-a4b-it", ContextLimit: 256000},
-		{Provider: provider, Name: "gemma-4-31b-it", ContextLimit: 256000},
+		{Provider: provider, Name: "gemini-3.1-pro-preview", ContextWindow: 1048576},
+		{Provider: provider, Name: "gemini-3.1-pro-preview-customtools", ContextWindow: 1048576},
+		{Provider: provider, Name: "gemini-3.1-flash-lite", ContextWindow: 1048576},
+		{Provider: provider, Name: "gemini-3.5-flash", ContextWindow: 1048576},
+		{Provider: provider, Name: "gemma-4-26b-a4b-it", ContextWindow: 256000},
+		{Provider: provider, Name: "gemma-4-31b-it", ContextWindow: 256000},
 	}
 	for _, model := range models {
 		registeredModel := model

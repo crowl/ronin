@@ -414,10 +414,10 @@ func (p statusBar) Lines(width int, theme Theme) []string {
 
 	contextUsed := p.ContextUsage.InputTokens + p.ContextUsage.OutputTokens
 	contextPercent := 0.0
-	if p.Model.ContextLimit > 0 {
-		contextPercent = min(100.0, (float64(contextUsed)*100)/float64(p.Model.ContextLimit))
+	if p.Model.ContextWindow > 0 {
+		contextPercent = min(100.0, (float64(contextUsed)*100)/float64(p.Model.ContextWindow))
 	}
-	usageParts = append(usageParts, fmt.Sprintf("%.1f%%/%d", contextPercent, p.Model.ContextLimit))
+	usageParts = append(usageParts, fmt.Sprintf("%.1f%%/%d", contextPercent, p.Model.ContextWindow))
 	usageStatus := strings.Join(usageParts, " ")
 
 	modelStatus := fmt.Sprintf("%s %s", p.Model, p.ReasoningLevel)

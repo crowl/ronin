@@ -201,7 +201,7 @@ func TestTUIRendering(t *testing.T) {
 	t.Run("status bar context usage uses latest context usage", func(t *testing.T) {
 		lines := statusBar{
 			CWD:            ".",
-			Model:          llm.Model{Provider: "test", Name: "model", ContextLimit: 1000},
+			Model:          llm.Model{Provider: "test", Name: "model", ContextWindow: 1000},
 			ReasoningLevel: llm.ReasoningLevelOff,
 			ContextUsage:   llm.Usage{InputTokens: 100, OutputTokens: 50, CachedTokens: 25},
 		}.Lines(120, DefaultTheme())
@@ -890,9 +890,9 @@ func (a *fakeAgent) CWD() string {
 
 func (a *fakeAgent) Model() llm.Model {
 	return llm.Model{
-		Provider:     "test",
-		Name:         "model",
-		ContextLimit: 100,
+		Provider:      "test",
+		Name:          "model",
+		ContextWindow: 100,
 	}
 }
 
