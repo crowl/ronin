@@ -228,6 +228,14 @@ func (m *appModel) startCompaction(item menuItem) {
 	m.indicatorFrame = 0
 }
 
+func (m *appModel) startNewConversation() {
+	m.pendingTextDelta.Reset()
+	m.pendingTextDeltaKind = pendingTextDeltaNone
+	m.boxes = []box{systemMessageBox{Text: newConversationStartedMessage}}
+	m.boxLineCache.Reset()
+	m.saveError = ""
+}
+
 func (m *appModel) queueSteeringPrompt(prompt string) {
 	if m.steeringPrompt == "" {
 		m.steeringPrompt = prompt

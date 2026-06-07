@@ -567,20 +567,53 @@ func TestTUIKeyHandling(t *testing.T) {
 		}
 	})
 
+	t.Run("new conversation clears visible history on success", func(t *testing.T) {
+		app := newTestApp(t, testAppConfig{})
+		app.model.boxes = []box{
+			userMessageBox{Text: "old prompt"},
+			assistantMessageBox{Text: "old response"},
+		}
+		app.model.saveError = "previous save failed"
+		app.model.queueTextDelta(pendingTextDeltaAssistant, "pending response")
+
+		err := app.runCommand(t.Context(), menuItem{Value: "/new", Command: StartNewConversation{}}, StartNewConversation{})
+		if err != nil {
+			t.Fatalf("run command: %v", err)
+		}
+		if len(app.model.boxes) != 1 {
+			t.Fatalf("box count\ngot:  %d\nwant: 1\nboxes: %#v", len(app.model.boxes), app.model.boxes)
+		}
+		systemBox, ok := app.model.boxes[0].(systemMessageBox)
+		if !ok || systemBox.Text != newConversationStartedMessage {
+			t.Fatalf("new conversation box\ngot:  %#v\nwant: systemMessageBox %q", app.model.boxes[0], newConversationStartedMessage)
+		}
+		if app.model.saveError != "" {
+			t.Fatalf("save error\ngot:  %q\nwant empty", app.model.saveError)
+		}
+		if app.model.pendingTextDeltaKind != pendingTextDeltaNone || app.model.pendingTextDelta.Len() != 0 {
+			t.Fatalf("pending text delta was not cleared")
+		}
+	})
+
 	t.Run("menu item error renders error box", func(t *testing.T) {
 		agent := &fakeAgent{newConversationErr: errors.New("cannot reset")}
 		app := newTestApp(t, testAppConfig{Agent: agent})
+		app.model.boxes = []box{userMessageBox{Text: "old prompt"}}
 
 		err := app.runCommand(t.Context(), menuItem{Value: "/new", Command: StartNewConversation{}}, StartNewConversation{})
 		if err != nil {
 			t.Fatalf("handle menu item: %v", err)
 		}
-		if len(app.model.boxes) != 2 {
-			t.Fatalf("box count\ngot:  %d\nwant: 2", len(app.model.boxes))
+		if len(app.model.boxes) != 3 {
+			t.Fatalf("box count\ngot:  %d\nwant: 3", len(app.model.boxes))
 		}
-		errorBox, ok := app.model.boxes[1].(errorMessageBox)
+		userBox, ok := app.model.boxes[0].(userMessageBox)
+		if !ok || userBox.Text != "old prompt" {
+			t.Fatalf("existing history\ngot:  %#v\nwant: old prompt user box", app.model.boxes[0])
+		}
+		errorBox, ok := app.model.boxes[2].(errorMessageBox)
 		if !ok || !strings.Contains(errorBox.Text, "failed to start new conversation") || !strings.Contains(errorBox.Text, "cannot reset") {
-			t.Fatalf("error box\ngot:  %#v\nwant: failed new conversation error", app.model.boxes[1])
+			t.Fatalf("error box\ngot:  %#v\nwant: failed new conversation error", app.model.boxes[2])
 		}
 	})
 }

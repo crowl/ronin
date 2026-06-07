@@ -31,8 +31,9 @@ type appConfig struct {
 }
 
 const (
-	defaultInitialBoxesCapacity = 1024
-	defaultEventsBufferLen      = 64
+	defaultInitialBoxesCapacity   = 1024
+	defaultEventsBufferLen        = 64
+	newConversationStartedMessage = "New session started"
 )
 
 func newApp(cfg appConfig) (*app, error) {
@@ -273,7 +274,10 @@ func (app *app) runCommand(ctx context.Context, item menuItem, command Command) 
 		err = app.agent.NewConversation()
 		if err != nil {
 			err = fmt.Errorf("failed to start new conversation: %w", err)
+			break
 		}
+		app.model.startNewConversation()
+		return nil
 	case SwitchModel:
 		err = app.agent.SwitchModel(typedCommand.Model)
 		if err != nil {
