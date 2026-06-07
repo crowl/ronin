@@ -27,11 +27,13 @@ import (
 )
 
 func main() {
+	var resume bool
 	var prompt string
 	var workingDir string
 	var modelFlag string
 	var reasoningLevelFlag string
 
+	flag.BoolVar(&resume, "resume", false, "Load the active session for the working directory instead of starting a fresh session.")
 	flag.StringVar(&prompt, "prompt", "", "Prompt to run without launching the TUI.")
 	flag.StringVar(&workingDir, "working_dir", ".", "Working directory. Defaults to the current directory.")
 	flag.StringVar(&modelFlag, "model", "", "Model to use as <provider>:<name>. Overrides the configured model.")
@@ -151,20 +153,13 @@ func main() {
 		Now: func() time.Time { return time.Now() },
 	})
 
-	activeSession, ok, err := sessionStore.LoadActive(workingDir)
+	activeSession, err := startupSession(sessionStore, workingDir, session.Metadata{
+		Model:          settings.Model,
+		ReasoningLevel: settings.ReasoningLevel,
+	}, resume)
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "failed to load session: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
-	}
-	if !ok {
-		activeSession, err = sessionStore.Create(workingDir, session.Metadata{
-			Model:          settings.Model,
-			ReasoningLevel: settings.ReasoningLevel,
-		})
-		if err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "failed to create session: %v\n", err)
-			os.Exit(1)
-		}
 	}
 	activeSession.Model = config.Model{Provider: model.Provider, Name: model.Name}
 	activeSession.ReasoningLevel = string(level)
@@ -202,6 +197,24 @@ func main() {
 	}
 
 	os.Exit(0)
+}
+
+func startupSession(store session.Store, workingDir string, metadata session.Metadata, resume bool) (session.Session, error) {
+	if resume {
+		activeSession, ok, err := store.LoadActive(workingDir)
+		if err != nil {
+			return session.Session{}, fmt.Errorf("failed to load session: %w", err)
+		}
+		if ok {
+			return activeSession, nil
+		}
+	}
+
+	activeSession, err := store.Create(workingDir, metadata)
+	if err != nil {
+		return session.Session{}, fmt.Errorf("failed to create session: %w", err)
+	}
+	return activeSession, nil
 }
 
 func parseModelFlag(value string) (config.Model, error) {

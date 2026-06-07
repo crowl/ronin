@@ -10,6 +10,7 @@ import (
 	"github.com/crowl/ronin/agent"
 	"github.com/crowl/ronin/config"
 	"github.com/crowl/ronin/jsonschema"
+	"github.com/crowl/ronin/session"
 )
 
 func TestParseModelFlag(t *testing.T) {
@@ -53,6 +54,100 @@ func TestParseModelFlag(t *testing.T) {
 					t.Fatalf("parseModelFlag(%q) error = %v, want error containing %q", tc.value, err, tc.wantErr)
 				}
 			})
+		}
+	})
+}
+
+func TestStartupSession(t *testing.T) {
+	metadata := session.Metadata{
+		Model:          config.Model{Provider: "openai", Name: "gpt-5.5"},
+		ReasoningLevel: "medium",
+	}
+	workingDir := "/workspace"
+
+	t.Run("fresh startup creates a session without loading active session", func(t *testing.T) {
+		created := session.Session{ID: "created", WorkingDir: workingDir}
+		store := &fakeStartupSessionStore{created: created}
+
+		got, err := startupSession(store, workingDir, metadata, false)
+		if err != nil {
+			t.Fatalf("startupSession() error = %v", err)
+		}
+		if got.ID != created.ID {
+			t.Fatalf("startupSession() ID = %q, want %q", got.ID, created.ID)
+		}
+		if store.loadActiveCalls != 0 {
+			t.Fatalf("LoadActive calls = %d, want 0", store.loadActiveCalls)
+		}
+		if store.createCalls != 1 {
+			t.Fatalf("Create calls = %d, want 1", store.createCalls)
+		}
+		if store.createdWorkingDir != workingDir {
+			t.Fatalf("Create workingDir = %q, want %q", store.createdWorkingDir, workingDir)
+		}
+		if store.createdMetadata != metadata {
+			t.Fatalf("Create metadata = %#v, want %#v", store.createdMetadata, metadata)
+		}
+	})
+
+	t.Run("resume startup loads active session", func(t *testing.T) {
+		loaded := session.Session{ID: "loaded", WorkingDir: workingDir}
+		store := &fakeStartupSessionStore{loaded: loaded, loadedOK: true}
+
+		got, err := startupSession(store, workingDir, metadata, true)
+		if err != nil {
+			t.Fatalf("startupSession() error = %v", err)
+		}
+		if got.ID != loaded.ID {
+			t.Fatalf("startupSession() ID = %q, want %q", got.ID, loaded.ID)
+		}
+		if store.loadActiveCalls != 1 {
+			t.Fatalf("LoadActive calls = %d, want 1", store.loadActiveCalls)
+		}
+		if store.loadedWorkingDir != workingDir {
+			t.Fatalf("LoadActive workingDir = %q, want %q", store.loadedWorkingDir, workingDir)
+		}
+		if store.createCalls != 0 {
+			t.Fatalf("Create calls = %d, want 0", store.createCalls)
+		}
+	})
+
+	t.Run("resume startup creates session when active session is missing", func(t *testing.T) {
+		created := session.Session{ID: "created", WorkingDir: workingDir}
+		store := &fakeStartupSessionStore{created: created}
+
+		got, err := startupSession(store, workingDir, metadata, true)
+		if err != nil {
+			t.Fatalf("startupSession() error = %v", err)
+		}
+		if got.ID != created.ID {
+			t.Fatalf("startupSession() ID = %q, want %q", got.ID, created.ID)
+		}
+		if store.loadActiveCalls != 1 {
+			t.Fatalf("LoadActive calls = %d, want 1", store.loadActiveCalls)
+		}
+		if store.createCalls != 1 {
+			t.Fatalf("Create calls = %d, want 1", store.createCalls)
+		}
+	})
+
+	t.Run("returns load error", func(t *testing.T) {
+		wantErr := errors.New("read workspace")
+		store := &fakeStartupSessionStore{loadErr: wantErr}
+
+		_, err := startupSession(store, workingDir, metadata, true)
+		if err == nil || !errors.Is(err, wantErr) || !strings.Contains(err.Error(), "failed to load session") {
+			t.Fatalf("startupSession() error = %v, want load error wrapping %v", err, wantErr)
+		}
+	})
+
+	t.Run("returns create error", func(t *testing.T) {
+		wantErr := errors.New("write session")
+		store := &fakeStartupSessionStore{createErr: wantErr}
+
+		_, err := startupSession(store, workingDir, metadata, false)
+		if err == nil || !errors.Is(err, wantErr) || !strings.Contains(err.Error(), "failed to create session") {
+			t.Fatalf("startupSession() error = %v, want create error wrapping %v", err, wantErr)
 		}
 	})
 }
@@ -103,6 +198,43 @@ func TestRunPrompt(t *testing.T) {
 			t.Fatalf("runPrompt() error = %v, want %v", err, wantErr)
 		}
 	})
+}
+
+type fakeStartupSessionStore struct {
+	loaded   session.Session
+	loadedOK bool
+	loadErr  error
+
+	created   session.Session
+	createErr error
+
+	loadActiveCalls int
+	createCalls     int
+
+	loadedWorkingDir  string
+	createdWorkingDir string
+	createdMetadata   session.Metadata
+}
+
+func (s *fakeStartupSessionStore) LoadActive(workingDir string) (session.Session, bool, error) {
+	s.loadActiveCalls++
+	s.loadedWorkingDir = workingDir
+	return s.loaded, s.loadedOK, s.loadErr
+}
+
+func (s *fakeStartupSessionStore) Create(workingDir string, metadata session.Metadata) (session.Session, error) {
+	s.createCalls++
+	s.createdWorkingDir = workingDir
+	s.createdMetadata = metadata
+	return s.created, s.createErr
+}
+
+func (s *fakeStartupSessionStore) Save(session.Session) error {
+	return nil
+}
+
+func (s *fakeStartupSessionStore) Clear(string) error {
+	return nil
 }
 
 type fakePromptAgent struct {

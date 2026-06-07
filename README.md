@@ -41,6 +41,12 @@ go run ./cmd/ronin
 
 The default config currently uses an OpenAI model. If you only set `GEMINI_API_KEY` or `ANTHROPIC_API_KEY`, update the configured model or pass `-model <provider>:<name>` for one of the registered models.
 
+By default, each run starts a fresh session. To load the active session for the working directory instead, pass `--resume`:
+
+```sh
+go run ./cmd/ronin --resume
+```
+
 You can run *ronin* against a specific working directory with:
 
 ```sh
