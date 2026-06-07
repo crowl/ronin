@@ -342,7 +342,7 @@ func (p menuPresenter) Lines(width int, theme Theme) []string {
 
 	end := min(len(p.Items), start+menuMaxVisibleItems)
 
-	columns := p.columns(start, end)
+	columns := p.columns()
 
 	out := make([]string, 0, end-start)
 	for i := start; i < end; i++ {
@@ -357,10 +357,10 @@ type menuColumns struct {
 	ArgumentWidth int
 }
 
-// columns aligns command names and arguments across the visible menu rows.
-func (p menuPresenter) columns(start, end int) menuColumns {
+// columns aligns command names and arguments across all menu rows.
+func (p menuPresenter) columns() menuColumns {
 	var columns menuColumns
-	for i := start; i < end; i++ {
+	for i := range p.Items {
 		name, argument := p.Items[i].displayParts()
 		if w := text.VisibleLen(name); w > columns.NameWidth {
 			columns.NameWidth = w

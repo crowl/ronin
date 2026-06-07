@@ -46,6 +46,41 @@ func TestMenuPresenterLines(t *testing.T) {
 		}
 	})
 
+	t.Run("columns stay fixed when widest items scroll off screen", func(t *testing.T) {
+		items := []menuItem{
+			{Name: "/widest-command", Argument: "widest-argument-value", Value: "/widest-command widest-argument-value", Description: "widest command"},
+			{Name: "/new", Value: "/new", Description: "start a fresh conversation"},
+			{Name: "/model", Argument: "openai:gpt", Value: "/model openai:gpt", Description: "switch model"},
+			{Name: "/theme", Argument: "dark", Value: "/theme dark", Description: "switch theme"},
+			{Name: "/exit", Value: "/exit", Description: "exit from ronin"},
+			{Name: "/compact", Value: "/compact", Description: "compact conversation"},
+			{Name: "/short", Value: "/short", Description: "short command"},
+		}
+
+		p := menuPresenter{SelectedIndex: menuMaxVisibleItems, Items: items}
+		lines := p.Lines(120, theme)
+		if len(lines) != menuMaxVisibleItems {
+			t.Fatalf("line count\ngot:  %d\nwant: %d", len(lines), menuMaxVisibleItems)
+		}
+
+		wantArgumentColumn := len(menuItemPrefix) + text.VisibleLen("/widest-command") + menuDescriptionGap
+		wantDescriptionColumn := wantArgumentColumn + text.VisibleLen("widest-argument-value") + menuDescriptionGap
+
+		firstVisibleItem := items[1]
+		firstVisibleLine := text.StripANSI(lines[0])
+		descriptionColumn := text.VisibleLen(firstVisibleLine[:strings.Index(firstVisibleLine, firstVisibleItem.Description)])
+		if descriptionColumn != wantDescriptionColumn {
+			t.Fatalf("description column with widest item off screen\ngot:  %d\nwant: %d\nline: %q", descriptionColumn, wantDescriptionColumn, firstVisibleLine)
+		}
+
+		lastVisibleItem := items[menuMaxVisibleItems]
+		lastVisibleLine := text.StripANSI(lines[len(lines)-1])
+		descriptionColumn = text.VisibleLen(lastVisibleLine[:strings.Index(lastVisibleLine, lastVisibleItem.Description)])
+		if descriptionColumn != wantDescriptionColumn {
+			t.Fatalf("description column with widest item off screen\ngot:  %d\nwant: %d\nline: %q", descriptionColumn, wantDescriptionColumn, lastVisibleLine)
+		}
+	})
+
 	t.Run("selected row uses a background highlight, not reverse", func(t *testing.T) {
 		p := menuPresenter{SelectedIndex: 1, Items: items}
 		lines := p.Lines(120, theme)
