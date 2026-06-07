@@ -85,9 +85,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	defaultLLM, err := llm.Load(model, level)
+	assistant, err := llm.LoadAssistant(model, level)
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "failed to load configured LLM: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "failed to load LLM assistant: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -136,7 +136,7 @@ func main() {
 	}
 
 	compactor, err := agent.NewDefaultCompactor(agent.DefaultCompactorConfig{
-		LLM: defaultLLM,
+		LLM: assistant,
 		Now: func() time.Time { return time.Now() },
 	})
 	if err != nil {
@@ -146,7 +146,7 @@ func main() {
 
 	agt, err := agent.New(agent.Config{
 		CWD:          workingDir,
-		LLM:          defaultLLM,
+		Assistant:    assistant,
 		Compactor:    compactor,
 		Tools:        tools,
 		SystemPrompt: systemPrompt,

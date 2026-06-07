@@ -161,7 +161,7 @@ func (f *fakeStructuredAssistant) SetReasoningLevel(llm.ReasoningLevel) error {
 	return nil
 }
 
-func (f *fakeStructuredAssistant) PredictNext(context.Context, llm.PredictNextRequest) (<-chan llm.Event, <-chan error) {
+func (f *fakeStructuredAssistant) PredictNext(context.Context, llm.PredictNextRequest) (<-chan llm.PredictionEvent, <-chan error) {
 	panic("not implemented")
 }
 

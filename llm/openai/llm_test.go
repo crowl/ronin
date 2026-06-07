@@ -362,7 +362,7 @@ func TestPredictNextStructured(t *testing.T) {
 	})
 }
 
-func predictWithStream(t *testing.T, stream string) ([]llm.Event, error) {
+func predictWithStream(t *testing.T, stream string) ([]llm.PredictionEvent, error) {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -385,8 +385,8 @@ func predictWithStream(t *testing.T, stream string) ([]llm.Event, error) {
 	return events, <-errs
 }
 
-func drainEvents(events <-chan llm.Event) []llm.Event {
-	var drained []llm.Event
+func drainEvents(events <-chan llm.PredictionEvent) []llm.PredictionEvent {
+	var drained []llm.PredictionEvent
 	for event := range events {
 		drained = append(drained, event)
 	}

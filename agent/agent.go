@@ -32,7 +32,7 @@ type ToolCallTitleProvider interface {
 
 type Config struct {
 	CWD          string
-	LLM          llm.Assistant
+	Assistant    llm.Assistant
 	Compactor    Compactor
 	Tools        []Tool
 	SystemPrompt string
@@ -44,7 +44,7 @@ type Config struct {
 const defaultMaxTurns = 512
 
 func New(cfg Config) (*Agent, error) {
-	if cfg.LLM == nil {
+	if cfg.Assistant == nil {
 		return nil, errors.New("llm is required")
 	}
 	now := cfg.Now
@@ -79,7 +79,7 @@ func New(cfg Config) (*Agent, error) {
 		systemPrompt: cfg.SystemPrompt,
 		maxTurns:     maxTurns,
 		now:          now,
-		llm:          cfg.LLM,
+		assistant:    cfg.Assistant,
 		messages:     append([]llm.Message(nil), cfg.Messages...),
 		toolDefs:     toolDefs,
 		toolByName:   toolByName,
@@ -93,7 +93,7 @@ type Agent struct {
 	maxTurns     int
 	now          func() time.Time
 
-	llm          llm.Assistant
+	assistant    llm.Assistant
 	messages     []llm.Message
 	contextUsage llm.Usage
 
@@ -108,11 +108,11 @@ func (a *Agent) CWD() string {
 }
 
 func (a *Agent) Model() llm.Model {
-	return a.llm.Model()
+	return a.assistant.Model()
 }
 
 func (a *Agent) ReasoningLevel() llm.ReasoningLevel {
-	return a.llm.ReasoningLevel()
+	return a.assistant.ReasoningLevel()
 }
 
 func (a *Agent) ContextUsage() llm.Usage {
@@ -124,16 +124,16 @@ func (a *Agent) Messages() []llm.Message {
 }
 
 func (a *Agent) SwitchModel(model llm.Model) error {
-	newLLM, err := llm.Load(model, a.llm.ReasoningLevel())
+	newAssistant, err := llm.LoadAssistant(model, a.assistant.ReasoningLevel())
 	if err != nil {
 		return fmt.Errorf("select llm: %w", err)
 	}
-	a.llm = newLLM
+	a.assistant = newAssistant
 	return nil
 }
 
 func (a *Agent) SwitchReasoningLevel(lvl llm.ReasoningLevel) error {
-	if err := a.llm.SetReasoningLevel(lvl); err != nil {
+	if err := a.assistant.SetReasoningLevel(lvl); err != nil {
 		return fmt.Errorf("set reasoning level: %w", err)
 	}
 	return nil
@@ -229,9 +229,9 @@ func (a *Agent) run(ctx context.Context, prompt string, events chan<- Event) err
 			Messages:     append([]llm.Message(nil), a.messages...),
 		}
 
-		llmEventsCh, llmErrsCh := a.llm.PredictNext(ctx, request)
+		predictionEventsCh, predictionErrCh := a.assistant.PredictNext(ctx, request)
 
-		for event := range llmEventsCh {
+		for event := range predictionEventsCh {
 			switch typedEvent := event.(type) {
 			case llm.PredictionStarted:
 				select {
@@ -262,7 +262,7 @@ func (a *Agent) run(ctx context.Context, prompt string, events chan<- Event) err
 			}
 		}
 
-		if err := <-llmErrsCh; err != nil {
+		if err := <-predictionErrCh; err != nil {
 			return finish(fmt.Errorf("llm prediction error: %w", err))
 		}
 

@@ -40,7 +40,7 @@ type PredictionFinished struct {
 	StopReason StopReason
 }
 
-type Event interface{ event() }
+type PredictionEvent interface{ event() }
 
 func (PredictionStarted) event()      {}
 func (BlockStarted) event()           {}

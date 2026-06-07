@@ -29,7 +29,7 @@ func Models() []Model {
 	return models
 }
 
-func Register(model Model, factory Factory) error {
+func RegisterModel(model Model, factory Factory) error {
 	if factory == nil {
 		return fmt.Errorf("invalid(nil) llm factory for model: %s", model)
 	}
@@ -43,7 +43,7 @@ func Register(model Model, factory Factory) error {
 	return nil
 }
 
-func Load(model Model, level ReasoningLevel) (Assistant, error) {
+func LoadAssistant(model Model, level ReasoningLevel) (Assistant, error) {
 	registryMu.RLock()
 	factory, ok := registry[model]
 	registryMu.RUnlock()

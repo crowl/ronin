@@ -85,8 +85,8 @@ func (s *LLM) SetReasoningLevel(level llm.ReasoningLevel) error {
 	return nil
 }
 
-func (s *LLM) PredictNext(ctx context.Context, req llm.PredictNextRequest) (<-chan llm.Event, <-chan error) {
-	events := make(chan llm.Event, 32)
+func (s *LLM) PredictNext(ctx context.Context, req llm.PredictNextRequest) (<-chan llm.PredictionEvent, <-chan error) {
+	events := make(chan llm.PredictionEvent, 32)
 	errs := make(chan error, 1)
 	go func() {
 		defer close(events)
@@ -154,7 +154,7 @@ func (s *LLM) PredictNextStructured(ctx context.Context, req llm.PredictNextStru
 	return nil, errors.New("anthropic structured response contained no text JSON")
 }
 
-func (s *LLM) stream(ctx context.Context, req llm.PredictNextRequest, events chan<- llm.Event) error {
+func (s *LLM) stream(ctx context.Context, req llm.PredictNextRequest, events chan<- llm.PredictionEvent) error {
 	payload, err := s.buildPayload(req)
 	if err != nil {
 		return err
@@ -538,7 +538,7 @@ func (state *anthropicStreamState) stopReason() llm.StopReason {
 	return llm.StopReasonFinished
 }
 
-func handleData(ctx context.Context, data string, state *anthropicStreamState, events chan<- llm.Event) error {
+func handleData(ctx context.Context, data string, state *anthropicStreamState, events chan<- llm.PredictionEvent) error {
 	if data == "" || data == "[DONE]" {
 		return nil
 	}
@@ -593,7 +593,7 @@ func handleData(ctx context.Context, data string, state *anthropicStreamState, e
 	}
 }
 
-func (state *anthropicStreamState) startBlock(ctx context.Context, index int, block *anthropicContentBlock, events chan<- llm.Event) error {
+func (state *anthropicStreamState) startBlock(ctx context.Context, index int, block *anthropicContentBlock, events chan<- llm.PredictionEvent) error {
 	if block == nil {
 		return errors.New("anthropic content_block_start missing content_block")
 	}
@@ -617,7 +617,7 @@ func (state *anthropicStreamState) startBlock(ctx context.Context, index int, bl
 	return sendEvent(ctx, events, llm.BlockStarted{Index: index, Kind: kind})
 }
 
-func (state *anthropicStreamState) applyDelta(ctx context.Context, index int, delta *anthropicStreamDelta, events chan<- llm.Event) error {
+func (state *anthropicStreamState) applyDelta(ctx context.Context, index int, delta *anthropicStreamDelta, events chan<- llm.PredictionEvent) error {
 	if delta == nil {
 		return errors.New("anthropic content_block_delta missing delta")
 	}
@@ -643,7 +643,7 @@ func (state *anthropicStreamState) applyDelta(ctx context.Context, index int, de
 	}
 }
 
-func (state *anthropicStreamState) stopBlock(ctx context.Context, index int, events chan<- llm.Event) error {
+func (state *anthropicStreamState) stopBlock(ctx context.Context, index int, events chan<- llm.PredictionEvent) error {
 	partial := state.blocks[index]
 	if partial == nil {
 		return fmt.Errorf("anthropic stop for unknown content block index %d", index)
@@ -696,7 +696,7 @@ func errorText(err error) string {
 	return err.Error()
 }
 
-func sendEvent(ctx context.Context, events chan<- llm.Event, event llm.Event) error {
+func sendEvent(ctx context.Context, events chan<- llm.PredictionEvent, event llm.PredictionEvent) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()

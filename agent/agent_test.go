@@ -19,14 +19,14 @@ import (
 
 func TestNew(t *testing.T) {
 	t.Run("rejects nil tool", func(t *testing.T) {
-		_, err := agent.New(agent.Config{LLM: &fakeLLM{}, Tools: []agent.Tool{nil}})
+		_, err := agent.New(agent.Config{Assistant: &fakeLLM{}, Tools: []agent.Tool{nil}})
 		if err == nil || !strings.Contains(err.Error(), "nil") {
 			t.Fatalf("New() error = %v, want nil tool error", err)
 		}
 	})
 
 	t.Run("rejects duplicate tool names", func(t *testing.T) {
-		_, err := agent.New(agent.Config{LLM: &fakeLLM{}, Tools: []agent.Tool{fakeTool{name: "same"}, fakeTool{name: "same"}}})
+		_, err := agent.New(agent.Config{Assistant: &fakeLLM{}, Tools: []agent.Tool{fakeTool{name: "same"}, fakeTool{name: "same"}}})
 		if err == nil || !strings.Contains(err.Error(), "duplicate tool") {
 			t.Fatalf("New() error = %v, want duplicate tool error", err)
 		}
@@ -36,7 +36,7 @@ func TestNew(t *testing.T) {
 func TestPromptLifecycle(t *testing.T) {
 	t.Run("llm error emits processing error and ended", func(t *testing.T) {
 		wantErr := errors.New("boom")
-		agt, err := agent.New(agent.Config{LLM: &fakeLLM{err: wantErr}})
+		agt, err := agent.New(agent.Config{Assistant: &fakeLLM{err: wantErr}})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -55,7 +55,7 @@ func TestPromptLifecycle(t *testing.T) {
 		toolErr := errors.New("tool failed")
 		tool := fakeTool{name: "fail", err: toolErr}
 		agt, err := agent.New(agent.Config{
-			LLM: &fakeLLM{eventBatches: [][]llm.Event{
+			Assistant: &fakeLLM{eventBatches: [][]llm.PredictionEvent{
 				{
 					llm.BlockEnded{Block: llm.ToolCallBlock{ID: "call-1", Name: "fail", Arguments: json.RawMessage(`{}`)}},
 					llm.PredictionFinished{},
@@ -84,7 +84,7 @@ func TestPromptLifecycle(t *testing.T) {
 
 	t.Run("unknown tool call emits failed and ended", func(t *testing.T) {
 		agt, err := agent.New(agent.Config{
-			LLM: &fakeLLM{eventBatches: [][]llm.Event{
+			Assistant: &fakeLLM{eventBatches: [][]llm.PredictionEvent{
 				{
 					llm.BlockEnded{Block: llm.ToolCallBlock{ID: "call-1", Name: "missing", Arguments: json.RawMessage(`{}`)}},
 					llm.PredictionFinished{},
@@ -113,7 +113,7 @@ func TestPromptLifecycle(t *testing.T) {
 	t.Run("configured clock controls timestamps", func(t *testing.T) {
 		want := time.Unix(1700000000, 123000000)
 		agt, err := agent.New(agent.Config{
-			LLM: &fakeLLM{events: []llm.Event{
+			Assistant: &fakeLLM{events: []llm.PredictionEvent{
 				llm.TextDelta{Text: "hello"},
 				llm.BlockEnded{Block: llm.TextBlock{Text: "hello"}},
 				llm.PredictionFinished{},
@@ -140,7 +140,7 @@ func TestPromptLifecycle(t *testing.T) {
 	t.Run("incremental tool emits chunks before final result", func(t *testing.T) {
 		incrementalTool := fakeIncrementalTool{fakeTool: fakeTool{name: "stream", result: fakeResult{artifacts: []tool.Artifact{tool.ShellStreamArtifact{Stream: tool.ShellStreamStdout, Content: "final"}}}}, artifacts: []tool.Artifact{tool.ShellStreamArtifact{Stream: tool.ShellStreamStdout, Content: "live"}}}
 		agt, err := agent.New(agent.Config{
-			LLM: &fakeLLM{eventBatches: [][]llm.Event{
+			Assistant: &fakeLLM{eventBatches: [][]llm.PredictionEvent{
 				{
 					llm.BlockEnded{Block: llm.ToolCallBlock{ID: "call-1", Name: "stream", Arguments: json.RawMessage(`{}`)}},
 					llm.PredictionFinished{},
@@ -195,8 +195,8 @@ func TestPromptLifecycle(t *testing.T) {
 
 func TestNewConversation(t *testing.T) {
 	agt, err := agent.New(agent.Config{
-		LLM:      &fakeLLM{},
-		Messages: []llm.Message{llm.UserMessage{Text: "old"}},
+		Assistant: &fakeLLM{},
+		Messages:  []llm.Message{llm.UserMessage{Text: "old"}},
 	})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
@@ -215,7 +215,7 @@ func TestCompactConversation(t *testing.T) {
 		compacted := []llm.Message{llm.UserMessage{Text: "compacted"}}
 		compactor := &fakeCompactor{messages: compacted}
 		agt, err := agent.New(agent.Config{
-			LLM:       &fakeLLM{},
+			Assistant: &fakeLLM{},
 			Compactor: compactor,
 			Messages:  []llm.Message{llm.UserMessage{Text: "old"}},
 		})
@@ -238,7 +238,7 @@ func TestCompactConversation(t *testing.T) {
 	t.Run("preserves_messages_on_failure", func(t *testing.T) {
 		wantErr := errors.New("compact failed")
 		agt, err := agent.New(agent.Config{
-			LLM:       &fakeLLM{},
+			Assistant: &fakeLLM{},
 			Compactor: &fakeCompactor{err: wantErr},
 			Messages:  []llm.Message{llm.UserMessage{Text: "old"}},
 		})
@@ -259,7 +259,7 @@ func TestCompactConversation(t *testing.T) {
 	t.Run("propagates_caller_context", func(t *testing.T) {
 		compactor := &fakeCompactor{messages: []llm.Message{llm.UserMessage{Text: "compacted"}}}
 		agt, err := agent.New(agent.Config{
-			LLM:       &fakeLLM{},
+			Assistant: &fakeLLM{},
 			Compactor: compactor,
 			Messages:  []llm.Message{llm.UserMessage{Text: "old"}},
 		})
@@ -278,7 +278,7 @@ func TestCompactConversation(t *testing.T) {
 	})
 
 	t.Run("requires_configured_compactor", func(t *testing.T) {
-		agt, err := agent.New(agent.Config{LLM: &fakeLLM{}})
+		agt, err := agent.New(agent.Config{Assistant: &fakeLLM{}})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -358,8 +358,8 @@ func writeFile(t *testing.T, path string, content string) {
 }
 
 type fakeLLM struct {
-	events         []llm.Event
-	eventBatches   [][]llm.Event
+	events         []llm.PredictionEvent
+	eventBatches   [][]llm.PredictionEvent
 	model          llm.Model
 	reasoningLevel llm.ReasoningLevel
 	err            error
@@ -379,7 +379,7 @@ func (f *fakeLLM) SetReasoningLevel(level llm.ReasoningLevel) error {
 	return nil
 }
 
-func (f *fakeLLM) PredictNext(_ context.Context, _ llm.PredictNextRequest) (<-chan llm.Event, <-chan error) {
+func (f *fakeLLM) PredictNext(_ context.Context, _ llm.PredictNextRequest) (<-chan llm.PredictionEvent, <-chan error) {
 	events := f.events
 	if f.eventBatches != nil {
 		if f.predictCalls < len(f.eventBatches) {
@@ -388,7 +388,7 @@ func (f *fakeLLM) PredictNext(_ context.Context, _ llm.PredictNextRequest) (<-ch
 			events = nil
 		}
 	}
-	eventsCh := make(chan llm.Event, len(events))
+	eventsCh := make(chan llm.PredictionEvent, len(events))
 	for _, event := range events {
 		eventsCh <- event
 	}

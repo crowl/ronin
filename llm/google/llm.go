@@ -84,8 +84,8 @@ func (s *LLM) SetReasoningLevel(level llm.ReasoningLevel) error {
 	return nil
 }
 
-func (s *LLM) PredictNext(ctx context.Context, req llm.PredictNextRequest) (<-chan llm.Event, <-chan error) {
-	events := make(chan llm.Event, 32)
+func (s *LLM) PredictNext(ctx context.Context, req llm.PredictNextRequest) (<-chan llm.PredictionEvent, <-chan error) {
+	events := make(chan llm.PredictionEvent, 32)
 	errs := make(chan error, 1)
 	go func() {
 		defer close(events)
@@ -157,7 +157,7 @@ func (s *LLM) PredictNextStructured(ctx context.Context, req llm.PredictNextStru
 	return json.RawMessage(text), nil
 }
 
-func (s *LLM) stream(ctx context.Context, req llm.PredictNextRequest, events chan<- llm.Event) error {
+func (s *LLM) stream(ctx context.Context, req llm.PredictNextRequest, events chan<- llm.PredictionEvent) error {
 	payload, err := s.buildPayload(req)
 	if err != nil {
 		return err
@@ -530,7 +530,7 @@ func (state geminiStreamState) stopReason() llm.StopReason {
 	return llm.StopReasonFinished
 }
 
-func handleData(ctx context.Context, data string, state *geminiStreamState, events chan<- llm.Event) error {
+func handleData(ctx context.Context, data string, state *geminiStreamState, events chan<- llm.PredictionEvent) error {
 	if data == "" || data == "[DONE]" {
 		return nil
 	}
@@ -618,7 +618,7 @@ func handleData(ctx context.Context, data string, state *geminiStreamState, even
 	return nil
 }
 
-func sendEvent(ctx context.Context, events chan<- llm.Event, event llm.Event) error {
+func sendEvent(ctx context.Context, events chan<- llm.PredictionEvent, event llm.PredictionEvent) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()

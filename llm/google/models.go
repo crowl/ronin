@@ -19,7 +19,7 @@ func Setup(apiKey string) error {
 	}
 	for _, model := range models {
 		registeredModel := model
-		if err := llm.Register(registeredModel, func(level llm.ReasoningLevel) (llm.Assistant, error) {
+		if err := llm.RegisterModel(registeredModel, func(level llm.ReasoningLevel) (llm.Assistant, error) {
 			newLLM, err := NewLLM(LLMConfig{
 				APIKey:         apiKey,
 				Model:          registeredModel,

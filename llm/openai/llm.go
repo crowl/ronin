@@ -83,8 +83,8 @@ func (s *LLM) SetReasoningLevel(level llm.ReasoningLevel) error {
 	return nil
 }
 
-func (s *LLM) PredictNext(ctx context.Context, req llm.PredictNextRequest) (<-chan llm.Event, <-chan error) {
-	events := make(chan llm.Event, 16)
+func (s *LLM) PredictNext(ctx context.Context, req llm.PredictNextRequest) (<-chan llm.PredictionEvent, <-chan error) {
+	events := make(chan llm.PredictionEvent, 16)
 	errs := make(chan error, 1)
 	go func() {
 		defer close(events)
@@ -150,7 +150,7 @@ func (s *LLM) PredictNextStructured(ctx context.Context, req llm.PredictNextStru
 	return json.RawMessage(text), nil
 }
 
-func (s *LLM) stream(ctx context.Context, req llm.PredictNextRequest, events chan<- llm.Event) error {
+func (s *LLM) stream(ctx context.Context, req llm.PredictNextRequest, events chan<- llm.PredictionEvent) error {
 	payload, err := s.buildPayload(req)
 	if err != nil {
 		return err
@@ -573,7 +573,7 @@ func (call *partialCall) toToolCall() (llm.ToolCallBlock, error) {
 	}, nil
 }
 
-func handleData(ctx context.Context, data string, state *streamState, events chan<- llm.Event) error {
+func handleData(ctx context.Context, data string, state *streamState, events chan<- llm.PredictionEvent) error {
 	if data == "" || data == "[DONE]" {
 		return nil
 	}
@@ -662,7 +662,7 @@ func handleData(ctx context.Context, data string, state *streamState, events cha
 	return nil
 }
 
-func (state *streamState) startBlock(ctx context.Context, events chan<- llm.Event, kind llm.BlockKind) error {
+func (state *streamState) startBlock(ctx context.Context, events chan<- llm.PredictionEvent, kind llm.BlockKind) error {
 	if state.blockStarted {
 		if state.blockKind == kind {
 			return nil
@@ -676,7 +676,7 @@ func (state *streamState) startBlock(ctx context.Context, events chan<- llm.Even
 	return sendEvent(ctx, events, llm.BlockStarted{Index: state.blockIndex, Kind: kind})
 }
 
-func (state *streamState) finishOpenBlock(ctx context.Context, events chan<- llm.Event) error {
+func (state *streamState) finishOpenBlock(ctx context.Context, events chan<- llm.PredictionEvent) error {
 	if state.text.Len() > 0 {
 		return state.finishText(ctx, events)
 	}
@@ -686,7 +686,7 @@ func (state *streamState) finishOpenBlock(ctx context.Context, events chan<- llm
 	return nil
 }
 
-func (state *streamState) finishText(ctx context.Context, events chan<- llm.Event) error {
+func (state *streamState) finishText(ctx context.Context, events chan<- llm.PredictionEvent) error {
 	if state.text.Len() == 0 {
 		return nil
 	}
@@ -701,7 +701,7 @@ func (state *streamState) finishText(ctx context.Context, events chan<- llm.Even
 	return nil
 }
 
-func (state *streamState) finishThinking(ctx context.Context, events chan<- llm.Event) error {
+func (state *streamState) finishThinking(ctx context.Context, events chan<- llm.PredictionEvent) error {
 	if state.thinking.Len() == 0 {
 		return nil
 	}
@@ -716,7 +716,7 @@ func (state *streamState) finishThinking(ctx context.Context, events chan<- llm.
 	return nil
 }
 
-func emitToolCallIfReady(ctx context.Context, state *streamState, call *partialCall, events chan<- llm.Event) error {
+func emitToolCallIfReady(ctx context.Context, state *streamState, call *partialCall, events chan<- llm.PredictionEvent) error {
 	if call.Emitted || call.ID == "" || call.Name == "" || !call.ArgumentsDone {
 		return nil
 	}
@@ -803,7 +803,7 @@ func errorText(err error) string {
 	return err.Error()
 }
 
-func sendEvent(ctx context.Context, events chan<- llm.Event, event llm.Event) error {
+func sendEvent(ctx context.Context, events chan<- llm.PredictionEvent, event llm.PredictionEvent) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()

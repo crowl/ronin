@@ -11,7 +11,7 @@ type Assistant interface {
 	Model() Model
 	ReasoningLevel() ReasoningLevel
 	SetReasoningLevel(ReasoningLevel) error
-	PredictNext(context.Context, PredictNextRequest) (<-chan Event, <-chan error)
+	PredictNext(context.Context, PredictNextRequest) (<-chan PredictionEvent, <-chan error)
 	PredictNextStructured(context.Context, PredictNextStructuredRequest) (json.RawMessage, error)
 }
 
