@@ -875,6 +875,7 @@ func (t *fakeTerminal) Size() (terminal.Size, error) {
 }
 
 type fakeAgent struct {
+	messages                []llm.Message
 	newConversationErr      error
 	compactConversationErr  error
 	switchModelErr          error
@@ -886,6 +887,14 @@ type fakeAgent struct {
 
 func (a *fakeAgent) CWD() string {
 	return "."
+}
+
+func (a *fakeAgent) Messages() []llm.Message {
+	return a.messages
+}
+
+func (a *fakeAgent) ToolCallTitle(name string, arguments []byte) string {
+	return name
 }
 
 func (a *fakeAgent) Model() llm.Model {

@@ -8,7 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crowl/ronin/config"
 	"github.com/crowl/ronin/llm"
+	"github.com/crowl/ronin/session"
 	"github.com/crowl/ronin/tool"
 )
 
@@ -38,7 +40,8 @@ type Config struct {
 	SystemPrompt string
 	MaxTurns     int
 	Now          func() time.Time
-	Messages     []llm.Message
+	SessionStore session.Store
+	Session      session.Session
 }
 
 const defaultMaxTurns = 512
@@ -74,16 +77,31 @@ func New(cfg Config) (*Agent, error) {
 		toolByName[name] = t
 	}
 
+	sess := cfg.Session
+	sess.Messages = append([]llm.Message(nil), cfg.Session.Messages...)
+
+	var contextUsage llm.Usage
+	for i := len(sess.Messages) - 1; i >= 0; i-- {
+		assistantMessage, ok := sess.Messages[i].(llm.AssistantMessage)
+		if !ok {
+			continue
+		}
+		contextUsage = assistantMessage.Usage
+		break
+	}
+
 	return &Agent{
 		cwd:          cfg.CWD,
 		systemPrompt: cfg.SystemPrompt,
 		maxTurns:     maxTurns,
 		now:          now,
 		assistant:    cfg.Assistant,
-		messages:     append([]llm.Message(nil), cfg.Messages...),
+		contextUsage: contextUsage,
 		toolDefs:     toolDefs,
 		toolByName:   toolByName,
 		compactor:    cfg.Compactor,
+		sessionStore: cfg.SessionStore,
+		session:      sess,
 	}, nil
 }
 
@@ -94,17 +112,36 @@ type Agent struct {
 	now          func() time.Time
 
 	assistant    llm.Assistant
-	messages     []llm.Message
 	contextUsage llm.Usage
 
 	toolDefs   []llm.Tool
 	toolByName map[string]Tool
 
 	compactor Compactor
+
+	sessionStore session.Store
+	session      session.Session
 }
 
 func (a *Agent) CWD() string {
 	return a.cwd
+}
+
+func (a *Agent) Messages() []llm.Message {
+	return append([]llm.Message(nil), a.session.Messages...)
+}
+
+func (a *Agent) ToolCallTitle(name string, arguments []byte) string {
+	t, ok := a.toolByName[name]
+	if !ok {
+		return name
+	}
+	if titleProvider, ok := t.(ToolCallTitleProvider); ok {
+		if title, err := titleProvider.CallTitle(arguments); err == nil {
+			return title
+		}
+	}
+	return t.Name()
 }
 
 func (a *Agent) Model() llm.Model {
@@ -119,23 +156,51 @@ func (a *Agent) ContextUsage() llm.Usage {
 	return a.contextUsage
 }
 
-func (a *Agent) Messages() []llm.Message {
-	return append([]llm.Message(nil), a.messages...)
-}
-
 func (a *Agent) SwitchModel(model llm.Model) error {
 	newAssistant, err := llm.LoadAssistant(model, a.assistant.ReasoningLevel())
 	if err != nil {
 		return fmt.Errorf("select llm: %w", err)
 	}
+
+	updatedSession := a.session
+	updatedSession.Model = config.Model{Provider: model.Provider, Name: model.Name}
+	updatedSession.UpdatedAt = a.now()
+
+	if a.sessionStore != nil && a.session.ID != "" {
+		if err := a.sessionStore.Save(updatedSession); err != nil {
+			return fmt.Errorf("save session model: %w", err)
+		}
+	}
+
 	a.assistant = newAssistant
+	a.session = updatedSession
 	return nil
 }
 
 func (a *Agent) SwitchReasoningLevel(lvl llm.ReasoningLevel) error {
+	prevLevel := a.assistant.ReasoningLevel()
 	if err := a.assistant.SetReasoningLevel(lvl); err != nil {
 		return fmt.Errorf("set reasoning level: %w", err)
 	}
+
+	updatedSession := a.session
+	updatedSession.ReasoningLevel = string(lvl)
+	updatedSession.UpdatedAt = a.now()
+
+	if a.sessionStore != nil && a.session.ID != "" {
+		if err := a.sessionStore.Save(updatedSession); err != nil {
+			rollbackErr := a.assistant.SetReasoningLevel(prevLevel)
+			if rollbackErr != nil {
+				return errors.Join(
+					fmt.Errorf("save session reasoning level: %w", err),
+					fmt.Errorf("rollback reasoning level: %w", rollbackErr),
+				)
+			}
+			return fmt.Errorf("save session reasoning level: %w", err)
+		}
+	}
+
+	a.session = updatedSession
 	return nil
 }
 
@@ -143,17 +208,46 @@ func (a *Agent) CompactConversation(ctx context.Context) error {
 	if a.compactor == nil {
 		return fmt.Errorf("compactor is not configured")
 	}
-	messages, err := a.compactor.Compact(ctx, append([]llm.Message(nil), a.messages...))
+	messages, err := a.compactor.Compact(ctx, append([]llm.Message(nil), a.session.Messages...))
 	if err != nil {
 		return err
 	}
-	a.messages = append([]llm.Message(nil), messages...)
+
+	a.session.Messages = append([]llm.Message(nil), messages...)
+	if a.sessionStore != nil && a.session.ID != "" {
+		a.session.UpdatedAt = a.now()
+		if err := a.sessionStore.Save(a.session); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
 func (a *Agent) NewConversation() error {
-	a.messages = nil
+	if a.sessionStore != nil && a.session.ID != "" {
+		model := a.assistant.Model()
+		reasoningLevel := a.assistant.ReasoningLevel()
+		metadata := session.Metadata{
+			Model: config.Model{
+				Provider: model.Provider,
+				Name:     model.Name,
+			},
+			ReasoningLevel: string(reasoningLevel),
+		}
+		if err := a.sessionStore.Clear(a.cwd); err != nil {
+			return fmt.Errorf("clear session: %w", err)
+		}
+		newSess, err := a.sessionStore.Create(a.cwd, metadata)
+		if err != nil {
+			return fmt.Errorf("create session: %w", err)
+		}
+		a.contextUsage = llm.Usage{}
+		a.session = newSess
+		return nil
+	}
+
 	a.contextUsage = llm.Usage{}
+	a.session.Messages = nil
 	return nil
 }
 
@@ -165,8 +259,23 @@ func (a *Agent) Prompt(ctx context.Context, prompt string) (<-chan Event, <-chan
 	go func() {
 		defer close(events)
 		defer close(errs)
-		if err := a.run(ctx, prompt, events); err != nil {
-			errs <- err
+		runErr := a.run(ctx, prompt, events)
+
+		if a.sessionStore != nil && a.session.ID != "" {
+			a.session.UpdatedAt = a.now()
+			if saveErr := a.sessionStore.Save(a.session); saveErr != nil {
+				select {
+				case events <- SessionSaveFailed{Error: saveErr}:
+				case <-ctx.Done():
+				}
+				if runErr == nil {
+					runErr = fmt.Errorf("failed to save session: %w", saveErr)
+				}
+			}
+		}
+
+		if runErr != nil {
+			errs <- runErr
 		}
 	}()
 
@@ -207,7 +316,7 @@ func (a *Agent) run(ctx context.Context, prompt string, events chan<- Event) err
 		started = true
 	}
 
-	a.messages = append(a.messages, llm.UserMessage{
+	a.session.Messages = append(a.session.Messages, llm.UserMessage{
 		Timestamp: a.now(),
 		Text:      prompt,
 	})
@@ -226,7 +335,7 @@ func (a *Agent) run(ctx context.Context, prompt string, events chan<- Event) err
 		request := llm.PredictNextRequest{
 			SystemPrompt: a.systemPrompt,
 			Tools:        append([]llm.Tool(nil), a.toolDefs...),
-			Messages:     append([]llm.Message(nil), a.messages...),
+			Messages:     append([]llm.Message(nil), a.session.Messages...),
 		}
 
 		predictionEventsCh, predictionErrCh := a.assistant.PredictNext(ctx, request)
@@ -272,7 +381,7 @@ func (a *Agent) run(ctx context.Context, prompt string, events chan<- Event) err
 			Usage:     usage,
 		}
 
-		a.messages = append(a.messages, msg)
+		a.session.Messages = append(a.session.Messages, msg)
 
 		select {
 		case <-ctx.Done():
@@ -303,7 +412,7 @@ func (a *Agent) run(ctx context.Context, prompt string, events chan<- Event) err
 	}
 
 	err := fmt.Errorf("max turns reached (%d)", a.maxTurns)
-	a.messages = append(a.messages, llm.ErrorMessage{
+	a.session.Messages = append(a.session.Messages, llm.ErrorMessage{
 		Timestamp: a.now(),
 		Error:     err,
 	})
@@ -314,7 +423,7 @@ func (a *Agent) executeToolCall(ctx context.Context, events chan<- Event, toolCa
 	t, ok := a.toolByName[toolCall.Name]
 	if !ok {
 		execErr := fmt.Errorf("tool %q not found", toolCall.Name)
-		a.messages = append(a.messages, llm.ToolErrorMessage{
+		a.session.Messages = append(a.session.Messages, llm.ToolErrorMessage{
 			Timestamp:  a.now(),
 			ToolCallID: toolCall.ID,
 			ToolName:   toolCall.Name,
@@ -382,7 +491,7 @@ func (a *Agent) callIncrementalTool(ctx context.Context, events chan<- Event, in
 
 func (a *Agent) finishToolCall(ctx context.Context, events chan<- Event, executedTool Tool, toolCall llm.ToolCallBlock, toolResult any, execErr error) error {
 	if execErr != nil {
-		a.messages = append(a.messages, llm.ToolErrorMessage{
+		a.session.Messages = append(a.session.Messages, llm.ToolErrorMessage{
 			Timestamp:  a.now(),
 			ToolCallID: toolCall.ID,
 			ToolName:   toolCall.Name,
@@ -404,7 +513,7 @@ func (a *Agent) finishToolCall(ctx context.Context, events chan<- Event, execute
 	toolOutputData, err := json.Marshal(toolResult)
 	if err != nil {
 		execErr := fmt.Errorf("marshal tool %q result: %w", toolCall.Name, err)
-		a.messages = append(a.messages, llm.ToolErrorMessage{
+		a.session.Messages = append(a.session.Messages, llm.ToolErrorMessage{
 			Timestamp:  a.now(),
 			ToolCallID: toolCall.ID,
 			ToolName:   toolCall.Name,
@@ -423,7 +532,7 @@ func (a *Agent) finishToolCall(ctx context.Context, events chan<- Event, execute
 		}
 	}
 
-	a.messages = append(a.messages, llm.ToolOutputMessage{
+	a.session.Messages = append(a.session.Messages, llm.ToolOutputMessage{
 		Timestamp:  a.now(),
 		ToolCallID: toolCall.ID,
 		ToolName:   toolCall.Name,

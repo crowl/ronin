@@ -1,4 +1,4 @@
-package session
+package fs
 
 import (
 	"encoding/json"
@@ -8,6 +8,7 @@ import (
 
 	"github.com/crowl/ronin/config"
 	"github.com/crowl/ronin/llm"
+	"github.com/crowl/ronin/session"
 )
 
 type sessionJSON struct {
@@ -46,21 +47,21 @@ type blockJSON struct {
 	ThoughtSignature string          `json:"thought_signature,omitempty"`
 }
 
-func encode(session Session) ([]byte, error) {
+func encode(s session.Session) ([]byte, error) {
 	encoded := sessionJSON{
-		Version:        Version,
-		ID:             session.ID,
-		Title:          session.Title,
-		WorkingDir:     session.WorkingDir,
-		ParentID:       session.ParentID,
-		CreatedAt:      session.CreatedAt,
-		UpdatedAt:      session.UpdatedAt,
-		Model:          session.Model,
-		ReasoningLevel: session.ReasoningLevel,
-		Messages:       make([]messageJSON, 0, len(session.Messages)),
+		Version:        session.Version,
+		ID:             s.ID,
+		Title:          s.Title,
+		WorkingDir:     s.WorkingDir,
+		ParentID:       s.ParentID,
+		CreatedAt:      s.CreatedAt,
+		UpdatedAt:      s.UpdatedAt,
+		Model:          s.Model,
+		ReasoningLevel: s.ReasoningLevel,
+		Messages:       make([]messageJSON, 0, len(s.Messages)),
 	}
 
-	for i, message := range session.Messages {
+	for i, message := range s.Messages {
 		encodedMessage, err := encodeMessage(message)
 		if err != nil {
 			return nil, fmt.Errorf("encode message %d: %w", i, err)
@@ -75,16 +76,16 @@ func encode(session Session) ([]byte, error) {
 	return append(data, '\n'), nil
 }
 
-func decode(data []byte) (Session, error) {
+func decode(data []byte) (session.Session, error) {
 	var encoded sessionJSON
 	if err := json.Unmarshal(data, &encoded); err != nil {
-		return Session{}, err
+		return session.Session{}, err
 	}
-	if encoded.Version != Version {
-		return Session{}, fmt.Errorf("unsupported session version %d", encoded.Version)
+	if encoded.Version != session.Version {
+		return session.Session{}, fmt.Errorf("unsupported session version %d", encoded.Version)
 	}
 
-	session := Session{
+	s := session.Session{
 		Version:        encoded.Version,
 		ID:             encoded.ID,
 		Title:          encoded.Title,
@@ -100,12 +101,12 @@ func decode(data []byte) (Session, error) {
 	for i, message := range encoded.Messages {
 		decodedMessage, err := decodeMessage(message)
 		if err != nil {
-			return Session{}, fmt.Errorf("decode message %d: %w", i, err)
+			return session.Session{}, fmt.Errorf("decode message %d: %w", i, err)
 		}
-		session.Messages = append(session.Messages, decodedMessage)
+		s.Messages = append(s.Messages, decodedMessage)
 	}
 
-	return session, nil
+	return s, nil
 }
 
 func encodeMessage(message llm.Message) (messageJSON, error) {

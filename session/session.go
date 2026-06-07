@@ -9,6 +9,13 @@ import (
 
 const Version = 1
 
+type Store interface {
+	LoadActive(workingDir string) (Session, bool, error)
+	Create(workingDir string, metadata Metadata) (Session, error)
+	Save(record Session) error
+	Clear(workingDir string) error
+}
+
 type Metadata struct {
 	Title          string
 	Model          config.Model
@@ -31,14 +38,14 @@ type Ref struct {
 }
 
 type Session struct {
-	Version        int
-	ID             string
-	Title          string
-	WorkingDir     string
-	ParentID       string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	Model          config.Model
-	ReasoningLevel string
-	Messages       []llm.Message
+	Version        int           `json:"version"`
+	ID             string        `json:"id"`
+	Title          string        `json:"title"`
+	WorkingDir     string        `json:"working_dir"`
+	ParentID       string        `json:"parent_id,omitempty"`
+	CreatedAt      time.Time     `json:"created_at"`
+	UpdatedAt      time.Time     `json:"updated_at"`
+	Model          config.Model  `json:"model"`
+	ReasoningLevel string        `json:"reasoning_level"`
+	Messages       []llm.Message `json:"messages"`
 }

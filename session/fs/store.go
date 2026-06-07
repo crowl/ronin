@@ -1,4 +1,4 @@
-package session
+package fs
 
 import (
 	"crypto/rand"
@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/crowl/ronin/fsutil"
+	"github.com/crowl/ronin/session"
 )
 
 type Store struct {
@@ -34,40 +35,40 @@ func NewStore(cfg StoreConfig) *Store {
 	}
 }
 
-func (s *Store) LoadActive(workingDir string) (Session, bool, error) {
+func (s *Store) LoadActive(workingDir string) (session.Session, bool, error) {
 	workingDir, err := cleanWorkingDir(workingDir)
 	if err != nil {
-		return Session{}, false, err
+		return session.Session{}, false, err
 	}
 
 	workspace, ok, err := s.loadWorkspace(workingDir)
 	if err != nil {
-		return Session{}, false, err
+		return session.Session{}, false, err
 	}
 	if !ok || workspace.ActiveSessionID == "" {
-		return Session{}, false, nil
+		return session.Session{}, false, nil
 	}
 
 	record, err := s.loadSession(workspace.ActiveSessionID)
 	if err != nil {
-		return Session{}, false, err
+		return session.Session{}, false, err
 	}
 	if record.WorkingDir != workingDir {
-		return Session{}, false, fmt.Errorf("session %q working directory %q does not match %q", record.ID, record.WorkingDir, workingDir)
+		return session.Session{}, false, fmt.Errorf("session %q working directory %q does not match %q", record.ID, record.WorkingDir, workingDir)
 	}
 
 	return record, true, nil
 }
 
-func (s *Store) Create(workingDir string, metadata Metadata) (Session, error) {
+func (s *Store) Create(workingDir string, metadata session.Metadata) (session.Session, error) {
 	workingDir, err := cleanWorkingDir(workingDir)
 	if err != nil {
-		return Session{}, err
+		return session.Session{}, err
 	}
 
 	id, err := newSessionID()
 	if err != nil {
-		return Session{}, err
+		return session.Session{}, err
 	}
 
 	now := s.now().UTC()
@@ -76,8 +77,8 @@ func (s *Store) Create(workingDir string, metadata Metadata) (Session, error) {
 		title = "New session"
 	}
 
-	record := Session{
-		Version:        Version,
+	record := session.Session{
+		Version:        session.Version,
 		ID:             id,
 		Title:          title,
 		WorkingDir:     workingDir,
@@ -87,13 +88,13 @@ func (s *Store) Create(workingDir string, metadata Metadata) (Session, error) {
 		ReasoningLevel: metadata.ReasoningLevel,
 	}
 	if err := s.Save(record); err != nil {
-		return Session{}, err
+		return session.Session{}, err
 	}
 
 	return record, nil
 }
 
-func (s *Store) Save(record Session) error {
+func (s *Store) Save(record session.Session) error {
 	record, err := s.prepareSession(record)
 	if err != nil {
 		return err
@@ -104,16 +105,16 @@ func (s *Store) Save(record Session) error {
 		return err
 	}
 	if !ok {
-		workspace = Workspace{
-			Version:    Version,
+		workspace = session.Workspace{
+			Version:    session.Version,
 			WorkingDir: record.WorkingDir,
 		}
 	}
 
-	workspace.Version = Version
+	workspace.Version = session.Version
 	workspace.WorkingDir = record.WorkingDir
 	workspace.ActiveSessionID = record.ID
-	workspace.Sessions = upsertRef(workspace.Sessions, Ref{
+	workspace.Sessions = upsertRef(workspace.Sessions, session.Ref{
 		ID:        record.ID,
 		Title:     record.Title,
 		ParentID:  record.ParentID,
@@ -160,15 +161,15 @@ func (s *Store) Clear(workingDir string) error {
 	return nil
 }
 
-func (s *Store) prepareSession(record Session) (Session, error) {
+func (s *Store) prepareSession(record session.Session) (session.Session, error) {
 	if record.ID == "" {
-		return Session{}, errors.New("session id must not be empty")
+		return session.Session{}, errors.New("session id must not be empty")
 	}
 	workingDir, err := cleanWorkingDir(record.WorkingDir)
 	if err != nil {
-		return Session{}, err
+		return session.Session{}, err
 	}
-	record.Version = Version
+	record.Version = session.Version
 	record.WorkingDir = workingDir
 	if record.Title == "" {
 		record.Title = "New session"
@@ -183,49 +184,49 @@ func (s *Store) prepareSession(record Session) (Session, error) {
 	return record, nil
 }
 
-func (s *Store) loadWorkspace(workingDir string) (Workspace, bool, error) {
+func (s *Store) loadWorkspace(workingDir string) (session.Workspace, bool, error) {
 	path := s.workspacePath(workingDir)
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return Workspace{}, false, nil
+		return session.Workspace{}, false, nil
 	}
 	if err != nil {
-		return Workspace{}, false, fmt.Errorf("read workspace session %q: %w", path, err)
+		return session.Workspace{}, false, fmt.Errorf("read workspace session %q: %w", path, err)
 	}
 
-	var workspace Workspace
+	var workspace session.Workspace
 	if err := json.Unmarshal(data, &workspace); err != nil {
-		return Workspace{}, false, fmt.Errorf("parse workspace session %q: %w", path, err)
+		return session.Workspace{}, false, fmt.Errorf("parse workspace session %q: %w", path, err)
 	}
-	if workspace.Version != Version {
-		return Workspace{}, false, fmt.Errorf("unsupported workspace session version %d in %q", workspace.Version, path)
+	if workspace.Version != session.Version {
+		return session.Workspace{}, false, fmt.Errorf("unsupported workspace session version %d in %q", workspace.Version, path)
 	}
 	if workspace.WorkingDir != workingDir {
-		return Workspace{}, false, fmt.Errorf("workspace session working directory %q does not match %q", workspace.WorkingDir, workingDir)
+		return session.Workspace{}, false, fmt.Errorf("workspace session working directory %q does not match %q", workspace.WorkingDir, workingDir)
 	}
 
 	return workspace, true, nil
 }
 
-func (s *Store) loadSession(id string) (Session, error) {
+func (s *Store) loadSession(id string) (session.Session, error) {
 	path := s.recordPath(id)
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return Session{}, fmt.Errorf("read session record %q: %w", path, err)
+		return session.Session{}, fmt.Errorf("read session record %q: %w", path, err)
 	}
 
 	record, err := decode(data)
 	if err != nil {
-		return Session{}, fmt.Errorf("parse session record %q: %w", path, err)
+		return session.Session{}, fmt.Errorf("parse session record %q: %w", path, err)
 	}
 	if record.ID != id {
-		return Session{}, fmt.Errorf("session record id %q does not match %q", record.ID, id)
+		return session.Session{}, fmt.Errorf("session record id %q does not match %q", record.ID, id)
 	}
 
 	return record, nil
 }
 
-func (s *Store) writeWorkspace(workspace Workspace) error {
+func (s *Store) writeWorkspace(workspace session.Workspace) error {
 	data, err := json.MarshalIndent(workspace, "", "  ")
 	if err != nil {
 		return err
@@ -234,7 +235,7 @@ func (s *Store) writeWorkspace(workspace Workspace) error {
 	return writeFileAtomic(s.workspacePath(workspace.WorkingDir), data)
 }
 
-func (s *Store) writeSession(record Session) error {
+func (s *Store) writeSession(record session.Session) error {
 	data, err := encode(record)
 	if err != nil {
 		return err
@@ -274,7 +275,7 @@ func newSessionID() (string, error) {
 	return "sess_" + hex.EncodeToString(bytes[:]), nil
 }
 
-func upsertRef(summaries []Ref, summary Ref) []Ref {
+func upsertRef(summaries []session.Ref, summary session.Ref) []session.Ref {
 	for i := range summaries {
 		if summaries[i].ID == summary.ID {
 			summaries[i] = summary

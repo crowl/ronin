@@ -1,4 +1,4 @@
-package session_test
+package fs_test
 
 import (
 	"encoding/json"
@@ -11,10 +11,11 @@ import (
 	"github.com/crowl/ronin/config"
 	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/session"
+	"github.com/crowl/ronin/session/fs"
 )
 
 func TestStoreLoadActiveMissing(t *testing.T) {
-	store := session.NewStore(session.StoreConfig{
+	store := fs.NewStore(fs.StoreConfig{
 		Dir: t.TempDir(),
 		Now: fixedNow(time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)),
 	})
@@ -31,7 +32,7 @@ func TestStoreLoadActiveMissing(t *testing.T) {
 func TestStoreCreateSaveLoadActive(t *testing.T) {
 	now := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
 	workingDir := t.TempDir()
-	store := session.NewStore(session.StoreConfig{
+	store := fs.NewStore(fs.StoreConfig{
 		Dir: t.TempDir(),
 		Now: fixedNow(now),
 	})
@@ -73,7 +74,7 @@ func TestStoreCreateSaveLoadActive(t *testing.T) {
 func TestStoreCreateMakesNewestSessionActive(t *testing.T) {
 	now := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
 	workingDir := t.TempDir()
-	store := session.NewStore(session.StoreConfig{
+	store := fs.NewStore(fs.StoreConfig{
 		Dir: t.TempDir(),
 		Now: fixedNow(now),
 	})
@@ -104,7 +105,7 @@ func TestStoreCreateMakesNewestSessionActive(t *testing.T) {
 
 func TestStoreClear(t *testing.T) {
 	workingDir := t.TempDir()
-	store := session.NewStore(session.StoreConfig{
+	store := fs.NewStore(fs.StoreConfig{
 		Dir: t.TempDir(),
 		Now: fixedNow(time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)),
 	})
@@ -126,7 +127,7 @@ func TestStoreClear(t *testing.T) {
 }
 
 func TestStoreSaveRejectsInvalidSession(t *testing.T) {
-	store := session.NewStore(session.StoreConfig{
+	store := fs.NewStore(fs.StoreConfig{
 		Dir: t.TempDir(),
 		Now: fixedNow(time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)),
 	})

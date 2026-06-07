@@ -16,6 +16,8 @@ import (
 	"github.com/crowl/ronin/llm/anthropic"
 	"github.com/crowl/ronin/llm/google"
 	"github.com/crowl/ronin/llm/openai"
+	"github.com/crowl/ronin/session"
+	"github.com/crowl/ronin/session/fs"
 	"github.com/crowl/ronin/tool/editfile"
 	"github.com/crowl/ronin/tool/fsutil"
 	"github.com/crowl/ronin/tool/readfile"
@@ -144,6 +146,29 @@ func main() {
 		os.Exit(1)
 	}
 
+	sessionStore := fs.NewStore(fs.StoreConfig{
+		Dir: configDir,
+		Now: func() time.Time { return time.Now() },
+	})
+
+	activeSession, ok, err := sessionStore.LoadActive(workingDir)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "failed to load session: %v\n", err)
+		os.Exit(1)
+	}
+	if !ok {
+		activeSession, err = sessionStore.Create(workingDir, session.Metadata{
+			Model:          settings.Model,
+			ReasoningLevel: settings.ReasoningLevel,
+		})
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "failed to create session: %v\n", err)
+			os.Exit(1)
+		}
+	}
+	activeSession.Model = config.Model{Provider: model.Provider, Name: model.Name}
+	activeSession.ReasoningLevel = string(level)
+
 	agt, err := agent.New(agent.Config{
 		CWD:          workingDir,
 		Assistant:    assistant,
@@ -152,6 +177,8 @@ func main() {
 		SystemPrompt: systemPrompt,
 		MaxTurns:     settings.MaxTurns,
 		Now:          func() time.Time { return time.Now() },
+		SessionStore: sessionStore,
+		Session:      activeSession,
 	})
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "failed to initialize agent: %v\n", err)

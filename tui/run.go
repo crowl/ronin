@@ -18,11 +18,13 @@ type Agent interface {
 	Model() llm.Model
 	ReasoningLevel() llm.ReasoningLevel
 	ContextUsage() llm.Usage
+	Messages() []llm.Message
 	NewConversation() error
 	CompactConversation(context.Context) error
 	SwitchModel(llm.Model) error
 	SwitchReasoningLevel(llm.ReasoningLevel) error
 	Prompt(context.Context, string) (<-chan agent.Event, <-chan error)
+	ToolCallTitle(name string, arguments []byte) string
 }
 
 type Config struct {

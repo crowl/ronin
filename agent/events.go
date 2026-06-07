@@ -69,6 +69,10 @@ type PromptProcessingError struct {
 	Error error
 }
 
+type SessionSaveFailed struct {
+	Error error
+}
+
 // Event is a sealed interface to mark agent events
 type Event interface{ event() }
 
@@ -86,3 +90,4 @@ func (ToolExecutionEnded) event()               {}
 func (ConversationTurnEnded) event()            {}
 func (PromptProcessingEnded) event()            {}
 func (PromptProcessingError) event()            {}
+func (SessionSaveFailed) event()                {}
