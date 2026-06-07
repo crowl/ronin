@@ -457,10 +457,13 @@ func TestTUIAgentEvents(t *testing.T) {
 		if _, err := app.model.handleAgentEvent(agent.ToolExecutionOutputDeltaReceived{CallID: "call_1", Tool: fakeStartedTool{name: "shell"}, Artifact: tool.ShellStreamArtifact{Stream: tool.ShellStreamStdout, Content: "live"}}, time.Now()); err != nil {
 			t.Fatalf("handle output chunk: %v", err)
 		}
+		if _, err := app.model.handleAgentEvent(agent.ToolExecutionOutputDeltaReceived{CallID: "call_1", Tool: fakeStartedTool{name: "shell"}, Artifact: tool.ShellStreamArtifact{Stream: tool.ShellStreamStdout, Content: "\nnext"}}, time.Now()); err != nil {
+			t.Fatalf("handle output chunk: %v", err)
+		}
 
 		box, ok := app.model.boxes[0].(toolCallBox)
-		if !ok || !hasShellStreamArtifact(box.Artifacts, tool.ShellStreamStdout, "live") {
-			t.Fatalf("streaming box\ngot:  %#v\nwant: toolCallBox live artifact", app.model.boxes[0])
+		if !ok || len(box.Artifacts) != 1 || !hasShellStreamArtifact(box.Artifacts, tool.ShellStreamStdout, "live\nnext") {
+			t.Fatalf("streaming box\ngot:  %#v\nwant: toolCallBox one merged live artifact", app.model.boxes[0])
 		}
 
 		if _, err := app.model.handleAgentEvent(agent.ToolExecutionResultReceived{CallID: "call_1", Tool: fakeStartedTool{name: "shell"}, Artifacts: []tool.Artifact{tool.ShellStreamArtifact{Stream: tool.ShellStreamStdout, Content: "final"}}}, time.Now()); err != nil {

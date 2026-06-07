@@ -311,7 +311,7 @@ func (m *appModel) handleAgentEvent(event agent.Event, now time.Time) (modelUpda
 		if !ok {
 			return modelUpdate{}, fmt.Errorf("expected tool call box at index %d, got %T", index, m.boxes[index])
 		}
-		toolCallBox.Artifacts = append(toolCallBox.Artifacts, typedEvent.Artifact)
+		toolCallBox.Artifacts = appendToolArtifact(toolCallBox.Artifacts, typedEvent.Artifact)
 		m.boxes[index] = toolCallBox
 	case agent.ToolExecutionResultReceived:
 		m.flushPendingTextDelta()
@@ -510,6 +510,22 @@ func (m *appModel) flushPendingTextDelta() {
 		messageBox.Text += text
 		m.boxes[index] = messageBox
 	}
+}
+
+func appendToolArtifact(artifacts []tool.Artifact, artifact tool.Artifact) []tool.Artifact {
+	streamArtifact, ok := artifact.(tool.ShellStreamArtifact)
+	if !ok || len(artifacts) == 0 {
+		return append(artifacts, artifact)
+	}
+
+	previousStreamArtifact, ok := artifacts[len(artifacts)-1].(tool.ShellStreamArtifact)
+	if !ok || previousStreamArtifact.Stream != streamArtifact.Stream {
+		return append(artifacts, artifact)
+	}
+
+	previousStreamArtifact.Content += streamArtifact.Content
+	artifacts[len(artifacts)-1] = previousStreamArtifact
+	return artifacts
 }
 
 func findToolBlockIndex(blocks []box, toolCallID string) int {
