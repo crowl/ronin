@@ -73,7 +73,13 @@ In prompt mode, assistant text is written to stdout, then the process exits when
 }
 ```
 
-The file is read strictly: unknown fields or invalid values (unknown model or reasoning level, non-positive `max_turns`) cause startup to fail with a clear error. Skills are loaded from `<config dir>/skills`, and a global context file at `<config dir>/AGENTS.md` is included when present.
+### Skills
+
+Skills are loaded from `<config dir>/skills`. Each skill lives in its own directory with a `SKILL.md` file, for example `<config dir>/skills/<skill-name>/SKILL.md`.
+
+### AGENTS.md context files
+
+*ronin* loads a global context file from `<config dir>/AGENTS.md` when present. It also loads local `AGENTS.md` files from the working directory and its parents, ordered from the broadest parent down to the working directory.
 
 ## How it is organized
 
