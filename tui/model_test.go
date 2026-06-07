@@ -1,10 +1,13 @@
 package tui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/crowl/ronin/agent"
+	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/tui/internal/terminal"
 	"github.com/crowl/ronin/tui/internal/text"
 )
@@ -141,6 +144,110 @@ func TestAppModel(t *testing.T) {
 		update = model.tickWorking()
 		if !update.Render || model.indicatorFrame != 1 {
 			t.Fatalf("working tick\nupdate: %#v\nframe: %d", update, model.indicatorFrame)
+		}
+	})
+
+	t.Run("session save failed event displays error in status bar", func(t *testing.T) {
+		model := newTestModel(t)
+
+		update, err := model.handleAgentEvent(agent.SessionSaveFailed{Error: errors.New("out of space")}, time.Now())
+		if err != nil {
+			t.Fatalf("handleAgentEvent: %v", err)
+		}
+		if !update.Render {
+			t.Fatal("expected update.Render to be true")
+		}
+		if model.saveError != "out of space" {
+			t.Fatalf("saveError = %q, want 'out of space'", model.saveError)
+		}
+
+		lines, err := model.lines(80, &fakeAgent{}, time.Now())
+		if err != nil {
+			t.Fatalf("lines: %v", err)
+		}
+
+		found := false
+		for _, line := range lines {
+			if strings.Contains(line, "Save Error: out of space") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected 'Save Error: out of space' in rendered lines, got: %#v", lines)
+		}
+
+		// starting a new prompt should clear the error
+		model.startPrompt("next prompt")
+		if model.saveError != "" {
+			t.Fatalf("expected saveError to be cleared, got %q", model.saveError)
+		}
+	})
+
+	t.Run("populate initial boxes from agent messages", func(t *testing.T) {
+		model := newTestModel(t)
+		now := time.Now()
+
+		messages := []llm.Message{
+			llm.UserMessage{
+				Timestamp: now,
+				Text:      "user prompt",
+			},
+			llm.AssistantMessage{
+				Timestamp: now.Add(time.Second),
+				Blocks: []llm.AssistantBlock{
+					llm.ThinkingBlock{Text: "think 1"},
+					llm.ThinkingBlock{Text: " think 2"},
+					llm.TextBlock{Text: "assistant reply"},
+					llm.TextBlock{Text: " continued"},
+					llm.ToolCallBlock{ID: "call_1", Name: "shell", Arguments: []byte(`{"command":"ls"}`)},
+				},
+			},
+			llm.ToolOutputMessage{
+				Timestamp:  now.Add(2 * time.Second),
+				ToolName:   "shell",
+				ToolCallID: "call_1",
+				ToolOutput: "file.txt",
+			},
+			llm.ErrorMessage{
+				Timestamp: now.Add(3 * time.Second),
+				Error:     errors.New("something went wrong"),
+			},
+		}
+
+		agt := &fakeAgent{messages: messages}
+		model.populateInitialBoxes(agt)
+
+		if len(model.boxes) != 5 {
+			t.Fatalf("expected 5 boxes, got %d", len(model.boxes))
+		}
+
+		userBox, ok := model.boxes[0].(userMessageBox)
+		if !ok || userBox.Text != "user prompt" {
+			t.Fatalf("box 0 incorrect: %#v", model.boxes[0])
+		}
+
+		thinkingBox, ok := model.boxes[1].(assistantThinkingBox)
+		if !ok || thinkingBox.Text != "think 1 think 2" {
+			t.Fatalf("box 1 incorrect: %#v", model.boxes[1])
+		}
+
+		assistantBox, ok := model.boxes[2].(assistantMessageBox)
+		if !ok || assistantBox.Text != "assistant reply continued" {
+			t.Fatalf("box 2 incorrect: %#v", model.boxes[2])
+		}
+
+		toolBox, ok := model.boxes[3].(toolCallBox)
+		if !ok || toolBox.ToolCallID != "call_1" || toolBox.Title != "shell" {
+			t.Fatalf("box 3 incorrect: %#v", model.boxes[3])
+		}
+		if toolBox.EndedAt != now.Add(2*time.Second) {
+			t.Fatalf("toolBox.EndedAt incorrect: %v", toolBox.EndedAt)
+		}
+
+		errBox, ok := model.boxes[4].(errorMessageBox)
+		if !ok || errBox.Text != "something went wrong" {
+			t.Fatalf("box 4 incorrect: %#v", model.boxes[4])
 		}
 	})
 }

@@ -40,6 +40,7 @@ func newApp(cfg appConfig) (*app, error) {
 	if err != nil {
 		return nil, err
 	}
+	model.populateInitialBoxes(cfg.Agent)
 
 	return &app{
 		agent:    cfg.Agent,

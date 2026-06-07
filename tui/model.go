@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/crowl/ronin/agent"
+	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/tool"
 	"github.com/crowl/ronin/tui/internal/editor"
 	"github.com/crowl/ronin/tui/internal/terminal"
@@ -37,6 +38,8 @@ type appModel struct {
 	steeringPrompt string
 
 	indicatorFrame int
+
+	saveError string
 
 	pendingTextDeltaKind pendingTextDeltaKind
 	pendingTextDelta     strings.Builder
@@ -80,6 +83,69 @@ func newAppModel(commands []Command, theme Theme) (*appModel, error) {
 		theme:  theme,
 		boxes:  make([]box, 0, defaultInitialBoxesCapacity),
 	}, nil
+}
+
+func (m *appModel) populateInitialBoxes(agent Agent) {
+	if agent == nil {
+		return
+	}
+	messages := agent.Messages()
+	for _, message := range messages {
+		switch msg := message.(type) {
+		case llm.UserMessage:
+			m.boxes = append(m.boxes, userMessageBox{Text: msg.Text})
+		case llm.ErrorMessage:
+			m.boxes = append(m.boxes, errorMessageBox{Text: msg.Error.Error()})
+		case llm.AssistantMessage:
+			for _, b := range msg.Blocks {
+				switch block := b.(type) {
+				case llm.TextBlock:
+					if len(m.boxes) > 0 {
+						if lastBox, ok := m.boxes[len(m.boxes)-1].(assistantMessageBox); ok {
+							lastBox.Text += block.Text
+							m.boxes[len(m.boxes)-1] = lastBox
+							continue
+						}
+					}
+					m.boxes = append(m.boxes, assistantMessageBox{Text: block.Text})
+				case llm.ThinkingBlock:
+					if len(m.boxes) > 0 {
+						if lastBox, ok := m.boxes[len(m.boxes)-1].(assistantThinkingBox); ok {
+							lastBox.Text += block.Text
+							m.boxes[len(m.boxes)-1] = lastBox
+							continue
+						}
+					}
+					m.boxes = append(m.boxes, assistantThinkingBox{Text: block.Text})
+				case llm.ToolCallBlock:
+					title := agent.ToolCallTitle(block.Name, block.Arguments)
+					m.boxes = append(m.boxes, toolCallBox{
+						ToolCallID: block.ID,
+						Title:      title,
+						StartedAt:  msg.Timestamp,
+						EndedAt:    msg.Timestamp,
+					})
+				}
+			}
+		case llm.ToolOutputMessage:
+			index := findToolBlockIndex(m.boxes, msg.ToolCallID)
+			if index != -1 {
+				if tBox, ok := m.boxes[index].(toolCallBox); ok {
+					tBox.EndedAt = msg.Timestamp
+					m.boxes[index] = tBox
+				}
+			}
+		case llm.ToolErrorMessage:
+			index := findToolBlockIndex(m.boxes, msg.ToolCallID)
+			if index != -1 {
+				if tBox, ok := m.boxes[index].(toolCallBox); ok {
+					tBox.EndedAt = msg.Timestamp
+					tBox.Error = msg.Error.Error()
+					m.boxes[index] = tBox
+				}
+			}
+		}
+	}
 }
 
 func (m *appModel) handleKey(key terminal.Key) (modelUpdate, error) {
@@ -152,6 +218,7 @@ func (m *appModel) startPrompt(prompt string) {
 	m.working = true
 	m.workingLabel = "Working"
 	m.indicatorFrame = 0
+	m.saveError = ""
 }
 
 func (m *appModel) startCompaction(item menuItem) {
@@ -204,6 +271,9 @@ func (m *appModel) finishPrompt() (modelUpdate, string) {
 
 func (m *appModel) handleAgentEvent(event agent.Event, now time.Time) (modelUpdate, error) {
 	switch typedEvent := event.(type) {
+	case agent.SessionSaveFailed:
+		m.flushPendingTextDelta()
+		m.saveError = typedEvent.Error.Error()
 	case agent.PromptProcessingStarted:
 		// ignored
 	case agent.ConversationTurnStarted:
@@ -365,6 +435,9 @@ func (m *appModel) lines(width int, agent Agent, now time.Time) ([]string, error
 	}
 
 	cwdStatus := m.statusBarCache.CWDStatus(agent.CWD())
+	if m.saveError != "" {
+		cwdStatus = fmt.Sprintf("%s (Save Error: %s)", cwdStatus, m.saveError)
+	}
 
 	lines = append(lines, statusBar{
 		CWD:            agent.CWD(),
