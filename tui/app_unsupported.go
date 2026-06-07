@@ -1,4 +1,4 @@
-//go:build !(unix || darwin || linux)
+//go:build !(unix || darwin || linux || windows)
 
 package tui
 
