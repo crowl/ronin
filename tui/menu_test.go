@@ -42,6 +42,17 @@ func TestMenu(t *testing.T) {
 				t.Fatalf("item %d value\ngot:  %q\nwant: %q", i, got[i].Value, want)
 			}
 		}
+
+		wantNames := []string{"/new", "/compact", "/model", "/reasoning", "/theme", "/skill:go", "/exit"}
+		wantArguments := []string{"", "", "test:model", "high", "light", "", ""}
+		for i := range got {
+			if got[i].Name != wantNames[i] {
+				t.Fatalf("item %d name\ngot:  %q\nwant: %q", i, got[i].Name, wantNames[i])
+			}
+			if got[i].Argument != wantArguments[i] {
+				t.Fatalf("item %d argument\ngot:  %q\nwant: %q", i, got[i].Argument, wantArguments[i])
+			}
+		}
 	})
 
 	t.Run("theme command item value and description", func(t *testing.T) {

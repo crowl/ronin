@@ -342,29 +342,37 @@ func (p menuPresenter) Lines(width int, theme Theme) []string {
 
 	end := min(len(p.Items), start+menuMaxVisibleItems)
 
-	descriptionColumn := p.descriptionColumn(start, end)
+	columns := p.columns(start, end)
 
 	out := make([]string, 0, end-start)
 	for i := start; i < end; i++ {
-		out = append(out, p.line(p.Items[i], i == selectedIndex, descriptionColumn, width, theme))
+		out = append(out, p.line(p.Items[i], i == selectedIndex, columns, width, theme))
 	}
 
 	return out
 }
 
-// descriptionColumn aligns descriptions just past the widest visible command
-// value, so every row's description starts at the same column.
-func (p menuPresenter) descriptionColumn(start, end int) int {
-	widestValue := 0
-	for i := start; i < end; i++ {
-		if w := text.VisibleLen(p.Items[i].Value); w > widestValue {
-			widestValue = w
-		}
-	}
-	return len(menuItemPrefix) + widestValue + menuDescriptionGap
+type menuColumns struct {
+	NameWidth     int
+	ArgumentWidth int
 }
 
-func (p menuPresenter) line(item menuItem, selected bool, descriptionColumn, width int, theme Theme) string {
+// columns aligns command names and arguments across the visible menu rows.
+func (p menuPresenter) columns(start, end int) menuColumns {
+	var columns menuColumns
+	for i := start; i < end; i++ {
+		name, argument := p.Items[i].displayParts()
+		if w := text.VisibleLen(name); w > columns.NameWidth {
+			columns.NameWidth = w
+		}
+		if w := text.VisibleLen(argument); w > columns.ArgumentWidth {
+			columns.ArgumentWidth = w
+		}
+	}
+	return columns
+}
+
+func (p menuPresenter) line(item menuItem, selected bool, columns menuColumns, width int, theme Theme) string {
 	prefix := menuItemPrefix
 	rowStyle := theme.UI.MenuItem
 	descriptionOverlay := theme.UI.MenuItemDescription
@@ -375,12 +383,14 @@ func (p menuPresenter) line(item menuItem, selected bool, descriptionColumn, wid
 	}
 	descriptionStyle := rowStyle.Merge(descriptionOverlay)
 
-	value := prefix + item.Value
+	name, argument := item.displayParts()
+	value := prefix + text.Fill(name, columns.NameWidth) + strings.Repeat(" ", menuDescriptionGap)
+	value += text.Fill(argument, columns.ArgumentWidth) + strings.Repeat(" ", menuDescriptionGap)
 	if text.VisibleLen(value) >= width {
 		return rowStyle.Apply(text.Truncate(value, width))
 	}
 
-	column := min(descriptionColumn, width)
+	column := min(text.VisibleLen(value), width)
 	valueColumn := text.Fill(value, column)
 	descriptionColumnText := text.Fill(item.Description, width-column)
 

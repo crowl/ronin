@@ -18,6 +18,7 @@ func newMenu(commands []Command) (*menuState, error) {
 		case CompactConversation:
 			items = append(items, menuItem{
 				Index:       i,
+				Name:        "/compact",
 				Value:       "/compact",
 				Description: "compact the conversation context",
 				Command:     typedCommand,
@@ -25,27 +26,36 @@ func newMenu(commands []Command) (*menuState, error) {
 		case StartNewConversation:
 			items = append(items, menuItem{
 				Index:       i,
+				Name:        "/new",
 				Value:       "/new",
 				Description: "start a fresh conversation",
 				Command:     typedCommand,
 			})
 		case SwitchModel:
+			argument := typedCommand.Model.String()
 			items = append(items, menuItem{
 				Index:       i,
-				Value:       "/model " + typedCommand.Model.String(),
-				Description: "switch model to " + typedCommand.Model.String(),
+				Name:        "/model",
+				Argument:    argument,
+				Value:       "/model " + argument,
+				Description: "switch model to " + argument,
 				Command:     typedCommand,
 			})
 		case SwitchReasoningLevel:
+			argument := string(typedCommand.Level)
 			items = append(items, menuItem{
 				Index:       i,
-				Value:       "/reasoning " + string(typedCommand.Level),
-				Description: "switch reasoning level to " + string(typedCommand.Level),
+				Name:        "/reasoning",
+				Argument:    argument,
+				Value:       "/reasoning " + argument,
+				Description: "switch reasoning level to " + argument,
 				Command:     typedCommand,
 			})
 		case SwitchTheme:
 			items = append(items, menuItem{
 				Index:       i,
+				Name:        "/theme",
+				Argument:    typedCommand.Name,
 				Value:       "/theme " + typedCommand.Name,
 				Description: "switch theme to " + typedCommand.Name,
 				Command:     typedCommand,
@@ -53,6 +63,7 @@ func newMenu(commands []Command) (*menuState, error) {
 		case InvokeSkill:
 			items = append(items, menuItem{
 				Index:       i,
+				Name:        "/skill:" + typedCommand.Skill.Name,
 				Value:       "/skill:" + typedCommand.Skill.Name,
 				Description: typedCommand.Skill.Description,
 				Command:     typedCommand,
@@ -60,6 +71,7 @@ func newMenu(commands []Command) (*menuState, error) {
 		case Exit:
 			items = append(items, menuItem{
 				Index:       i,
+				Name:        "/exit",
 				Value:       "/exit",
 				Description: "exit from ronin",
 				Command:     typedCommand,
@@ -77,9 +89,22 @@ func newMenu(commands []Command) (*menuState, error) {
 
 type menuItem struct {
 	Index       int
+	Name        string
+	Argument    string
 	Value       string
 	Description string
 	Command     Command
+}
+
+func (m menuItem) displayParts() (string, string) {
+	if m.Name != "" || m.Argument != "" {
+		return m.Name, m.Argument
+	}
+	name, argument, ok := strings.Cut(m.Value, " ")
+	if !ok {
+		return m.Value, ""
+	}
+	return name, argument
 }
 
 type menuState struct {

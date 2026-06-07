@@ -9,29 +9,39 @@ import (
 
 func TestMenuPresenterLines(t *testing.T) {
 	items := []menuItem{
-		{Value: "/new", Description: "start a fresh conversation"},
-		{Value: "/model openai:gpt-some-long-name", Description: "switch model"},
-		{Value: "/exit", Description: "exit from ronin"},
+		{Name: "/new", Value: "/new", Description: "start a fresh conversation"},
+		{Name: "/model", Argument: "openai:gpt-some-long-name", Value: "/model openai:gpt-some-long-name", Description: "switch model"},
+		{Name: "/reasoning", Argument: "low", Value: "/reasoning low", Description: "set reasoning level"},
+		{Name: "/exit", Value: "/exit", Description: "exit from ronin"},
 	}
 	theme := DefaultTheme()
 
-	t.Run("descriptions align to a dynamic column", func(t *testing.T) {
+	t.Run("arguments and descriptions align to dynamic columns", func(t *testing.T) {
 		p := menuPresenter{SelectedIndex: 0, Items: items}
 		lines := p.Lines(120, theme)
 		if len(lines) != len(items) {
 			t.Fatalf("line count\ngot:  %d\nwant: %d", len(lines), len(items))
 		}
 
-		// Widest value is "/model openai:gpt-some-long-name".
-		widest := text.VisibleLen("/model openai:gpt-some-long-name")
-		wantColumn := len(menuItemPrefix) + widest + menuDescriptionGap
+		nameWidth := text.VisibleLen("/reasoning")
+		argumentWidth := text.VisibleLen("openai:gpt-some-long-name")
+		wantArgumentColumn := len(menuItemPrefix) + nameWidth + menuDescriptionGap
+		wantDescriptionColumn := wantArgumentColumn + argumentWidth + menuDescriptionGap
 
 		for i, line := range lines {
 			plain := text.StripANSI(line)
-			column := text.VisibleLen(plain[:strings.Index(plain, items[i].Description)])
-			if column != wantColumn {
+			if items[i].Argument != "" {
+				argumentColumn := text.VisibleLen(plain[:strings.Index(plain, items[i].Argument)])
+				if argumentColumn != wantArgumentColumn {
+					t.Fatalf("argument column for %q\ngot:  %d\nwant: %d\nline: %q",
+						items[i].Value, argumentColumn, wantArgumentColumn, plain)
+				}
+			}
+
+			descriptionColumn := text.VisibleLen(plain[:strings.Index(plain, items[i].Description)])
+			if descriptionColumn != wantDescriptionColumn {
 				t.Fatalf("description column for %q\ngot:  %d\nwant: %d\nline: %q",
-					items[i].Value, column, wantColumn, plain)
+					items[i].Value, descriptionColumn, wantDescriptionColumn, plain)
 			}
 		}
 	})
