@@ -231,6 +231,40 @@ func TestPredictNext(t *testing.T) {
 		}
 	})
 
+	t.Run("retries status before streaming", func(t *testing.T) {
+		attempts := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			attempts++
+			if attempts == 1 {
+				w.Header().Set("Retry-After", "0")
+				http.Error(w, "try again", http.StatusServiceUnavailable)
+				return
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("data: {\"type\":\"response.completed\"}\n\n"))
+		}))
+		defer server.Close()
+
+		client, err := openai.NewLLM(openai.LLMConfig{
+			BaseURL:        server.URL,
+			APIKey:         "key",
+			Model:          llm.Model{Provider: "openai", Name: "test"},
+			ReasoningLevel: llm.ReasoningLevelOff,
+		})
+		if err != nil {
+			t.Fatalf("new llm: %v", err)
+		}
+
+		events, errs := client.PredictNext(context.Background(), llm.PredictNextRequest{})
+		_ = drainEvents(events)
+		if err := <-errs; err != nil {
+			t.Fatalf("predict: %v", err)
+		}
+		if attempts != 2 {
+			t.Fatalf("attempts = %d, want 2", attempts)
+		}
+	})
+
 	t.Run("emits fallback finish at EOF", func(t *testing.T) {
 		events, err := predictWithStream(t, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n")
 		if err != nil {

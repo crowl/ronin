@@ -15,6 +15,7 @@ import (
 
 	"github.com/crowl/ronin/jsonschema"
 	"github.com/crowl/ronin/llm"
+	"github.com/crowl/ronin/llm/internal/httpretry"
 )
 
 const (
@@ -107,15 +108,16 @@ func (s *LLM) PredictNextStructured(ctx context.Context, req llm.PredictNextStru
 		return nil, fmt.Errorf("marshal openai structured request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("create openai structured request: %w", err)
-	}
+	resp, err := httpretry.Do(ctx, s.client, func() (*http.Request, error) {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL, bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("create openai structured request: %w", err)
+		}
 
-	httpReq.Header.Set("Authorization", "Bearer "+s.apiKey)
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := s.client.Do(httpReq)
+		httpReq.Header.Set("Authorization", "Bearer "+s.apiKey)
+		httpReq.Header.Set("Content-Type", "application/json")
+		return httpReq, nil
+	})
 	if err != nil {
 		return nil, fmt.Errorf("send openai structured request: %w", err)
 	}
@@ -161,16 +163,17 @@ func (s *LLM) stream(ctx context.Context, req llm.PredictNextRequest, events cha
 		return fmt.Errorf("marshal openai request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("create openai request: %w", err)
-	}
+	resp, err := httpretry.Do(ctx, s.client, func() (*http.Request, error) {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL, bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("create openai request: %w", err)
+		}
 
-	httpReq.Header.Set("Authorization", "Bearer "+s.apiKey)
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "text/event-stream")
-
-	resp, err := s.client.Do(httpReq)
+		httpReq.Header.Set("Authorization", "Bearer "+s.apiKey)
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Accept", "text/event-stream")
+		return httpReq, nil
+	})
 	if err != nil {
 		return fmt.Errorf("send openai request: %w", err)
 	}

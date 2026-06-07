@@ -15,6 +15,7 @@ import (
 
 	"github.com/crowl/ronin/jsonschema"
 	"github.com/crowl/ronin/llm"
+	"github.com/crowl/ronin/llm/internal/httpretry"
 )
 
 const (
@@ -109,13 +110,14 @@ func (s *LLM) PredictNextStructured(ctx context.Context, req llm.PredictNextStru
 		return nil, fmt.Errorf("marshal anthropic structured request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("create anthropic structured request: %w", err)
-	}
-	setHeaders(httpReq, s.apiKey, false)
-
-	resp, err := s.client.Do(httpReq)
+	resp, err := httpretry.Do(ctx, s.client, func() (*http.Request, error) {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL, bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("create anthropic structured request: %w", err)
+		}
+		setHeaders(httpReq, s.apiKey, false)
+		return httpReq, nil
+	})
 	if err != nil {
 		return nil, fmt.Errorf("send anthropic structured request: %w", err)
 	}
@@ -165,13 +167,14 @@ func (s *LLM) stream(ctx context.Context, req llm.PredictNextRequest, events cha
 		return fmt.Errorf("marshal anthropic request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("create anthropic request: %w", err)
-	}
-	setHeaders(httpReq, s.apiKey, true)
-
-	resp, err := s.client.Do(httpReq)
+	resp, err := httpretry.Do(ctx, s.client, func() (*http.Request, error) {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL, bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("create anthropic request: %w", err)
+		}
+		setHeaders(httpReq, s.apiKey, true)
+		return httpReq, nil
+	})
 	if err != nil {
 		return fmt.Errorf("send anthropic request: %w", err)
 	}

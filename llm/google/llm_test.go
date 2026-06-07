@@ -265,6 +265,38 @@ func TestPredictNextStructured(t *testing.T) {
 		}
 	})
 
+	t.Run("retries status before structured response", func(t *testing.T) {
+		attempts := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			attempts++
+			if attempts == 1 {
+				w.Header().Set("Retry-After", "0")
+				http.Error(w, "temporary", http.StatusGatewayTimeout)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"{\"answer\":\"ok\"}"}]}}]}`))
+		}))
+		defer server.Close()
+
+		client, err := google.NewLLM(google.LLMConfig{
+			BaseURL:        server.URL,
+			APIKey:         "key",
+			Model:          llm.Model{Provider: "google", Name: "test"},
+			ReasoningLevel: llm.ReasoningLevelOff,
+		})
+		if err != nil {
+			t.Fatalf("new llm: %v", err)
+		}
+		_, err = client.PredictNextStructured(context.Background(), llm.PredictNextStructuredRequest{Schema: &jsonschema.Schema{Type: "object"}})
+		if err != nil {
+			t.Fatalf("PredictNextStructured() error = %v", err)
+		}
+		if attempts != 2 {
+			t.Fatalf("attempts = %d, want 2", attempts)
+		}
+	})
+
 	t.Run("requires_schema", func(t *testing.T) {
 		client, err := google.NewLLM(google.LLMConfig{APIKey: "key", Model: llm.Model{Provider: "google", Name: "test"}, ReasoningLevel: llm.ReasoningLevelOff})
 		if err != nil {

@@ -16,6 +16,7 @@ import (
 
 	"github.com/crowl/ronin/jsonschema"
 	"github.com/crowl/ronin/llm"
+	"github.com/crowl/ronin/llm/internal/httpretry"
 )
 
 const (
@@ -114,15 +115,16 @@ func (s *LLM) PredictNextStructured(ctx context.Context, req llm.PredictNextStru
 		url.PathEscape(s.model.Name),
 	)
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("create gemini structured request: %w", err)
-	}
+	resp, err := httpretry.Do(ctx, s.client, func() (*http.Request, error) {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("create gemini structured request: %w", err)
+		}
 
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("x-goog-api-key", s.apiKey)
-
-	resp, err := s.client.Do(httpReq)
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("x-goog-api-key", s.apiKey)
+		return httpReq, nil
+	})
 	if err != nil {
 		return nil, fmt.Errorf("send gemini structured request: %w", err)
 	}
@@ -174,16 +176,17 @@ func (s *LLM) stream(ctx context.Context, req llm.PredictNextRequest, events cha
 		url.PathEscape(s.model.Name),
 	)
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("create gemini request: %w", err)
-	}
+	resp, err := httpretry.Do(ctx, s.client, func() (*http.Request, error) {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("create gemini request: %w", err)
+		}
 
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "text/event-stream")
-	httpReq.Header.Set("x-goog-api-key", s.apiKey)
-
-	resp, err := s.client.Do(httpReq)
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Accept", "text/event-stream")
+		httpReq.Header.Set("x-goog-api-key", s.apiKey)
+		return httpReq, nil
+	})
 	if err != nil {
 		return fmt.Errorf("send gemini request: %w", err)
 	}
