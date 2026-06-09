@@ -193,14 +193,42 @@ func TestMenu(t *testing.T) {
 		}
 	})
 
-	t.Run("selection with no filtered items returns specific error", func(t *testing.T) {
+	t.Run("selection with no filtered items returns noMenuEffect", func(t *testing.T) {
 		menu := newTestMenu(t)
 		menu.Show()
 		menu.SetQuery("zzzz")
 
-		_, err := menu.HandleKey(terminal.Key{Type: terminal.KeyEnter})
-		if err == nil || !strings.Contains(err.Error(), "invalid selected index") {
-			t.Fatalf("select error\ngot:  %v\nwant: contains %q", err, "invalid selected index")
+		fx, err := menu.HandleKey(terminal.Key{Type: terminal.KeyEnter})
+		if err != nil {
+			t.Fatalf("handle key: %v", err)
+		}
+		if _, ok := fx.(noMenuEffect); !ok {
+			t.Fatalf("effect type\ngot:  %T\nwant: noMenuEffect", fx)
+		}
+
+		fxTab, err := menu.HandleKey(terminal.Key{Type: terminal.KeyTab})
+		if err != nil {
+			t.Fatalf("handle key tab: %v", err)
+		}
+		if _, ok := fxTab.(noMenuEffect); !ok {
+			t.Fatalf("effect type tab\ngot:  %T\nwant: noMenuEffect", fxTab)
+		}
+	})
+
+	t.Run("backspace from no-matches query resets to all items", func(t *testing.T) {
+		menu := newTestMenu(t)
+		menu.Show()
+
+		// 1. Search for non-existent item
+		menu.SetQuery("zzzz")
+		if len(menu.Items()) != 0 {
+			t.Fatalf("items before backspace\ngot:  %d\nwant: 0", len(menu.Items()))
+		}
+
+		// 2. Backspace back to slash
+		menu.SetQuery("/")
+		if len(menu.Items()) != len(menu.items) {
+			t.Fatalf("items after backspace to slash\ngot:  %d\nwant: %d", len(menu.Items()), len(menu.items))
 		}
 	})
 }

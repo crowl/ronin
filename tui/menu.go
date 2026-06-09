@@ -131,13 +131,13 @@ func (m *menuState) Hide() {
 func (m *menuState) SetQuery(query string) {
 	query = strings.TrimSpace(query)
 	m.selectedIndex = 0
+	m.query = query
 	switch query {
 	case "":
 		m.Hide()
 	case "/":
 		m.Show()
 	default:
-		m.query = query
 	}
 }
 
@@ -168,13 +168,13 @@ func (m *menuState) HandleKey(key terminal.Key) (menuEffect, error) {
 	case terminal.KeyTab:
 		item, err := m.selectedItem()
 		if err != nil {
-			return noMenuEffect{}, err
+			return noMenuEffect{}, nil
 		}
 		return menuItemPreSelected{MenuItem: item}, nil
 	case terminal.KeyEnter:
 		item, err := m.selectedItem()
 		if err != nil {
-			return noMenuEffect{}, err
+			return noMenuEffect{}, nil
 		}
 		return menuItemSelected{MenuItem: item}, nil
 	default:
