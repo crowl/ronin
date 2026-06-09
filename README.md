@@ -13,7 +13,7 @@ It is also a learning project: a way to understand coding harnesses by building 
 ## Goals
 
 - Be a useful coding harness.
-- Use only the Go standard library: zero external dependencies.
+- Lean on the Go standard library and strive to keep external dependencies to a minimum.
 - Be a useful playground for people who want to experiment with agent tools and harness design in Go.
 
 ## Try it locally
