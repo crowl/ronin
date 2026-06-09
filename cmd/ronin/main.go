@@ -20,6 +20,7 @@ import (
 	"github.com/crowl/ronin/session/fs"
 	"github.com/crowl/ronin/tool/editfile"
 	"github.com/crowl/ronin/tool/fsutil"
+	"github.com/crowl/ronin/tool/gosemantic"
 	"github.com/crowl/ronin/tool/readfile"
 	"github.com/crowl/ronin/tool/shell"
 	"github.com/crowl/ronin/tool/writefile"
@@ -132,6 +133,8 @@ func main() {
 		editfile.New(workingDir, mutationQueue),
 		writefile.New(workingDir, mutationQueue),
 		shell.New(workingDir),
+		gosemantic.NewFindSymbol(workingDir),
+		gosemantic.NewOutlinePackage(workingDir),
 	}
 
 	systemPrompt, err := agent.BuildSystemPrompt(agent.SystemPromptInput{
