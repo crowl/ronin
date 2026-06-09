@@ -41,7 +41,12 @@ func main() {
 
 	flag.Parse()
 
-	if apiKey := os.Getenv("OPENAI_API_KEY"); apiKey != "" {
+	if openai.HasLocalOAuth() {
+		if err := openai.SetupOAuth(); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "openai oauth setup failed: %v\n", err)
+			os.Exit(1)
+		}
+	} else if apiKey := os.Getenv("OPENAI_API_KEY"); apiKey != "" {
 		if err := openai.Setup(apiKey); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "openai LLM provider setup failed: %v\n", err)
 			os.Exit(1)
@@ -61,7 +66,7 @@ func main() {
 	}
 
 	if len(llm.Models()) == 0 {
-		_, _ = fmt.Fprintf(os.Stderr, "no models available, please define at least one of OPENAI_API_KEY, GEMINI_API_KEY or ANTHROPIC_API_KEY env vars\n")
+		_, _ = fmt.Fprintf(os.Stderr, "no models available, please define at least one of OPENAI_API_KEY, GEMINI_API_KEY or ANTHROPIC_API_KEY env vars, or configure local ChatGPT/Codex OAuth credentials\n")
 		os.Exit(1)
 	}
 

@@ -2,8 +2,10 @@ package openai
 
 import (
 	"fmt"
+	"net/http"
 
 	"github.com/crowl/ronin/llm"
+	"github.com/crowl/ronin/llm/openai/internal"
 )
 
 const provider = "openai"
@@ -34,6 +36,42 @@ func Setup(apiKey string) error {
 			})
 			if err != nil {
 				return nil, fmt.Errorf("create openai llm: %w", err)
+			}
+			return newLLM, nil
+		}); err != nil {
+			return fmt.Errorf("failed to setup model: %w", err)
+		}
+	}
+	return nil
+}
+
+// HasLocalOAuth checks if a valid auth.json is discoverable on the system.
+func HasLocalOAuth() bool {
+	am := internal.NewAuthManager(nil)
+	path, _, err := am.FindAndLoadAuthFile()
+	return err == nil && path != ""
+}
+
+// SetupOAuth registers the OpenAI models configured with the transparent OAuth proxy.
+func SetupOAuth() error {
+	models := []llm.Model{
+		Gpt55,
+		Gpt55Pro,
+		Gpt54,
+		Gpt54Mini,
+		Gpt54Nano,
+	}
+	for _, model := range models {
+		registeredModel := model
+		if err := llm.RegisterModel(registeredModel, func(level llm.ReasoningLevel) (llm.Assistant, error) {
+			newLLM, err := NewLLM(LLMConfig{
+				APIKey:         "oauth-placeholder",
+				Model:          registeredModel,
+				ReasoningLevel: level,
+				Client:         &http.Client{Transport: internal.NewOAuthTransport(nil)},
+			})
+			if err != nil {
+				return nil, fmt.Errorf("create openai oauth llm: %w", err)
 			}
 			return newLLM, nil
 		}); err != nil {

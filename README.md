@@ -33,6 +33,24 @@ export GEMINI_API_KEY=...
 export ANTHROPIC_API_KEY=...
 ```
 
+### OpenAI OAuth Integration (with API Key Fallback)
+
+*ronin* has built-in, zero-overhead support for connecting to OpenAI's ChatGPT/Codex Responses API (`chatgpt.com/backend-api/codex/responses`) using your local ChatGPT/Codex OAuth credentials.
+
+By default, *ronin* **prioritizes** the OAuth flow and automatically searches for your local ChatGPT/Codex OAuth cache file (`auth.json`) in the standard locations:
+- `~/.chatgpt-local/auth.json`
+- `~/.codex/auth.json`
+
+If found, *ronin* configures the transparent OAuth proxy, enabling you to use your subscription.
+
+If no local `auth.json` is found, *ronin* falls back to using the standard `OPENAI_API_KEY` environment variable if configured.
+
+To set up your local OAuth credentials, run the official login flow:
+```sh
+npx @openai/codex login
+```
+Or set `CHATGPT_LOCAL_HOME` / `CODEX_HOME` environment variables if your `auth.json` is located in a custom directory.
+
 Then start the app:
 
 ```sh
