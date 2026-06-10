@@ -106,7 +106,7 @@ func DarkTheme() Theme {
 		Surface:         paletteDarkest,
 		SurfaceRaised:   paletteDark,
 		SurfaceSelected: paletteDim,
-		Separator:       paletteDim,
+		Separator:       paletteMid,
 		DiffAdded:       "color-22",
 		DiffRemoved:     "color-52",
 		Error:           "color-203",

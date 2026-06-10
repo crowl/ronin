@@ -133,7 +133,7 @@ func TestBuiltInThemeLogicalColors(t *testing.T) {
 				},
 				UI: tui.UITheme{
 					EditorCursor:                tui.Style{Reverse: true},
-					EditorSeparator:             tui.Style{FG: "#495057"},
+					EditorSeparator:             tui.Style{FG: "#ADB5BD"},
 					WorkingIndicator:            tui.Style{FG: "#CED4DA"},
 					MenuItem:                    tui.Style{FG: "#E9ECEF"},
 					MenuItemSelected:            tui.Style{FG: "#F8F9FA", BG: "#495057", Bold: true},
@@ -237,6 +237,25 @@ func TestBuiltInThemeLogicalColors(t *testing.T) {
 	}
 }
 
+func TestBuiltInThemeMonochromeColorsArePaletteInverses(t *testing.T) {
+	inverse := map[tui.Color]tui.Color{
+		"#F8F9FA": "#212529",
+		"#E9ECEF": "#343A40",
+		"#DEE2E6": "#495057",
+		"#CED4DA": "#6C757D",
+		"#ADB5BD": "#ADB5BD",
+		"#6C757D": "#CED4DA",
+		"#495057": "#DEE2E6",
+		"#343A40": "#E9ECEF",
+		"#212529": "#F8F9FA",
+	}
+
+	light := tui.LightTheme()
+	dark := tui.DarkTheme()
+
+	assertThemeColorsAreInverses(t, "theme", reflect.ValueOf(light), reflect.ValueOf(dark), inverse)
+}
+
 func TestBuiltInThemeSurfacePolarity(t *testing.T) {
 	tests := []struct {
 		name              string
@@ -284,6 +303,47 @@ func TestAssistantThemesDoNotSetBackgrounds(t *testing.T) {
 			assertBoxHasForegroundOnly(t, "System", theme.Box.System, theme.Text)
 			assertBoxHasForegroundOnly(t, "Error", theme.Box.Error, theme.Text)
 		})
+	}
+}
+
+func assertThemeColorsAreInverses(t *testing.T, path string, light, dark reflect.Value, inverse map[tui.Color]tui.Color) {
+	t.Helper()
+
+	if light.Kind() == reflect.Pointer || light.Kind() == reflect.Interface {
+		if light.IsNil() || dark.IsNil() {
+			return
+		}
+		light = light.Elem()
+		dark = dark.Elem()
+	}
+
+	switch light.Kind() {
+	case reflect.Struct:
+		if lightStyle, ok := light.Interface().(tui.Style); ok {
+			darkStyle := dark.Interface().(tui.Style)
+			assertThemeColorIsInverse(t, path+".FG", lightStyle.FG, darkStyle.FG, inverse)
+			assertThemeColorIsInverse(t, path+".BG", lightStyle.BG, darkStyle.BG, inverse)
+			return
+		}
+		for i := 0; i < light.NumField(); i++ {
+			field := light.Type().Field(i)
+			assertThemeColorsAreInverses(t, path+"."+field.Name, light.Field(i), dark.Field(i), inverse)
+		}
+	}
+}
+
+func assertThemeColorIsInverse(t *testing.T, path string, light, dark tui.Color, inverse map[tui.Color]tui.Color) {
+	t.Helper()
+
+	if light == "" && dark == "" {
+		return
+	}
+	want, ok := inverse[light]
+	if !ok {
+		return
+	}
+	if dark != want {
+		t.Fatalf("%s is not palette inverse\nlight: %q\ndark:  %q\nwant:  %q", path, light, dark, want)
 	}
 }
 
