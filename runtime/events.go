@@ -1,4 +1,4 @@
-package agent
+package runtime
 
 import (
 	"encoding/json"
@@ -73,7 +73,7 @@ type SessionSaveFailed struct {
 	Error error
 }
 
-// Event is a sealed interface to mark agent events
+// Event is a sealed interface to mark runtime events
 type Event interface{ event() }
 
 func (PromptProcessingStarted) event()          {}

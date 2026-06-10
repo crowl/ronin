@@ -1,10 +1,10 @@
 # *ronin*
 
-*ronin* is an experimental coding harness written in Go. It provides a TUI for working with an agent that can read/edit/write files and run shell commands. It supports skills and context files (AGENTS.md).
+*ronin* is an experimental coding harness written in Go. It runs an LLM-backed conversation runtime with tools for file editing and shell commands, presented through a terminal UI or non-interactive prompt. It supports skills and context files (AGENTS.md).
 
 ## Why *ronin* exists
 
-It started as a playground for experimenting with custom tools for agents, using Go.
+It started as a playground for experimenting with custom tools for coding conversations, using Go.
 
 It is heavily inspired by [Pi](https://pi.dev/), especially in the feel of the TUI and rendering model.
 
@@ -14,7 +14,7 @@ It is also a learning project: a way to understand coding harnesses by building 
 
 - Be a useful coding harness.
 - Lean on the Go standard library and strive to keep external dependencies to a minimum.
-- Be a useful playground for people who want to experiment with agent tools and harness design in Go.
+- Be a useful playground for people who want to experiment with conversation tools and harness design in Go.
 
 ## Try it locally
 
@@ -77,7 +77,7 @@ You can also provide a prompt directly and skip the TUI:
 go run ./cmd/ronin -prompt "summarize this project"
 ```
 
-In prompt mode, assistant text is written to stdout, then the process exits when the agent finishes.
+In prompt mode, assistant text is written to stdout, then the process exits when the conversation finishes.
 
 ## Configuration
 
@@ -101,7 +101,7 @@ Skills are loaded from `<config dir>/skills`. Each skill lives in its own direct
 
 ## How it is organized
 
-- `agent`: conversation state, tool execution, compaction, skills, and system prompt construction.
+- `runtime`: active conversation runtime, tool execution, compaction, skills, and system prompt construction.
 - `config`: config directory resolution and the `config.json` settings file.
 - `llm`: model definitions, provider registration, streaming events, and provider implementations.
 - `tool`: shared tool contracts, typed argument decoding, results, and artifacts.

@@ -23,11 +23,11 @@ type renderTarget interface {
 }
 
 type appConfig struct {
-	Terminal terminalIO
-	Agent    Agent
-	Renderer renderTarget
-	Commands []Command
-	Theme    Theme
+	Terminal     terminalIO
+	Conversation Conversation
+	Renderer     renderTarget
+	Commands     []Command
+	Theme        Theme
 }
 
 const (
@@ -41,20 +41,20 @@ func newApp(cfg appConfig) (*app, error) {
 	if err != nil {
 		return nil, err
 	}
-	model.populateInitialBoxes(cfg.Agent)
+	model.populateInitialBoxes(cfg.Conversation)
 
 	return &app{
-		agent:    cfg.Agent,
-		events:   make(chan event, defaultEventsBufferLen),
-		terminal: cfg.Terminal,
-		renderer: cfg.Renderer,
-		model:    model,
+		conversation: cfg.Conversation,
+		events:       make(chan event, defaultEventsBufferLen),
+		terminal:     cfg.Terminal,
+		renderer:     cfg.Renderer,
+		model:        model,
 	}, nil
 }
 
 type app struct {
-	agent  Agent
-	events chan event
+	conversation Conversation
+	events       chan event
 
 	terminal terminalIO
 	renderer renderTarget
@@ -163,19 +163,19 @@ func (app *app) handleAppEvent(ctx context.Context, event event) error {
 		return app.applyUpdate(ctx, app.model.tickWorking())
 	case renderRequested:
 		return app.render()
-	case agentEventReceived:
-		update, err := app.model.handleAgentEvent(typedEvent.Event, time.Now())
+	case conversationEventReceived:
+		update, err := app.model.handleConversationEvent(typedEvent.Event, time.Now())
 		if err != nil {
-			update = app.model.handleAgentError(err)
+			update = app.model.handleConversationError(err)
 		}
 		return app.applyUpdate(ctx, update)
-	case agentErrorReceived:
-		return app.applyUpdate(ctx, app.model.handleAgentError(typedEvent.Err))
-	case agentPromptDone:
+	case conversationErrorReceived:
+		return app.applyUpdate(ctx, app.model.handleConversationError(typedEvent.Err))
+	case conversationPromptDone:
 		app.cancelFunc = nil
 		update, _ := app.model.finishPrompt()
 		return app.applyUpdate(ctx, update)
-	case agentCompactionDone:
+	case conversationCompactionDone:
 		app.cancelFunc = nil
 		return app.applyUpdate(ctx, app.model.finishCompaction(typedEvent.Err))
 	}
@@ -235,16 +235,16 @@ func (app *app) submitPrompt(ctx context.Context, prompt string) {
 		defer cancel()
 		defer func() {
 			select {
-			case app.events <- agentPromptDone{}:
+			case app.events <- conversationPromptDone{}:
 			case <-ctx.Done():
 			}
 		}()
 
-		eventsCh, errCh := app.agent.Prompt(promptCtx, prompt)
+		eventsCh, errCh := app.conversation.Prompt(promptCtx, prompt)
 
 		for event := range eventsCh {
 			select {
-			case app.events <- agentEventReceived{Event: event}:
+			case app.events <- conversationEventReceived{Event: event}:
 			case <-ctx.Done():
 				return
 			}
@@ -254,7 +254,7 @@ func (app *app) submitPrompt(ctx context.Context, prompt string) {
 		case err := <-errCh:
 			if err != nil {
 				select {
-				case app.events <- agentErrorReceived{Err: err}:
+				case app.events <- conversationErrorReceived{Err: err}:
 				case <-ctx.Done():
 				}
 			}
@@ -271,7 +271,7 @@ func (app *app) runCommand(ctx context.Context, item menuItem, command Command) 
 		app.compactConversation(ctx, item)
 		return nil
 	case StartNewConversation:
-		err = app.agent.NewConversation()
+		err = app.conversation.NewConversation()
 		if err != nil {
 			err = fmt.Errorf("failed to start new conversation: %w", err)
 			break
@@ -279,12 +279,12 @@ func (app *app) runCommand(ctx context.Context, item menuItem, command Command) 
 		app.model.startNewConversation()
 		return nil
 	case SwitchModel:
-		err = app.agent.SwitchModel(typedCommand.Model)
+		err = app.conversation.SwitchModel(typedCommand.Model)
 		if err != nil {
 			err = fmt.Errorf("failed to switch model: %w", err)
 		}
 	case SwitchReasoningLevel:
-		err = app.agent.SwitchReasoningLevel(typedCommand.Level)
+		err = app.conversation.SwitchReasoningLevel(typedCommand.Level)
 		if err != nil {
 			err = fmt.Errorf("failed to switch reasoning level: %w", err)
 		}
@@ -311,12 +311,12 @@ func (app *app) compactConversation(ctx context.Context, item menuItem) {
 
 	go func() {
 		defer cancel()
-		err := app.agent.CompactConversation(compactCtx)
+		err := app.conversation.CompactConversation(compactCtx)
 		if err != nil {
 			err = fmt.Errorf("failed to compact conversation: %w", err)
 		}
 		select {
-		case app.events <- agentCompactionDone{Err: err}:
+		case app.events <- conversationCompactionDone{Err: err}:
 		case <-ctx.Done():
 		}
 	}()
@@ -375,7 +375,7 @@ func (app *app) render() error {
 		app.sizeCached = true
 	}
 
-	lines, err := app.model.lines(size.Width, app.agent, time.Now())
+	lines, err := app.model.lines(size.Width, app.conversation, time.Now())
 	if err != nil {
 		return fmt.Errorf("failed to get lines: %w", err)
 	}

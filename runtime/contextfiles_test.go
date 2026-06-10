@@ -1,4 +1,4 @@
-package agent_test
+package runtime_test
 
 import (
 	"os"
@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/crowl/ronin/agent"
+	"github.com/crowl/ronin/runtime"
 )
 
 func TestLoadContextFiles(t *testing.T) {
@@ -24,7 +24,7 @@ func TestLoadContextFiles(t *testing.T) {
 	writeFile(t, filepath.Join(root, "AGENTS.md"), "root")
 	writeFile(t, filepath.Join(sub, "AGENTS.md"), "sub")
 
-	files, err := agent.LoadContextFiles(configDir, sub)
+	files, err := runtime.LoadContextFiles(configDir, sub)
 	if err != nil {
 		t.Fatalf("LoadContextFiles() error = %v", err)
 	}
@@ -35,8 +35,8 @@ func TestLoadContextFiles(t *testing.T) {
 		t.Fatalf("contents = %q, %q, %q; want global, root, sub", files[0].Content, files[1].Content, files[2].Content)
 	}
 
-	writeFile(t, filepath.Join(sub, "AGENTS.md"), strings.Repeat("x", agent.MaxContextFileBytes+1))
-	_, err = agent.LoadContextFiles(configDir, sub)
+	writeFile(t, filepath.Join(sub, "AGENTS.md"), strings.Repeat("x", runtime.MaxContextFileBytes+1))
+	_, err = runtime.LoadContextFiles(configDir, sub)
 	if err == nil || !strings.Contains(err.Error(), "exceeds") {
 		t.Fatalf("LoadContextFiles() error = %v, want exceeds error", err)
 	}

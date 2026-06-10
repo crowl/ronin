@@ -31,7 +31,7 @@ const loadMode = packages.NeedName |
 
 // loadModule loads every package in the local module containing workingDir.
 // Per-package parse errors are reported as warnings rather than failing the
-// whole load, because an agent session often edits code that does not compile.
+// whole load, because an active conversation often edits code that does not compile.
 func loadModule(ctx context.Context, workingDir string) (*module, error) {
 	root, err := findModuleRoot(workingDir)
 	if err != nil {

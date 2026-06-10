@@ -52,7 +52,7 @@ func isExportedName(name string) bool {
 }
 
 // packageSymbols extracts every top-level declaration in a package. cwd
-// controls how file paths are displayed (relative to the agent's working
+// controls how file paths are displayed (relative to the conversation's working
 // directory, matching read_file).
 func packageSymbols(cwd string, fset *token.FileSet, pkg *packages.Package) []Symbol {
 	var symbols []Symbol

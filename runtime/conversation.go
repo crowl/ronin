@@ -1,4 +1,4 @@
-package agent
+package runtime
 
 import (
 	"context"
@@ -32,7 +32,7 @@ type ToolCallTitleProvider interface {
 	CallTitle(rawArgs json.RawMessage) (string, error)
 }
 
-type Config struct {
+type ConversationConfig struct {
 	CWD          string
 	Assistant    llm.Assistant
 	Compactor    Compactor
@@ -46,7 +46,7 @@ type Config struct {
 
 const defaultMaxTurns = 512
 
-func New(cfg Config) (*Agent, error) {
+func NewConversation(cfg ConversationConfig) (*Conversation, error) {
 	if cfg.Assistant == nil {
 		return nil, errors.New("llm is required")
 	}
@@ -90,7 +90,7 @@ func New(cfg Config) (*Agent, error) {
 		break
 	}
 
-	return &Agent{
+	return &Conversation{
 		cwd:          cfg.CWD,
 		systemPrompt: cfg.SystemPrompt,
 		maxTurns:     maxTurns,
@@ -105,7 +105,7 @@ func New(cfg Config) (*Agent, error) {
 	}, nil
 }
 
-type Agent struct {
+type Conversation struct {
 	cwd          string
 	systemPrompt string
 	maxTurns     int
@@ -123,16 +123,16 @@ type Agent struct {
 	session      session.Session
 }
 
-func (a *Agent) CWD() string {
-	return a.cwd
+func (c *Conversation) CWD() string {
+	return c.cwd
 }
 
-func (a *Agent) Messages() []llm.Message {
-	return append([]llm.Message(nil), a.session.Messages...)
+func (c *Conversation) Messages() []llm.Message {
+	return append([]llm.Message(nil), c.session.Messages...)
 }
 
-func (a *Agent) ToolCallTitle(name string, arguments []byte) string {
-	t, ok := a.toolByName[name]
+func (c *Conversation) ToolCallTitle(name string, arguments []byte) string {
+	t, ok := c.toolByName[name]
 	if !ok {
 		return name
 	}
@@ -144,52 +144,52 @@ func (a *Agent) ToolCallTitle(name string, arguments []byte) string {
 	return t.Name()
 }
 
-func (a *Agent) Model() llm.Model {
-	return a.assistant.Model()
+func (c *Conversation) Model() llm.Model {
+	return c.assistant.Model()
 }
 
-func (a *Agent) ReasoningLevel() llm.ReasoningLevel {
-	return a.assistant.ReasoningLevel()
+func (c *Conversation) ReasoningLevel() llm.ReasoningLevel {
+	return c.assistant.ReasoningLevel()
 }
 
-func (a *Agent) ContextUsage() llm.Usage {
-	return a.contextUsage
+func (c *Conversation) ContextUsage() llm.Usage {
+	return c.contextUsage
 }
 
-func (a *Agent) SwitchModel(model llm.Model) error {
-	newAssistant, err := llm.LoadAssistant(model, a.assistant.ReasoningLevel())
+func (c *Conversation) SwitchModel(model llm.Model) error {
+	newAssistant, err := llm.LoadAssistant(model, c.assistant.ReasoningLevel())
 	if err != nil {
 		return fmt.Errorf("select llm: %w", err)
 	}
 
-	updatedSession := a.session
+	updatedSession := c.session
 	updatedSession.Model = config.Model{Provider: model.Provider, Name: model.Name}
-	updatedSession.UpdatedAt = a.now()
+	updatedSession.UpdatedAt = c.now()
 
-	if a.sessionStore != nil && a.session.ID != "" {
-		if err := a.sessionStore.Save(updatedSession); err != nil {
+	if c.sessionStore != nil && c.session.ID != "" {
+		if err := c.sessionStore.Save(updatedSession); err != nil {
 			return fmt.Errorf("save session model: %w", err)
 		}
 	}
 
-	a.assistant = newAssistant
-	a.session = updatedSession
+	c.assistant = newAssistant
+	c.session = updatedSession
 	return nil
 }
 
-func (a *Agent) SwitchReasoningLevel(lvl llm.ReasoningLevel) error {
-	prevLevel := a.assistant.ReasoningLevel()
-	if err := a.assistant.SetReasoningLevel(lvl); err != nil {
+func (c *Conversation) SwitchReasoningLevel(lvl llm.ReasoningLevel) error {
+	prevLevel := c.assistant.ReasoningLevel()
+	if err := c.assistant.SetReasoningLevel(lvl); err != nil {
 		return fmt.Errorf("set reasoning level: %w", err)
 	}
 
-	updatedSession := a.session
+	updatedSession := c.session
 	updatedSession.ReasoningLevel = string(lvl)
-	updatedSession.UpdatedAt = a.now()
+	updatedSession.UpdatedAt = c.now()
 
-	if a.sessionStore != nil && a.session.ID != "" {
-		if err := a.sessionStore.Save(updatedSession); err != nil {
-			rollbackErr := a.assistant.SetReasoningLevel(prevLevel)
+	if c.sessionStore != nil && c.session.ID != "" {
+		if err := c.sessionStore.Save(updatedSession); err != nil {
+			rollbackErr := c.assistant.SetReasoningLevel(prevLevel)
 			if rollbackErr != nil {
 				return errors.Join(
 					fmt.Errorf("save session reasoning level: %w", err),
@@ -200,33 +200,33 @@ func (a *Agent) SwitchReasoningLevel(lvl llm.ReasoningLevel) error {
 		}
 	}
 
-	a.session = updatedSession
+	c.session = updatedSession
 	return nil
 }
 
-func (a *Agent) CompactConversation(ctx context.Context) error {
-	if a.compactor == nil {
+func (c *Conversation) CompactConversation(ctx context.Context) error {
+	if c.compactor == nil {
 		return fmt.Errorf("compactor is not configured")
 	}
-	messages, err := a.compactor.Compact(ctx, append([]llm.Message(nil), a.session.Messages...))
+	messages, err := c.compactor.Compact(ctx, append([]llm.Message(nil), c.session.Messages...))
 	if err != nil {
 		return err
 	}
 
-	a.session.Messages = append([]llm.Message(nil), messages...)
-	if a.sessionStore != nil && a.session.ID != "" {
-		a.session.UpdatedAt = a.now()
-		if err := a.sessionStore.Save(a.session); err != nil {
+	c.session.Messages = append([]llm.Message(nil), messages...)
+	if c.sessionStore != nil && c.session.ID != "" {
+		c.session.UpdatedAt = c.now()
+		if err := c.sessionStore.Save(c.session); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (a *Agent) NewConversation() error {
-	if a.sessionStore != nil && a.session.ID != "" {
-		model := a.assistant.Model()
-		reasoningLevel := a.assistant.ReasoningLevel()
+func (c *Conversation) NewConversation() error {
+	if c.sessionStore != nil && c.session.ID != "" {
+		model := c.assistant.Model()
+		reasoningLevel := c.assistant.ReasoningLevel()
 		metadata := session.Metadata{
 			Model: config.Model{
 				Provider: model.Provider,
@@ -234,36 +234,36 @@ func (a *Agent) NewConversation() error {
 			},
 			ReasoningLevel: string(reasoningLevel),
 		}
-		if err := a.sessionStore.Clear(a.cwd); err != nil {
+		if err := c.sessionStore.Clear(c.cwd); err != nil {
 			return fmt.Errorf("clear session: %w", err)
 		}
-		newSess, err := a.sessionStore.Create(a.cwd, metadata)
+		newSess, err := c.sessionStore.Create(c.cwd, metadata)
 		if err != nil {
 			return fmt.Errorf("create session: %w", err)
 		}
-		a.contextUsage = llm.Usage{}
-		a.session = newSess
+		c.contextUsage = llm.Usage{}
+		c.session = newSess
 		return nil
 	}
 
-	a.contextUsage = llm.Usage{}
-	a.session.Messages = nil
+	c.contextUsage = llm.Usage{}
+	c.session.Messages = nil
 	return nil
 }
 
-// Prompt is not safe for concurrent use on the same Agent.
-func (a *Agent) Prompt(ctx context.Context, prompt string) (<-chan Event, <-chan error) {
+// Prompt is not safe for concurrent use on the same Conversation.
+func (c *Conversation) Prompt(ctx context.Context, prompt string) (<-chan Event, <-chan error) {
 	events := make(chan Event, 32)
 	errs := make(chan error, 1)
 
 	go func() {
 		defer close(events)
 		defer close(errs)
-		runErr := a.run(ctx, prompt, events)
+		runErr := c.run(ctx, prompt, events)
 
-		if a.sessionStore != nil && a.session.ID != "" {
-			a.session.UpdatedAt = a.now()
-			if saveErr := a.sessionStore.Save(a.session); saveErr != nil {
+		if c.sessionStore != nil && c.session.ID != "" {
+			c.session.UpdatedAt = c.now()
+			if saveErr := c.sessionStore.Save(c.session); saveErr != nil {
 				select {
 				case events <- SessionSaveFailed{Error: saveErr}:
 				case <-ctx.Done():
@@ -282,7 +282,7 @@ func (a *Agent) Prompt(ctx context.Context, prompt string) (<-chan Event, <-chan
 	return events, errs
 }
 
-func (a *Agent) run(ctx context.Context, prompt string, events chan<- Event) error {
+func (c *Conversation) run(ctx context.Context, prompt string, events chan<- Event) error {
 	started := false
 	finished := false
 
@@ -316,12 +316,12 @@ func (a *Agent) run(ctx context.Context, prompt string, events chan<- Event) err
 		started = true
 	}
 
-	a.session.Messages = append(a.session.Messages, llm.UserMessage{
-		Timestamp: a.now(),
+	c.session.Messages = append(c.session.Messages, llm.UserMessage{
+		Timestamp: c.now(),
 		Text:      prompt,
 	})
 
-	for turn := range a.maxTurns {
+	for turn := range c.maxTurns {
 		select {
 		case <-ctx.Done():
 			return finish(ctx.Err())
@@ -333,12 +333,12 @@ func (a *Agent) run(ctx context.Context, prompt string, events chan<- Event) err
 		var usage llm.Usage
 
 		request := llm.PredictNextRequest{
-			SystemPrompt: a.systemPrompt,
-			Tools:        append([]llm.Tool(nil), a.toolDefs...),
-			Messages:     append([]llm.Message(nil), a.session.Messages...),
+			SystemPrompt: c.systemPrompt,
+			Tools:        append([]llm.Tool(nil), c.toolDefs...),
+			Messages:     append([]llm.Message(nil), c.session.Messages...),
 		}
 
-		predictionEventsCh, predictionErrCh := a.assistant.PredictNext(ctx, request)
+		predictionEventsCh, predictionErrCh := c.assistant.PredictNext(ctx, request)
 
 		for event := range predictionEventsCh {
 			switch typedEvent := event.(type) {
@@ -346,7 +346,7 @@ func (a *Agent) run(ctx context.Context, prompt string, events chan<- Event) err
 				select {
 				case <-ctx.Done():
 					return finish(ctx.Err())
-				case events <- AssistantMessageStarted{Message: llm.AssistantMessage{Timestamp: a.now()}}:
+				case events <- AssistantMessageStarted{Message: llm.AssistantMessage{Timestamp: c.now()}}:
 				}
 			case llm.ThinkingDelta:
 				select {
@@ -366,7 +366,7 @@ func (a *Agent) run(ctx context.Context, prompt string, events chan<- Event) err
 					toolCalls = append(toolCalls, toolCall)
 				}
 			case llm.PredictionFinished:
-				a.contextUsage = typedEvent.Usage
+				c.contextUsage = typedEvent.Usage
 				usage = typedEvent.Usage
 			}
 		}
@@ -376,12 +376,12 @@ func (a *Agent) run(ctx context.Context, prompt string, events chan<- Event) err
 		}
 
 		msg := llm.AssistantMessage{
-			Timestamp: a.now(),
+			Timestamp: c.now(),
 			Blocks:    blocks,
 			Usage:     usage,
 		}
 
-		a.session.Messages = append(a.session.Messages, msg)
+		c.session.Messages = append(c.session.Messages, msg)
 
 		select {
 		case <-ctx.Done():
@@ -399,7 +399,7 @@ func (a *Agent) run(ctx context.Context, prompt string, events chan<- Event) err
 		}
 
 		for _, toolCall := range toolCalls {
-			if err := a.executeToolCall(ctx, events, toolCall); err != nil {
+			if err := c.executeToolCall(ctx, events, toolCall); err != nil {
 				return finish(err)
 			}
 		}
@@ -411,20 +411,20 @@ func (a *Agent) run(ctx context.Context, prompt string, events chan<- Event) err
 		}
 	}
 
-	err := fmt.Errorf("max turns reached (%d)", a.maxTurns)
-	a.session.Messages = append(a.session.Messages, llm.ErrorMessage{
-		Timestamp: a.now(),
+	err := fmt.Errorf("max turns reached (%d)", c.maxTurns)
+	c.session.Messages = append(c.session.Messages, llm.ErrorMessage{
+		Timestamp: c.now(),
 		Error:     err,
 	})
 	return finish(err)
 }
 
-func (a *Agent) executeToolCall(ctx context.Context, events chan<- Event, toolCall llm.ToolCallBlock) error {
-	t, ok := a.toolByName[toolCall.Name]
+func (c *Conversation) executeToolCall(ctx context.Context, events chan<- Event, toolCall llm.ToolCallBlock) error {
+	t, ok := c.toolByName[toolCall.Name]
 	if !ok {
 		execErr := fmt.Errorf("tool %q not found", toolCall.Name)
-		a.session.Messages = append(a.session.Messages, llm.ToolErrorMessage{
-			Timestamp:  a.now(),
+		c.session.Messages = append(c.session.Messages, llm.ToolErrorMessage{
+			Timestamp:  c.now(),
 			ToolCallID: toolCall.ID,
 			ToolName:   toolCall.Name,
 			Error:      execErr,
@@ -448,7 +448,7 @@ func (a *Agent) executeToolCall(ctx context.Context, events chan<- Event, toolCa
 		var err error
 		callTitle, err = titleProvider.CallTitle(toolCall.Arguments)
 		if err != nil {
-			return a.finishToolCall(ctx, events, t, toolCall, nil, err)
+			return c.finishToolCall(ctx, events, t, toolCall, nil, err)
 		}
 	}
 
@@ -464,15 +464,15 @@ func (a *Agent) executeToolCall(ctx context.Context, events chan<- Event, toolCa
 	}
 
 	if incrementalTool, ok := t.(IncrementalTool); ok {
-		toolResult, err := a.callIncrementalTool(ctx, events, incrementalTool, toolCall)
-		return a.finishToolCall(ctx, events, t, toolCall, toolResult, err)
+		toolResult, err := c.callIncrementalTool(ctx, events, incrementalTool, toolCall)
+		return c.finishToolCall(ctx, events, t, toolCall, toolResult, err)
 	}
 
 	toolResult, execErr := t.Call(ctx, toolCall.Arguments)
-	return a.finishToolCall(ctx, events, t, toolCall, toolResult, execErr)
+	return c.finishToolCall(ctx, events, t, toolCall, toolResult, execErr)
 }
 
-func (a *Agent) callIncrementalTool(ctx context.Context, events chan<- Event, incrementalTool IncrementalTool, toolCall llm.ToolCallBlock) (any, error) {
+func (c *Conversation) callIncrementalTool(ctx context.Context, events chan<- Event, incrementalTool IncrementalTool, toolCall llm.ToolCallBlock) (any, error) {
 	emit := func(artifact tool.Artifact) error {
 		select {
 		case <-ctx.Done():
@@ -489,10 +489,10 @@ func (a *Agent) callIncrementalTool(ctx context.Context, events chan<- Event, in
 	return incrementalTool.CallIncremental(ctx, toolCall.Arguments, emit)
 }
 
-func (a *Agent) finishToolCall(ctx context.Context, events chan<- Event, executedTool Tool, toolCall llm.ToolCallBlock, toolResult any, execErr error) error {
+func (c *Conversation) finishToolCall(ctx context.Context, events chan<- Event, executedTool Tool, toolCall llm.ToolCallBlock, toolResult any, execErr error) error {
 	if execErr != nil {
-		a.session.Messages = append(a.session.Messages, llm.ToolErrorMessage{
-			Timestamp:  a.now(),
+		c.session.Messages = append(c.session.Messages, llm.ToolErrorMessage{
+			Timestamp:  c.now(),
 			ToolCallID: toolCall.ID,
 			ToolName:   toolCall.Name,
 			Error:      execErr,
@@ -513,8 +513,8 @@ func (a *Agent) finishToolCall(ctx context.Context, events chan<- Event, execute
 	toolOutputData, err := json.Marshal(toolResult)
 	if err != nil {
 		execErr := fmt.Errorf("marshal tool %q result: %w", toolCall.Name, err)
-		a.session.Messages = append(a.session.Messages, llm.ToolErrorMessage{
-			Timestamp:  a.now(),
+		c.session.Messages = append(c.session.Messages, llm.ToolErrorMessage{
+			Timestamp:  c.now(),
 			ToolCallID: toolCall.ID,
 			ToolName:   toolCall.Name,
 			Error:      execErr,
@@ -532,8 +532,8 @@ func (a *Agent) finishToolCall(ctx context.Context, events chan<- Event, execute
 		}
 	}
 
-	a.session.Messages = append(a.session.Messages, llm.ToolOutputMessage{
-		Timestamp:  a.now(),
+	c.session.Messages = append(c.session.Messages, llm.ToolOutputMessage{
+		Timestamp:  c.now(),
 		ToolCallID: toolCall.ID,
 		ToolName:   toolCall.Name,
 		ToolOutput: string(toolOutputData),

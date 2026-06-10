@@ -1,4 +1,4 @@
-package agent_test
+package runtime_test
 
 import (
 	"os"
@@ -6,13 +6,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/crowl/ronin/agent"
+	"github.com/crowl/ronin/runtime"
 )
 
 func TestLoadSkills(t *testing.T) {
 	t.Run("missing directory returns no skills", func(t *testing.T) {
 		dir := filepath.Join(t.TempDir(), "missing")
-		skills, err := agent.LoadSkills(dir)
+		skills, err := runtime.LoadSkills(dir)
 		if err != nil {
 			t.Fatalf("LoadSkills() error = %v", err)
 		}
@@ -26,7 +26,7 @@ func TestLoadSkills(t *testing.T) {
 		if err := os.Mkdir(filepath.Join(dir, "empty"), 0o755); err != nil {
 			t.Fatalf("os.Mkdir() error = %v", err)
 		}
-		skills, err := agent.LoadSkills(dir)
+		skills, err := runtime.LoadSkills(dir)
 		if err != nil {
 			t.Fatalf("LoadSkills() error = %v", err)
 		}
@@ -42,7 +42,7 @@ func TestLoadSkills(t *testing.T) {
 			t.Fatalf("os.Mkdir() error = %v", err)
 		}
 		writeFile(t, filepath.Join(skillDir, "SKILL.md"), "not frontmatter")
-		_, err := agent.LoadSkills(dir)
+		_, err := runtime.LoadSkills(dir)
 		if err == nil || !strings.Contains(err.Error(), "failed to parse") {
 			t.Fatalf("LoadSkills() error = %v, want parse error", err)
 		}
@@ -52,7 +52,7 @@ func TestLoadSkills(t *testing.T) {
 		dir := t.TempDir()
 		writeSkill(t, filepath.Join(dir, "one"), "one", "first")
 		writeSkill(t, filepath.Join(dir, "two"), "one", "second")
-		_, err := agent.LoadSkills(dir)
+		_, err := runtime.LoadSkills(dir)
 		if err == nil || !strings.Contains(err.Error(), "duplicate") {
 			t.Fatalf("LoadSkills() error = %v, want duplicate error", err)
 		}

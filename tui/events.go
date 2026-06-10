@@ -1,7 +1,7 @@
 package tui
 
 import (
-	"github.com/crowl/ronin/agent"
+	"github.com/crowl/ronin/runtime"
 	"github.com/crowl/ronin/tui/internal/terminal"
 )
 
@@ -15,23 +15,23 @@ type workingTick struct{}
 
 type renderRequested struct{}
 
-type agentEventReceived struct{ Event agent.Event }
+type conversationEventReceived struct{ Event runtime.Event }
 
-type agentErrorReceived struct{ Err error }
+type conversationErrorReceived struct{ Err error }
 
-type agentPromptDone struct{}
+type conversationPromptDone struct{}
 
-type agentCompactionDone struct{ Err error }
+type conversationCompactionDone struct{ Err error }
 
 // event is a sealed interface to mark all application events
 type event interface{ event() }
 
-func (terminalKeyRead) event()     {}
-func (terminalReadFailed) event()  {}
-func (terminalResized) event()     {}
-func (workingTick) event()         {}
-func (renderRequested) event()     {}
-func (agentEventReceived) event()  {}
-func (agentErrorReceived) event()  {}
-func (agentPromptDone) event()     {}
-func (agentCompactionDone) event() {}
+func (terminalKeyRead) event()            {}
+func (terminalReadFailed) event()         {}
+func (terminalResized) event()            {}
+func (workingTick) event()                {}
+func (renderRequested) event()            {}
+func (conversationEventReceived) event()  {}
+func (conversationErrorReceived) event()  {}
+func (conversationPromptDone) event()     {}
+func (conversationCompactionDone) event() {}

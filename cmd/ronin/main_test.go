@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/crowl/ronin/agent"
 	"github.com/crowl/ronin/config"
 	"github.com/crowl/ronin/jsonschema"
+	"github.com/crowl/ronin/runtime"
 	"github.com/crowl/ronin/session"
 )
 
@@ -155,12 +155,12 @@ func TestStartupSession(t *testing.T) {
 func TestRunPrompt(t *testing.T) {
 	t.Run("writes assistant text with trailing newline", func(t *testing.T) {
 		var output strings.Builder
-		agt := fakePromptAgent{events: []agent.Event{
-			agent.AssistantMessageDeltaReceived{Text: "hello"},
-			agent.AssistantMessageDeltaReceived{Text: " world"},
+		conv := fakePromptConversation{events: []runtime.Event{
+			runtime.AssistantMessageDeltaReceived{Text: "hello"},
+			runtime.AssistantMessageDeltaReceived{Text: " world"},
 		}}
 
-		if err := runPrompt(t.Context(), agt, "prompt", &output); err != nil {
+		if err := runPrompt(t.Context(), conv, "prompt", &output); err != nil {
 			t.Fatalf("runPrompt() error = %v", err)
 		}
 
@@ -172,14 +172,14 @@ func TestRunPrompt(t *testing.T) {
 	t.Run("ignores tool events", func(t *testing.T) {
 		var output strings.Builder
 		toolErr := errors.New("exit status 1")
-		agt := fakePromptAgent{events: []agent.Event{
-			agent.AssistantMessageDeltaReceived{Text: "checking"},
-			agent.ToolExecutionStarted{Tool: fakePromptTool{name: "read_file"}},
-			agent.ToolExecutionFailed{Tool: fakePromptTool{name: "shell"}, Error: toolErr},
-			agent.AssistantMessageDeltaReceived{Text: "done"},
+		conv := fakePromptConversation{events: []runtime.Event{
+			runtime.AssistantMessageDeltaReceived{Text: "checking"},
+			runtime.ToolExecutionStarted{Tool: fakePromptTool{name: "read_file"}},
+			runtime.ToolExecutionFailed{Tool: fakePromptTool{name: "shell"}, Error: toolErr},
+			runtime.AssistantMessageDeltaReceived{Text: "done"},
 		}}
 
-		if err := runPrompt(t.Context(), agt, "prompt", &output); err != nil {
+		if err := runPrompt(t.Context(), conv, "prompt", &output); err != nil {
 			t.Fatalf("runPrompt() error = %v", err)
 		}
 
@@ -190,10 +190,10 @@ func TestRunPrompt(t *testing.T) {
 
 	t.Run("returns prompt error", func(t *testing.T) {
 		var output strings.Builder
-		wantErr := errors.New("agent failed")
-		agt := fakePromptAgent{err: wantErr}
+		wantErr := errors.New("conversation failed")
+		conv := fakePromptConversation{err: wantErr}
 
-		err := runPrompt(t.Context(), agt, "prompt", &output)
+		err := runPrompt(t.Context(), conv, "prompt", &output)
 		if !errors.Is(err, wantErr) {
 			t.Fatalf("runPrompt() error = %v, want %v", err, wantErr)
 		}
@@ -237,13 +237,13 @@ func (s *fakeStartupSessionStore) Clear(string) error {
 	return nil
 }
 
-type fakePromptAgent struct {
-	events []agent.Event
+type fakePromptConversation struct {
+	events []runtime.Event
 	err    error
 }
 
-func (a fakePromptAgent) Prompt(context.Context, string) (<-chan agent.Event, <-chan error) {
-	events := make(chan agent.Event, len(a.events))
+func (a fakePromptConversation) Prompt(context.Context, string) (<-chan runtime.Event, <-chan error) {
+	events := make(chan runtime.Event, len(a.events))
 	errs := make(chan error, 1)
 
 	for _, event := range a.events {

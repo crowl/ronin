@@ -1,4 +1,4 @@
-package agent
+package runtime
 
 import (
 	"context"
@@ -17,7 +17,7 @@ func TestDefaultCompactor(t *testing.T) {
 			"current_goal":"Implement compaction",
 			"user_preferences":["Use structured output"],
 			"decisions":["Keep recent messages"],
-			"files_and_code_state":["agent/compaction.go changed"],
+			"files_and_code_state":["runtime/compaction.go changed"],
 			"tests_and_tool_results":["go test pending"],
 			"open_tasks":["Run full suite"],
 			"recovery":["Resume from compacted context"]

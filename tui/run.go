@@ -7,13 +7,13 @@ import (
 	"os"
 	"time"
 
-	"github.com/crowl/ronin/agent"
 	"github.com/crowl/ronin/llm"
+	"github.com/crowl/ronin/runtime"
 	"github.com/crowl/ronin/tui/internal/render"
 	"github.com/crowl/ronin/tui/internal/terminal"
 )
 
-type Agent interface {
+type Conversation interface {
 	CWD() string
 	Model() llm.Model
 	ReasoningLevel() llm.ReasoningLevel
@@ -23,21 +23,21 @@ type Agent interface {
 	CompactConversation(context.Context) error
 	SwitchModel(llm.Model) error
 	SwitchReasoningLevel(llm.ReasoningLevel) error
-	Prompt(context.Context, string) (<-chan agent.Event, <-chan error)
+	Prompt(context.Context, string) (<-chan runtime.Event, <-chan error)
 	ToolCallTitle(name string, arguments []byte) string
 }
 
 type Config struct {
-	Agent    Agent
-	Commands []Command
-	Input    *os.File
-	Output   *os.File
-	Theme    Theme
+	Conversation Conversation
+	Commands     []Command
+	Input        *os.File
+	Output       *os.File
+	Theme        Theme
 }
 
 func Run(ctx context.Context, cfg Config) error {
-	if cfg.Agent == nil {
-		return fmt.Errorf("agent is required")
+	if cfg.Conversation == nil {
+		return fmt.Errorf("conversation is required")
 	}
 	if cfg.Input == nil {
 		return fmt.Errorf("input is required")
@@ -62,11 +62,11 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 
 	application, err := newApp(appConfig{
-		Terminal: term,
-		Agent:    cfg.Agent,
-		Renderer: renderer,
-		Commands: cfg.Commands,
-		Theme:    theme,
+		Terminal:     term,
+		Conversation: cfg.Conversation,
+		Renderer:     renderer,
+		Commands:     cfg.Commands,
+		Theme:        theme,
 	})
 	if err != nil {
 		return fmt.Errorf("create app: %w", err)

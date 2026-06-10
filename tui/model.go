@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/crowl/ronin/agent"
 	"github.com/crowl/ronin/llm"
+	"github.com/crowl/ronin/runtime"
 	"github.com/crowl/ronin/tool"
 	"github.com/crowl/ronin/tui/internal/editor"
 	"github.com/crowl/ronin/tui/internal/terminal"
@@ -85,11 +85,11 @@ func newAppModel(commands []Command, theme Theme) (*appModel, error) {
 	}, nil
 }
 
-func (m *appModel) populateInitialBoxes(agent Agent) {
-	if agent == nil {
+func (m *appModel) populateInitialBoxes(conversation Conversation) {
+	if conversation == nil {
 		return
 	}
-	messages := agent.Messages()
+	messages := conversation.Messages()
 	for _, message := range messages {
 		switch msg := message.(type) {
 		case llm.UserMessage:
@@ -118,7 +118,7 @@ func (m *appModel) populateInitialBoxes(agent Agent) {
 					}
 					m.boxes = append(m.boxes, assistantThinkingBox{Text: block.Text})
 				case llm.ToolCallBlock:
-					title := agent.ToolCallTitle(block.Name, block.Arguments)
+					title := conversation.ToolCallTitle(block.Name, block.Arguments)
 					m.boxes = append(m.boxes, toolCallBox{
 						ToolCallID: block.ID,
 						Title:      title,
@@ -277,31 +277,31 @@ func (m *appModel) finishPrompt() (modelUpdate, string) {
 	return update, nextPrompt
 }
 
-func (m *appModel) handleAgentEvent(event agent.Event, now time.Time) (modelUpdate, error) {
+func (m *appModel) handleConversationEvent(event runtime.Event, now time.Time) (modelUpdate, error) {
 	switch typedEvent := event.(type) {
-	case agent.SessionSaveFailed:
+	case runtime.SessionSaveFailed:
 		m.flushPendingTextDelta()
 		m.saveError = typedEvent.Error.Error()
-	case agent.PromptProcessingStarted:
+	case runtime.PromptProcessingStarted:
 		// ignored
-	case agent.ConversationTurnStarted:
+	case runtime.ConversationTurnStarted:
 		// ignored
-	case agent.AssistantMessageStarted:
+	case runtime.AssistantMessageStarted:
 		// ignored
-	case agent.AssistantThinkingDeltaReceived:
+	case runtime.AssistantThinkingDeltaReceived:
 		m.queueTextDelta(pendingTextDeltaThinking, typedEvent.Text)
-	case agent.AssistantMessageDeltaReceived:
+	case runtime.AssistantMessageDeltaReceived:
 		m.queueTextDelta(pendingTextDeltaAssistant, typedEvent.Text)
-	case agent.AssistantMessageEnded:
+	case runtime.AssistantMessageEnded:
 		m.flushPendingTextDelta()
-	case agent.ToolExecutionStarted:
+	case runtime.ToolExecutionStarted:
 		m.flushPendingTextDelta()
 		m.boxes = append(m.boxes, toolCallBox{
 			ToolCallID: typedEvent.CallID,
 			Title:      typedEvent.CallTitle,
 			StartedAt:  now,
 		})
-	case agent.ToolExecutionOutputDeltaReceived:
+	case runtime.ToolExecutionOutputDeltaReceived:
 		m.flushPendingTextDelta()
 		index := findToolBlockIndex(m.boxes, typedEvent.CallID)
 		if index == -1 {
@@ -313,7 +313,7 @@ func (m *appModel) handleAgentEvent(event agent.Event, now time.Time) (modelUpda
 		}
 		toolCallBox.Artifacts = appendToolArtifact(toolCallBox.Artifacts, typedEvent.Artifact)
 		m.boxes[index] = toolCallBox
-	case agent.ToolExecutionResultReceived:
+	case runtime.ToolExecutionResultReceived:
 		m.flushPendingTextDelta()
 		if len(typedEvent.Artifacts) == 0 {
 			return modelUpdate{}, nil
@@ -328,7 +328,7 @@ func (m *appModel) handleAgentEvent(event agent.Event, now time.Time) (modelUpda
 		}
 		toolCallBox.Artifacts = append([]tool.Artifact(nil), typedEvent.Artifacts...)
 		m.boxes[index] = toolCallBox
-	case agent.ToolExecutionFailed:
+	case runtime.ToolExecutionFailed:
 		m.flushPendingTextDelta()
 		index := findToolBlockIndex(m.boxes, typedEvent.CallID)
 		if index == -1 {
@@ -344,7 +344,7 @@ func (m *appModel) handleAgentEvent(event agent.Event, now time.Time) (modelUpda
 		}
 		toolCallBox.EndedAt = now
 		m.boxes[index] = toolCallBox
-	case agent.ToolExecutionEnded:
+	case runtime.ToolExecutionEnded:
 		m.flushPendingTextDelta()
 		index := findToolBlockIndex(m.boxes, typedEvent.CallID)
 		if index == -1 {
@@ -359,18 +359,18 @@ func (m *appModel) handleAgentEvent(event agent.Event, now time.Time) (modelUpda
 		}
 		toolCallBox.EndedAt = now
 		m.boxes[index] = toolCallBox
-	case agent.ConversationTurnEnded:
+	case runtime.ConversationTurnEnded:
 		// ignored
-	case agent.PromptProcessingEnded:
+	case runtime.PromptProcessingEnded:
 		// ignored
-	case agent.PromptProcessingError:
+	case runtime.PromptProcessingError:
 		m.flushPendingTextDelta()
 	}
 
 	return modelUpdate{Render: true}, nil
 }
 
-func (m *appModel) handleAgentError(err error) modelUpdate {
+func (m *appModel) handleConversationError(err error) modelUpdate {
 	if errors.Is(err, context.Canceled) {
 		return modelUpdate{}
 	}
@@ -411,7 +411,7 @@ func (m *appModel) recordCommand(item menuItem, err error) {
 	}
 }
 
-func (m *appModel) lines(width int, agent Agent, now time.Time) ([]string, error) {
+func (m *appModel) lines(width int, conversation Conversation, now time.Time) ([]string, error) {
 	m.flushPendingTextDelta()
 
 	lines := []string{""}
@@ -442,18 +442,18 @@ func (m *appModel) lines(width int, agent Agent, now time.Time) ([]string, error
 		}.Lines(width, m.theme)...)
 	}
 
-	cwdStatus := m.statusBarCache.CWDStatus(agent.CWD())
+	cwdStatus := m.statusBarCache.CWDStatus(conversation.CWD())
 	if m.saveError != "" {
 		cwdStatus = fmt.Sprintf("%s (Save Error: %s)", cwdStatus, m.saveError)
 	}
 
 	lines = append(lines, statusBar{
-		CWD:            agent.CWD(),
+		CWD:            conversation.CWD(),
 		CWDStatus:      cwdStatus,
 		UseCWDStatus:   true,
-		Model:          agent.Model(),
-		ReasoningLevel: agent.ReasoningLevel(),
-		ContextUsage:   agent.ContextUsage(),
+		Model:          conversation.Model(),
+		ReasoningLevel: conversation.ReasoningLevel(),
+		ContextUsage:   conversation.ContextUsage(),
 	}.Lines(width, m.theme)...)
 
 	return lines, nil

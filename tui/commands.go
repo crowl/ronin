@@ -1,8 +1,8 @@
 package tui
 
 import (
-	"github.com/crowl/ronin/agent"
 	"github.com/crowl/ronin/llm"
+	"github.com/crowl/ronin/runtime"
 )
 
 type StartNewConversation struct{}
@@ -18,7 +18,7 @@ type SwitchTheme struct {
 	Theme Theme
 }
 
-type InvokeSkill struct{ Skill agent.Skill }
+type InvokeSkill struct{ Skill runtime.Skill }
 
 type Exit struct{}
 

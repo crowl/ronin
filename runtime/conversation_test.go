@@ -1,4 +1,4 @@
-package agent_test
+package runtime_test
 
 import (
 	"context"
@@ -11,17 +11,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/crowl/ronin/agent"
 	"github.com/crowl/ronin/config"
 	"github.com/crowl/ronin/jsonschema"
 	"github.com/crowl/ronin/llm"
+	"github.com/crowl/ronin/runtime"
 	"github.com/crowl/ronin/session"
 	"github.com/crowl/ronin/tool"
 )
 
 func TestNew(t *testing.T) {
 	t.Run("rejects nil tool", func(t *testing.T) {
-		_, err := agent.New(agent.Config{Assistant: &fakeLLM{}, Tools: []agent.Tool{nil}})
+		_, err := runtime.NewConversation(runtime.ConversationConfig{Assistant: &fakeLLM{}, Tools: []runtime.Tool{nil}})
 		if err == nil || !strings.Contains(err.Error(), "nil") {
 			t.Fatalf("New() error = %v, want nil tool error", err)
 		}
@@ -29,7 +29,7 @@ func TestNew(t *testing.T) {
 
 	t.Run("initializes context usage from latest restored assistant message", func(t *testing.T) {
 		wantUsage := llm.Usage{InputTokens: 30, OutputTokens: 12, CachedTokens: 5, TotalTokens: 42}
-		agt, err := agent.New(agent.Config{
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{
 			Assistant: &fakeLLM{},
 			Session: session.Session{Messages: []llm.Message{
 				llm.AssistantMessage{Usage: llm.Usage{InputTokens: 1, OutputTokens: 2, TotalTokens: 3}},
@@ -50,7 +50,7 @@ func TestNew(t *testing.T) {
 		messages := make([]llm.Message, 1, 4)
 		messages[0] = llm.UserMessage{Text: "original"}
 
-		agt, err := agent.New(agent.Config{
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{
 			Assistant: &fakeLLM{},
 			Session:   session.Session{Messages: messages},
 		})
@@ -68,7 +68,7 @@ func TestNew(t *testing.T) {
 func TestPromptLifecycle(t *testing.T) {
 	t.Run("llm error emits processing error and ended", func(t *testing.T) {
 		wantErr := errors.New("boom")
-		agt, err := agent.New(agent.Config{Assistant: &fakeLLM{err: wantErr}})
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{Assistant: &fakeLLM{err: wantErr}})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -79,14 +79,14 @@ func TestPromptLifecycle(t *testing.T) {
 		if gotErr == nil || !strings.Contains(gotErr.Error(), "boom") {
 			t.Fatalf("Prompt() error = %v, want boom", gotErr)
 		}
-		assertEventType(t, gotEvents, agent.PromptProcessingError{})
-		assertLastEventType(t, gotEvents, agent.PromptProcessingEnded{})
+		assertEventType(t, gotEvents, runtime.PromptProcessingError{})
+		assertLastEventType(t, gotEvents, runtime.PromptProcessingEnded{})
 	})
 
 	t.Run("tool failure emits failed and ended", func(t *testing.T) {
 		toolErr := errors.New("tool failed")
 		tool := fakeTool{name: "fail", err: toolErr}
-		agt, err := agent.New(agent.Config{
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{
 			Assistant: &fakeLLM{eventBatches: [][]llm.PredictionEvent{
 				{
 					llm.BlockEnded{Block: llm.ToolCallBlock{ID: "call-1", Name: "fail", Arguments: json.RawMessage(`{}`)}},
@@ -98,7 +98,7 @@ func TestPromptLifecycle(t *testing.T) {
 					llm.PredictionFinished{},
 				},
 			}},
-			Tools:    []agent.Tool{tool},
+			Tools:    []runtime.Tool{tool},
 			MaxTurns: 2,
 		})
 		if err != nil {
@@ -110,12 +110,12 @@ func TestPromptLifecycle(t *testing.T) {
 		if err := <-errs; err != nil {
 			t.Fatalf("Prompt() error = %v", err)
 		}
-		assertEventType(t, gotEvents, agent.ToolExecutionFailed{})
-		assertEventType(t, gotEvents, agent.ToolExecutionEnded{})
+		assertEventType(t, gotEvents, runtime.ToolExecutionFailed{})
+		assertEventType(t, gotEvents, runtime.ToolExecutionEnded{})
 	})
 
 	t.Run("unknown tool call emits failed and ended", func(t *testing.T) {
-		agt, err := agent.New(agent.Config{
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{
 			Assistant: &fakeLLM{eventBatches: [][]llm.PredictionEvent{
 				{
 					llm.BlockEnded{Block: llm.ToolCallBlock{ID: "call-1", Name: "missing", Arguments: json.RawMessage(`{}`)}},
@@ -138,13 +138,13 @@ func TestPromptLifecycle(t *testing.T) {
 		if err := <-errs; err != nil {
 			t.Fatalf("Prompt() error = %v", err)
 		}
-		assertEventType(t, gotEvents, agent.ToolExecutionFailed{})
-		assertEventType(t, gotEvents, agent.ToolExecutionEnded{})
+		assertEventType(t, gotEvents, runtime.ToolExecutionFailed{})
+		assertEventType(t, gotEvents, runtime.ToolExecutionEnded{})
 	})
 
 	t.Run("configured clock controls timestamps", func(t *testing.T) {
 		want := time.Unix(1700000000, 123000000)
-		agt, err := agent.New(agent.Config{
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{
 			Assistant: &fakeLLM{events: []llm.PredictionEvent{
 				llm.TextDelta{Text: "hello"},
 				llm.BlockEnded{Block: llm.TextBlock{Text: "hello"}},
@@ -171,7 +171,7 @@ func TestPromptLifecycle(t *testing.T) {
 	})
 	t.Run("incremental tool emits chunks before final result", func(t *testing.T) {
 		incrementalTool := fakeIncrementalTool{fakeTool: fakeTool{name: "stream", result: fakeResult{artifacts: []tool.Artifact{tool.ShellStreamArtifact{Stream: tool.ShellStreamStdout, Content: "final"}}}}, artifacts: []tool.Artifact{tool.ShellStreamArtifact{Stream: tool.ShellStreamStdout, Content: "live"}}}
-		agt, err := agent.New(agent.Config{
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{
 			Assistant: &fakeLLM{eventBatches: [][]llm.PredictionEvent{
 				{
 					llm.BlockEnded{Block: llm.ToolCallBlock{ID: "call-1", Name: "stream", Arguments: json.RawMessage(`{}`)}},
@@ -183,7 +183,7 @@ func TestPromptLifecycle(t *testing.T) {
 					llm.PredictionFinished{},
 				},
 			}},
-			Tools:    []agent.Tool{incrementalTool},
+			Tools:    []runtime.Tool{incrementalTool},
 			MaxTurns: 2,
 		})
 		if err != nil {
@@ -196,8 +196,8 @@ func TestPromptLifecycle(t *testing.T) {
 			t.Fatalf("Prompt() error = %v", err)
 		}
 
-		chunkIndex := eventIndex[agent.ToolExecutionOutputDeltaReceived](gotEvents)
-		resultIndex := eventIndex[agent.ToolExecutionResultReceived](gotEvents)
+		chunkIndex := eventIndex[runtime.ToolExecutionOutputDeltaReceived](gotEvents)
+		resultIndex := eventIndex[runtime.ToolExecutionResultReceived](gotEvents)
 		if chunkIndex == -1 {
 			t.Fatal("streaming output event not found")
 		}
@@ -207,7 +207,7 @@ func TestPromptLifecycle(t *testing.T) {
 		if chunkIndex > resultIndex {
 			t.Fatalf("chunk event index %d after result event index %d", chunkIndex, resultIndex)
 		}
-		resultEvent, ok := gotEvents[resultIndex].(agent.ToolExecutionResultReceived)
+		resultEvent, ok := gotEvents[resultIndex].(runtime.ToolExecutionResultReceived)
 		if !ok || !containsShellStreamArtifact(resultEvent.Artifacts, tool.ShellStreamStdout, "final") {
 			t.Fatalf("result artifacts = %#v, want final stdout artifact", resultEvent.Artifacts)
 		}
@@ -227,7 +227,7 @@ func TestPromptLifecycle(t *testing.T) {
 
 func TestNewConversation(t *testing.T) {
 	t.Run("without persistence clears messages in memory", func(t *testing.T) {
-		agt, err := agent.New(agent.Config{
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{
 			Assistant: &fakeLLM{},
 			Session:   session.Session{Messages: []llm.Message{llm.UserMessage{Text: "old"}}},
 		})
@@ -245,7 +245,7 @@ func TestNewConversation(t *testing.T) {
 
 	t.Run("uses assistant metadata when creating a new session", func(t *testing.T) {
 		store := &fakeSessionStore{sessions: map[string]session.Session{"sess-1": {ID: "sess-1"}}, activeID: "sess-1"}
-		agt, err := agent.New(agent.Config{
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{
 			Assistant:    &fakeLLM{model: llm.Model{Provider: "provider-a", Name: "model-a"}, reasoningLevel: llm.ReasoningLevelHigh},
 			SessionStore: store,
 			Session: session.Session{
@@ -273,7 +273,7 @@ func TestNewConversation(t *testing.T) {
 			activeID: "sess-1",
 			clearErr: errors.New("clear failed"),
 		}
-		agt, err := agent.New(agent.Config{
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{
 			Assistant:    &fakeLLM{},
 			SessionStore: store,
 			Session:      session.Session{ID: "sess-1", Messages: []llm.Message{llm.UserMessage{Text: "old"}}},
@@ -299,7 +299,7 @@ func TestNewConversation(t *testing.T) {
 			activeID:  "sess-1",
 			createErr: errors.New("create failed"),
 		}
-		agt, err := agent.New(agent.Config{
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{
 			Assistant:    &fakeLLM{},
 			SessionStore: store,
 			Session:      session.Session{ID: "sess-1", Messages: []llm.Message{llm.UserMessage{Text: "old"}}},
@@ -335,7 +335,7 @@ func TestSessionMutationTransactions(t *testing.T) {
 			saveErr:  errors.New("save failed"),
 		}
 		originalModel := llm.Model{Provider: "test", Name: "original"}
-		agt, err := agent.New(agent.Config{
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{
 			Assistant:    &fakeLLM{model: originalModel},
 			SessionStore: store,
 			Session:      store.sessions[store.activeID],
@@ -362,7 +362,7 @@ func TestSessionMutationTransactions(t *testing.T) {
 	t.Run("SwitchReasoningLevel save failure rolls back runtime level", func(t *testing.T) {
 		store := &fakeSessionStore{sessions: map[string]session.Session{"sess-1": {ID: "sess-1", ReasoningLevel: string(llm.ReasoningLevelOff)}}, activeID: "sess-1", saveErr: errors.New("save failed")}
 		original := &fakeLLM{model: llm.Model{Provider: "test", Name: "reasoning"}, reasoningLevel: llm.ReasoningLevelOff}
-		agt, err := agent.New(agent.Config{Assistant: original, SessionStore: store, Session: store.sessions[store.activeID]})
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{Assistant: original, SessionStore: store, Session: store.sessions[store.activeID]})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -384,7 +384,7 @@ func TestCompactConversation(t *testing.T) {
 	t.Run("updates_messages_on_success", func(t *testing.T) {
 		compacted := []llm.Message{llm.UserMessage{Text: "compacted"}}
 		compactor := &fakeCompactor{messages: compacted}
-		agt, err := agent.New(agent.Config{
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{
 			Assistant: &fakeLLM{},
 			Compactor: compactor,
 			Session:   session.Session{Messages: []llm.Message{llm.UserMessage{Text: "old"}}},
@@ -407,7 +407,7 @@ func TestCompactConversation(t *testing.T) {
 
 	t.Run("preserves_messages_on_failure", func(t *testing.T) {
 		wantErr := errors.New("compact failed")
-		agt, err := agent.New(agent.Config{
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{
 			Assistant: &fakeLLM{},
 			Compactor: &fakeCompactor{err: wantErr},
 			Session:   session.Session{Messages: []llm.Message{llm.UserMessage{Text: "old"}}},
@@ -428,7 +428,7 @@ func TestCompactConversation(t *testing.T) {
 
 	t.Run("propagates_caller_context", func(t *testing.T) {
 		compactor := &fakeCompactor{messages: []llm.Message{llm.UserMessage{Text: "compacted"}}}
-		agt, err := agent.New(agent.Config{
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{
 			Assistant: &fakeLLM{},
 			Compactor: compactor,
 			Session:   session.Session{Messages: []llm.Message{llm.UserMessage{Text: "old"}}},
@@ -448,7 +448,7 @@ func TestCompactConversation(t *testing.T) {
 	})
 
 	t.Run("requires_configured_compactor", func(t *testing.T) {
-		agt, err := agent.New(agent.Config{Assistant: &fakeLLM{}})
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{Assistant: &fakeLLM{}})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -460,8 +460,8 @@ func TestCompactConversation(t *testing.T) {
 	})
 }
 
-func collectEvents(events <-chan agent.Event) []agent.Event {
-	var collected []agent.Event
+func collectEvents(events <-chan runtime.Event) []runtime.Event {
+	var collected []runtime.Event
 	for event := range events {
 		collected = append(collected, event)
 	}
@@ -478,7 +478,7 @@ func containsShellStreamArtifact(artifacts []tool.Artifact, stream tool.ShellStr
 	return false
 }
 
-func eventIndex[T agent.Event](events []agent.Event) int {
+func eventIndex[T runtime.Event](events []runtime.Event) int {
 	for i, event := range events {
 		if _, ok := event.(T); ok {
 			return i
@@ -487,7 +487,7 @@ func eventIndex[T agent.Event](events []agent.Event) int {
 	return -1
 }
 
-func assertEventType[T agent.Event](t *testing.T, events []agent.Event, _ T) {
+func assertEventType[T runtime.Event](t *testing.T, events []runtime.Event, _ T) {
 	t.Helper()
 	for _, event := range events {
 		if _, ok := event.(T); ok {
@@ -501,7 +501,7 @@ func assertEventType[T agent.Event](t *testing.T, events []agent.Event, _ T) {
 	t.Fatalf("event %T not found in %d events", zero, len(events))
 }
 
-func assertLastEventType[T agent.Event](t *testing.T, events []agent.Event, _ T) {
+func assertLastEventType[T runtime.Event](t *testing.T, events []runtime.Event, _ T) {
 	t.Helper()
 	if len(events) == 0 {
 		t.Fatal("events empty")
@@ -672,7 +672,7 @@ func (f *fakeSessionStore) Clear(workingDir string) error {
 func TestSessionPersistence(t *testing.T) {
 	t.Run("loads messages from ActiveSession when Messages is empty", func(t *testing.T) {
 		activeSess := session.Session{ID: "sess-1", Messages: []llm.Message{llm.UserMessage{Text: "restored text"}}}
-		agt, err := agent.New(agent.Config{Assistant: &fakeLLM{}, Session: activeSess})
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{Assistant: &fakeLLM{}, Session: activeSess})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -684,7 +684,7 @@ func TestSessionPersistence(t *testing.T) {
 
 	t.Run("saves session after successful Prompt", func(t *testing.T) {
 		store := &fakeSessionStore{sessions: map[string]session.Session{"sess-1": {ID: "sess-1"}}, activeID: "sess-1"}
-		agt, err := agent.New(agent.Config{Assistant: &fakeLLM{events: []llm.PredictionEvent{llm.TextDelta{Text: "reply"}, llm.BlockEnded{Block: llm.TextBlock{Text: "reply"}}, llm.PredictionFinished{}}}, SessionStore: store, Session: store.sessions[store.activeID]})
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{Assistant: &fakeLLM{events: []llm.PredictionEvent{llm.TextDelta{Text: "reply"}, llm.BlockEnded{Block: llm.TextBlock{Text: "reply"}}, llm.PredictionFinished{}}}, SessionStore: store, Session: store.sessions[store.activeID]})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -704,7 +704,7 @@ func TestSessionPersistence(t *testing.T) {
 
 	t.Run("emits SessionSaveFailed event and returns error on save failure", func(t *testing.T) {
 		store := &fakeSessionStore{sessions: map[string]session.Session{"sess-1": {ID: "sess-1"}}, activeID: "sess-1", saveErr: errors.New("disk full")}
-		agt, err := agent.New(agent.Config{Assistant: &fakeLLM{events: []llm.PredictionEvent{llm.TextDelta{Text: "reply"}, llm.BlockEnded{Block: llm.TextBlock{Text: "reply"}}, llm.PredictionFinished{}}}, SessionStore: store, Session: store.sessions[store.activeID]})
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{Assistant: &fakeLLM{events: []llm.PredictionEvent{llm.TextDelta{Text: "reply"}, llm.BlockEnded{Block: llm.TextBlock{Text: "reply"}}, llm.PredictionFinished{}}}, SessionStore: store, Session: store.sessions[store.activeID]})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -714,7 +714,7 @@ func TestSessionPersistence(t *testing.T) {
 		if gotErr == nil || !strings.Contains(gotErr.Error(), "disk full") {
 			t.Fatalf("Prompt() error = %v, want disk full error", gotErr)
 		}
-		assertEventType(t, gotEvents, agent.SessionSaveFailed{})
+		assertEventType(t, gotEvents, runtime.SessionSaveFailed{})
 	})
 
 	t.Run("saves session after SwitchModel and SwitchReasoningLevel", func(t *testing.T) {
@@ -722,7 +722,7 @@ func TestSessionPersistence(t *testing.T) {
 		_ = llm.RegisterModel(llm.Model{Provider: "openai", Name: "gpt-4"}, func(lvl llm.ReasoningLevel) (llm.Assistant, error) {
 			return &fakeLLM{model: llm.Model{Provider: "openai", Name: "gpt-4"}, reasoningLevel: lvl}, nil
 		})
-		agt, err := agent.New(agent.Config{Assistant: &fakeLLM{model: llm.Model{Provider: "openai", Name: "gpt-3.5"}}, SessionStore: store, Session: store.sessions[store.activeID]})
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{Assistant: &fakeLLM{model: llm.Model{Provider: "openai", Name: "gpt-3.5"}}, SessionStore: store, Session: store.sessions[store.activeID]})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -744,7 +744,7 @@ func TestSessionPersistence(t *testing.T) {
 
 	t.Run("clears session and creates a new one on NewConversation", func(t *testing.T) {
 		store := &fakeSessionStore{sessions: map[string]session.Session{"sess-1": {ID: "sess-1"}}, activeID: "sess-1"}
-		agt, err := agent.New(agent.Config{Assistant: &fakeLLM{}, SessionStore: store, Session: store.sessions[store.activeID]})
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{Assistant: &fakeLLM{}, SessionStore: store, Session: store.sessions[store.activeID]})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}

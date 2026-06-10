@@ -10,12 +10,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/crowl/ronin/agent"
 	"github.com/crowl/ronin/config"
 	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/llm/anthropic"
 	"github.com/crowl/ronin/llm/google"
 	"github.com/crowl/ronin/llm/openai"
+	"github.com/crowl/ronin/runtime"
 	"github.com/crowl/ronin/session"
 	"github.com/crowl/ronin/session/fs"
 	"github.com/crowl/ronin/tool/editfile"
@@ -113,13 +113,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	skills, err := agent.LoadSkills(skillsDir)
+	skills, err := runtime.LoadSkills(skillsDir)
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "failed to load skills: %v\n", err)
 		os.Exit(1)
 	}
 
-	contextFiles, err := agent.LoadContextFiles(configDir, workingDir)
+	contextFiles, err := runtime.LoadContextFiles(configDir, workingDir)
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "failed to load context files: %v\n", err)
 		os.Exit(1)
@@ -128,7 +128,7 @@ func main() {
 	readCache := fsutil.NewReadCache()
 	mutationQueue := fsutil.NewMutationQueue()
 
-	tools := []agent.Tool{
+	tools := []runtime.Tool{
 		readfile.New(workingDir, readCache),
 		editfile.New(workingDir, mutationQueue),
 		writefile.New(workingDir, mutationQueue),
@@ -137,7 +137,7 @@ func main() {
 		gosemantic.NewOutlinePackage(workingDir),
 	}
 
-	systemPrompt, err := agent.BuildSystemPrompt(agent.SystemPromptInput{
+	systemPrompt, err := runtime.BuildSystemPrompt(runtime.SystemPromptInput{
 		CWD:          workingDir,
 		Skills:       skills,
 		ContextFiles: contextFiles,
@@ -147,7 +147,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	compactor, err := agent.NewDefaultCompactor(agent.DefaultCompactorConfig{
+	compactor, err := runtime.NewDefaultCompactor(runtime.DefaultCompactorConfig{
 		LLM: assistant,
 		Now: func() time.Time { return time.Now() },
 	})
@@ -172,7 +172,7 @@ func main() {
 	activeSession.Model = config.Model{Provider: model.Provider, Name: model.Name}
 	activeSession.ReasoningLevel = string(level)
 
-	agt, err := agent.New(agent.Config{
+	conv, err := runtime.NewConversation(runtime.ConversationConfig{
 		CWD:          workingDir,
 		Assistant:    assistant,
 		Compactor:    compactor,
@@ -184,7 +184,7 @@ func main() {
 		Session:      activeSession,
 	})
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "failed to initialize agent: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "failed to initialize conversation: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -192,14 +192,14 @@ func main() {
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
 		defer cancel()
 
-		if err := runPrompt(ctx, agt, prompt, os.Stdout); err != nil {
+		if err := runPrompt(ctx, conv, prompt, os.Stdout); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
 			os.Exit(1)
 		}
 		os.Exit(0)
 	}
 
-	if err := runTUI(agt); err != nil {
+	if err := runTUI(conv); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
 	}
@@ -252,11 +252,11 @@ func resolveModel(settings config.Settings) (llm.Model, llm.ReasoningLevel, erro
 }
 
 type prompter interface {
-	Prompt(context.Context, string) (<-chan agent.Event, <-chan error)
+	Prompt(context.Context, string) (<-chan runtime.Event, <-chan error)
 }
 
-func runPrompt(ctx context.Context, agt prompter, prompt string, output io.Writer) error {
-	events, errs := agt.Prompt(ctx, prompt)
+func runPrompt(ctx context.Context, conv prompter, prompt string, output io.Writer) error {
+	events, errs := conv.Prompt(ctx, prompt)
 	atLineStart := true
 
 	writeText := func(text string) error {
@@ -272,7 +272,7 @@ func runPrompt(ctx context.Context, agt prompter, prompt string, output io.Write
 
 	for event := range events {
 		switch typedEvent := event.(type) {
-		case agent.AssistantMessageDeltaReceived:
+		case runtime.AssistantMessageDeltaReceived:
 			if err := writeText(typedEvent.Text); err != nil {
 				return err
 			}
@@ -292,7 +292,7 @@ func runPrompt(ctx context.Context, agt prompter, prompt string, output io.Write
 	return nil
 }
 
-func runTUI(agt *agent.Agent) error {
+func runTUI(conv *runtime.Conversation) error {
 	models := llm.Models()
 
 	switchModelCmds := make([]tui.Command, len(models))
@@ -328,10 +328,10 @@ func runTUI(agt *agent.Agent) error {
 	defer cancel()
 
 	if err := tui.Run(ctx, tui.Config{
-		Agent:    agt,
-		Commands: cmds,
-		Input:    os.Stdin,
-		Output:   os.Stdout,
+		Conversation: conv,
+		Commands:     cmds,
+		Input:        os.Stdin,
+		Output:       os.Stdout,
 	}); err != nil {
 		return fmt.Errorf("run tui: %w", err)
 	}

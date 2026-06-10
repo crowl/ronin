@@ -1,4 +1,4 @@
-package agent
+package runtime
 
 import (
 	"bytes"
@@ -107,7 +107,7 @@ func (c *DefaultCompactor) generateCompactionSummary(ctx context.Context, factSh
 	}
 
 	raw, err := c.llm.PredictNextStructured(ctx, llm.PredictNextStructuredRequest{
-		SystemPrompt: "You compact coding-agent conversation context into precise structured JSON.",
+		SystemPrompt: "You compact coding conversation context into precise structured JSON.",
 		Messages:     []llm.Message{msg},
 		Schema:       jsonschema.FromType[compactionSummary](),
 	})

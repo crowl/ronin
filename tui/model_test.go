@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/crowl/ronin/agent"
 	"github.com/crowl/ronin/llm"
+	"github.com/crowl/ronin/runtime"
 	"github.com/crowl/ronin/tui/internal/terminal"
 	"github.com/crowl/ronin/tui/internal/text"
 )
@@ -97,7 +97,7 @@ func TestAppModel(t *testing.T) {
 			t.Fatalf("working=%v label=%q, want Compacting", model.working, model.workingLabel)
 		}
 
-		lines, err := model.lines(80, &fakeAgent{}, time.Now())
+		lines, err := model.lines(80, &fakeConversation{}, time.Now())
 		if err != nil {
 			t.Fatalf("lines: %v", err)
 		}
@@ -114,7 +114,7 @@ func TestAppModel(t *testing.T) {
 		model.startPrompt("do the thing")
 		model.steeringPrompt = "then this"
 
-		lines, err := model.lines(80, &fakeAgent{}, time.Now())
+		lines, err := model.lines(80, &fakeConversation{}, time.Now())
 		if err != nil {
 			t.Fatalf("lines: %v", err)
 		}
@@ -150,9 +150,9 @@ func TestAppModel(t *testing.T) {
 	t.Run("session save failed event displays error in status bar", func(t *testing.T) {
 		model := newTestModel(t)
 
-		update, err := model.handleAgentEvent(agent.SessionSaveFailed{Error: errors.New("out of space")}, time.Now())
+		update, err := model.handleConversationEvent(runtime.SessionSaveFailed{Error: errors.New("out of space")}, time.Now())
 		if err != nil {
-			t.Fatalf("handleAgentEvent: %v", err)
+			t.Fatalf("handleConversationEvent: %v", err)
 		}
 		if !update.Render {
 			t.Fatal("expected update.Render to be true")
@@ -161,7 +161,7 @@ func TestAppModel(t *testing.T) {
 			t.Fatalf("saveError = %q, want 'out of space'", model.saveError)
 		}
 
-		lines, err := model.lines(80, &fakeAgent{}, time.Now())
+		lines, err := model.lines(80, &fakeConversation{}, time.Now())
 		if err != nil {
 			t.Fatalf("lines: %v", err)
 		}
@@ -184,7 +184,7 @@ func TestAppModel(t *testing.T) {
 		}
 	})
 
-	t.Run("populate initial boxes from agent messages", func(t *testing.T) {
+	t.Run("populate initial boxes from conversation messages", func(t *testing.T) {
 		model := newTestModel(t)
 		now := time.Now()
 
@@ -215,8 +215,8 @@ func TestAppModel(t *testing.T) {
 			},
 		}
 
-		agt := &fakeAgent{messages: messages}
-		model.populateInitialBoxes(agt)
+		conv := &fakeConversation{messages: messages}
+		model.populateInitialBoxes(conv)
 
 		if len(model.boxes) != 5 {
 			t.Fatalf("expected 5 boxes, got %d", len(model.boxes))

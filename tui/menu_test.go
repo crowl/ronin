@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/crowl/ronin/agent"
 	"github.com/crowl/ronin/llm"
+	"github.com/crowl/ronin/runtime"
 
 	"github.com/crowl/ronin/tui/internal/terminal"
 )
@@ -25,7 +25,7 @@ func TestMenu(t *testing.T) {
 			SwitchModel{Model: llm.Model{Provider: "test", Name: "model"}},
 			SwitchReasoningLevel{Level: llm.ReasoningLevelHigh},
 			SwitchTheme{Name: "light", Theme: LightTheme()},
-			InvokeSkill{Skill: agent.Skill{Name: "go", Description: "Go help"}},
+			InvokeSkill{Skill: runtime.Skill{Name: "go", Description: "Go help"}},
 			Exit{},
 		})
 		if err != nil {

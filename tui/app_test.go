@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/crowl/ronin/agent"
 	"github.com/crowl/ronin/jsonschema"
 	"github.com/crowl/ronin/llm"
+	"github.com/crowl/ronin/runtime"
 	"github.com/crowl/ronin/tool"
 
 	"github.com/crowl/ronin/tui/internal/render"
@@ -319,13 +319,13 @@ func TestTUIRenderScheduling(t *testing.T) {
 		}
 	})
 
-	t.Run("coalesces streaming agent events", func(t *testing.T) {
+	t.Run("coalesces streaming conversation events", func(t *testing.T) {
 		app := newTestApp(t, testAppConfig{})
 		app.lastRenderStartedAt = time.Now()
 
 		for range 100 {
-			if err := app.handleAppEvent(t.Context(), agentEventReceived{Event: agent.AssistantMessageDeltaReceived{Text: "x"}}); err != nil {
-				t.Fatalf("handle agent event: %v", err)
+			if err := app.handleAppEvent(t.Context(), conversationEventReceived{Event: runtime.AssistantMessageDeltaReceived{Text: "x"}}); err != nil {
+				t.Fatalf("handle conversation event: %v", err)
 			}
 		}
 
@@ -341,12 +341,12 @@ func TestTUIRenderScheduling(t *testing.T) {
 	})
 }
 
-func TestTUIAgentEvents(t *testing.T) {
+func TestTUIConversationEvents(t *testing.T) {
 	t.Run("assistant message deltas coalesce until render", func(t *testing.T) {
 		app := newTestApp(t, testAppConfig{})
 
 		for _, text := range []string{"hel", "lo", "!"} {
-			if _, err := app.model.handleAgentEvent(agent.AssistantMessageDeltaReceived{Text: text}, time.Now()); err != nil {
+			if _, err := app.model.handleConversationEvent(runtime.AssistantMessageDeltaReceived{Text: text}, time.Now()); err != nil {
 				t.Fatalf("handle delta: %v", err)
 			}
 		}
@@ -370,10 +370,10 @@ func TestTUIAgentEvents(t *testing.T) {
 	t.Run("pending thinking delta flushes before assistant delta", func(t *testing.T) {
 		app := newTestApp(t, testAppConfig{})
 
-		if _, err := app.model.handleAgentEvent(agent.AssistantThinkingDeltaReceived{Text: "think"}, time.Now()); err != nil {
+		if _, err := app.model.handleConversationEvent(runtime.AssistantThinkingDeltaReceived{Text: "think"}, time.Now()); err != nil {
 			t.Fatalf("handle thinking delta: %v", err)
 		}
-		if _, err := app.model.handleAgentEvent(agent.AssistantMessageDeltaReceived{Text: "answer"}, time.Now()); err != nil {
+		if _, err := app.model.handleConversationEvent(runtime.AssistantMessageDeltaReceived{Text: "answer"}, time.Now()); err != nil {
 			t.Fatalf("handle assistant delta: %v", err)
 		}
 		app.model.flushPendingTextDelta()
@@ -394,10 +394,10 @@ func TestTUIAgentEvents(t *testing.T) {
 	t.Run("pending assistant delta flushes before tool start", func(t *testing.T) {
 		app := newTestApp(t, testAppConfig{})
 
-		if _, err := app.model.handleAgentEvent(agent.AssistantMessageDeltaReceived{Text: "before tool"}, time.Now()); err != nil {
+		if _, err := app.model.handleConversationEvent(runtime.AssistantMessageDeltaReceived{Text: "before tool"}, time.Now()); err != nil {
 			t.Fatalf("handle assistant delta: %v", err)
 		}
-		if _, err := app.model.handleAgentEvent(agent.ToolExecutionStarted{CallID: "call_1", Tool: fakeStartedTool{name: "read_file"}, CallArguments: []byte(`{"path":"a.go"}`), CallTitle: "read_file a.go"}, time.Now()); err != nil {
+		if _, err := app.model.handleConversationEvent(runtime.ToolExecutionStarted{CallID: "call_1", Tool: fakeStartedTool{name: "read_file"}, CallArguments: []byte(`{"path":"c.go"}`), CallTitle: "read_file c.go"}, time.Now()); err != nil {
 			t.Fatalf("handle tool start: %v", err)
 		}
 
@@ -416,13 +416,13 @@ func TestTUIAgentEvents(t *testing.T) {
 	t.Run("thinking delta after tool creates new thinking box", func(t *testing.T) {
 		app := newTestApp(t, testAppConfig{})
 
-		for _, event := range []agent.Event{
-			agent.AssistantThinkingDeltaReceived{Text: "first"},
-			agent.AssistantMessageDeltaReceived{Text: "text"},
-			agent.ToolExecutionStarted{CallID: "call_1", Tool: fakeStartedTool{name: "read_file"}, CallArguments: []byte(`{"path":"a.go"}`), CallTitle: "read_file a.go"},
-			agent.AssistantThinkingDeltaReceived{Text: "second"},
+		for _, event := range []runtime.Event{
+			runtime.AssistantThinkingDeltaReceived{Text: "first"},
+			runtime.AssistantMessageDeltaReceived{Text: "text"},
+			runtime.ToolExecutionStarted{CallID: "call_1", Tool: fakeStartedTool{name: "read_file"}, CallArguments: []byte(`{"path":"c.go"}`), CallTitle: "read_file c.go"},
+			runtime.AssistantThinkingDeltaReceived{Text: "second"},
 		} {
-			if _, err := app.model.handleAgentEvent(event, time.Now()); err != nil {
+			if _, err := app.model.handleConversationEvent(event, time.Now()); err != nil {
 				t.Fatalf("handle event %T: %v", event, err)
 			}
 		}
@@ -451,13 +451,13 @@ func TestTUIAgentEvents(t *testing.T) {
 	t.Run("tool output streaming and final result", func(t *testing.T) {
 		app := newTestApp(t, testAppConfig{})
 
-		if _, err := app.model.handleAgentEvent(agent.ToolExecutionStarted{CallID: "call_1", Tool: fakeStartedTool{name: "shell"}, CallArguments: []byte(`{"command":"printf final"}`), CallTitle: "$ printf final"}, time.Now()); err != nil {
+		if _, err := app.model.handleConversationEvent(runtime.ToolExecutionStarted{CallID: "call_1", Tool: fakeStartedTool{name: "shell"}, CallArguments: []byte(`{"command":"printf final"}`), CallTitle: "$ printf final"}, time.Now()); err != nil {
 			t.Fatalf("handle tool start: %v", err)
 		}
-		if _, err := app.model.handleAgentEvent(agent.ToolExecutionOutputDeltaReceived{CallID: "call_1", Tool: fakeStartedTool{name: "shell"}, Artifact: tool.ShellStreamArtifact{Stream: tool.ShellStreamStdout, Content: "live"}}, time.Now()); err != nil {
+		if _, err := app.model.handleConversationEvent(runtime.ToolExecutionOutputDeltaReceived{CallID: "call_1", Tool: fakeStartedTool{name: "shell"}, Artifact: tool.ShellStreamArtifact{Stream: tool.ShellStreamStdout, Content: "live"}}, time.Now()); err != nil {
 			t.Fatalf("handle output chunk: %v", err)
 		}
-		if _, err := app.model.handleAgentEvent(agent.ToolExecutionOutputDeltaReceived{CallID: "call_1", Tool: fakeStartedTool{name: "shell"}, Artifact: tool.ShellStreamArtifact{Stream: tool.ShellStreamStdout, Content: "\nnext"}}, time.Now()); err != nil {
+		if _, err := app.model.handleConversationEvent(runtime.ToolExecutionOutputDeltaReceived{CallID: "call_1", Tool: fakeStartedTool{name: "shell"}, Artifact: tool.ShellStreamArtifact{Stream: tool.ShellStreamStdout, Content: "\nnext"}}, time.Now()); err != nil {
 			t.Fatalf("handle output chunk: %v", err)
 		}
 
@@ -466,7 +466,7 @@ func TestTUIAgentEvents(t *testing.T) {
 			t.Fatalf("streaming box\ngot:  %#v\nwant: toolCallBox one merged live artifact", app.model.boxes[0])
 		}
 
-		if _, err := app.model.handleAgentEvent(agent.ToolExecutionResultReceived{CallID: "call_1", Tool: fakeStartedTool{name: "shell"}, Artifacts: []tool.Artifact{tool.ShellStreamArtifact{Stream: tool.ShellStreamStdout, Content: "final"}}}, time.Now()); err != nil {
+		if _, err := app.model.handleConversationEvent(runtime.ToolExecutionResultReceived{CallID: "call_1", Tool: fakeStartedTool{name: "shell"}, Artifacts: []tool.Artifact{tool.ShellStreamArtifact{Stream: tool.ShellStreamStdout, Content: "final"}}}, time.Now()); err != nil {
 			t.Fatalf("handle final result: %v", err)
 		}
 
@@ -476,29 +476,29 @@ func TestTUIAgentEvents(t *testing.T) {
 		}
 	})
 
-	t.Run("context canceled agent error is ignored", func(t *testing.T) {
+	t.Run("context canceled conversation error is ignored", func(t *testing.T) {
 		app := newTestApp(t, testAppConfig{})
 
-		app.applyUpdate(t.Context(), app.model.handleAgentError(context.Canceled))
+		app.applyUpdate(t.Context(), app.model.handleConversationError(context.Canceled))
 
 		if len(app.model.boxes) != 0 {
 			t.Fatalf("context cancellation should not append error box: %#v", app.model.boxes)
 		}
 	})
 
-	t.Run("prompt processing error combined with agent error produces exactly one error box", func(t *testing.T) {
+	t.Run("prompt processing error combined with conversation error produces exactly one error box", func(t *testing.T) {
 		app := newTestApp(t, testAppConfig{})
 
 		// Simulate progressive event PromptProcessingError
 		err := errors.New("something went wrong")
-		update, errEvent := app.model.handleAgentEvent(agent.PromptProcessingError{Error: err}, time.Now())
+		update, errEvent := app.model.handleConversationEvent(runtime.PromptProcessingError{Error: err}, time.Now())
 		if errEvent != nil {
 			t.Fatalf("failed to handle PromptProcessingError event: %v", errEvent)
 		}
 		app.applyUpdate(t.Context(), update)
 
-		// Simulate final goroutine error agentErrorReceived
-		app.applyUpdate(t.Context(), app.model.handleAgentError(err))
+		// Simulate final goroutine error conversationErrorReceived
+		app.applyUpdate(t.Context(), app.model.handleConversationError(err))
 
 		// Check boxes
 		if len(app.model.boxes) != 1 {
@@ -599,8 +599,8 @@ func TestTUIKeyHandling(t *testing.T) {
 	})
 
 	t.Run("menu item error renders error box", func(t *testing.T) {
-		agent := &fakeAgent{newConversationErr: errors.New("cannot reset")}
-		app := newTestApp(t, testAppConfig{Agent: agent})
+		conversation := &fakeConversation{newConversationErr: errors.New("cannot reset")}
+		app := newTestApp(t, testAppConfig{Conversation: conversation})
 		app.model.boxes = []box{userMessageBox{Text: "old prompt"}}
 
 		err := app.runCommand(t.Context(), menuItem{Value: "/new", Command: StartNewConversation{}}, StartNewConversation{})
@@ -696,8 +696,8 @@ func TestCompactConversationCommand(t *testing.T) {
 	})
 
 	t.Run("cancellation suppresses error box", func(t *testing.T) {
-		agent := &fakeAgent{compactBlockUntilCancel: true, compactStarted: make(chan struct{})}
-		app := newTestApp(t, testAppConfig{Agent: agent})
+		conversation := &fakeConversation{compactBlockUntilCancel: true, compactStarted: make(chan struct{})}
+		app := newTestApp(t, testAppConfig{Conversation: conversation})
 
 		item := menuItem{Value: "/compact", Command: CompactConversation{}}
 		if err := app.runCommand(t.Context(), item, CompactConversation{}); err != nil {
@@ -705,7 +705,7 @@ func TestCompactConversationCommand(t *testing.T) {
 		}
 
 		select {
-		case <-agent.compactStarted:
+		case <-conversation.compactStarted:
 		case <-time.After(time.Second):
 			t.Fatalf("compaction did not start")
 		}
@@ -739,7 +739,7 @@ func TestCompactConversationCommand(t *testing.T) {
 	})
 }
 
-func receiveCompactionDone(t *testing.T, events <-chan event, timeout time.Duration) agentCompactionDone {
+func receiveCompactionDone(t *testing.T, events <-chan event, timeout time.Duration) conversationCompactionDone {
 	t.Helper()
 
 	timer := time.NewTimer(timeout)
@@ -747,11 +747,11 @@ func receiveCompactionDone(t *testing.T, events <-chan event, timeout time.Durat
 	for {
 		select {
 		case ev := <-events:
-			if done, ok := ev.(agentCompactionDone); ok {
+			if done, ok := ev.(conversationCompactionDone); ok {
 				return done
 			}
 		case <-timer.C:
-			t.Fatalf("agentCompactionDone not received within %s", timeout)
+			t.Fatalf("conversationCompactionDone not received within %s", timeout)
 		}
 	}
 }
@@ -831,9 +831,9 @@ func receiveRenderTimer(renderTimer <-chan time.Time, timeout time.Duration) boo
 }
 
 type testAppConfig struct {
-	Terminal *fakeTerminal
-	Agent    *fakeAgent
-	Renderer *fakeRenderer
+	Terminal     *fakeTerminal
+	Conversation *fakeConversation
+	Renderer     *fakeRenderer
 }
 
 func newTestApp(t *testing.T, cfg testAppConfig) *app {
@@ -843,9 +843,9 @@ func newTestApp(t *testing.T, cfg testAppConfig) *app {
 	if term == nil {
 		term = &fakeTerminal{size: terminal.Size{Width: 80, Height: 24}}
 	}
-	agt := cfg.Agent
-	if agt == nil {
-		agt = &fakeAgent{}
+	conv := cfg.Conversation
+	if conv == nil {
+		conv = &fakeConversation{}
 	}
 	renderer := cfg.Renderer
 	if renderer == nil {
@@ -853,11 +853,11 @@ func newTestApp(t *testing.T, cfg testAppConfig) *app {
 	}
 
 	app, err := newApp(appConfig{
-		Terminal: term,
-		Agent:    agt,
-		Renderer: renderer,
-		Commands: []Command{StartNewConversation{}, CompactConversation{}, Exit{}},
-		Theme:    DefaultTheme(),
+		Terminal:     term,
+		Conversation: conv,
+		Renderer:     renderer,
+		Commands:     []Command{StartNewConversation{}, CompactConversation{}, Exit{}},
+		Theme:        DefaultTheme(),
 	})
 	if err != nil {
 		t.Fatalf("create app: %v", err)
@@ -910,7 +910,7 @@ func (t *fakeTerminal) Size() (terminal.Size, error) {
 	return t.size, nil
 }
 
-type fakeAgent struct {
+type fakeConversation struct {
 	messages                []llm.Message
 	newConversationErr      error
 	compactConversationErr  error
@@ -921,19 +921,19 @@ type fakeAgent struct {
 	compactStarted          chan struct{}
 }
 
-func (a *fakeAgent) CWD() string {
+func (c *fakeConversation) CWD() string {
 	return "."
 }
 
-func (a *fakeAgent) Messages() []llm.Message {
-	return a.messages
+func (c *fakeConversation) Messages() []llm.Message {
+	return c.messages
 }
 
-func (a *fakeAgent) ToolCallTitle(name string, arguments []byte) string {
+func (c *fakeConversation) ToolCallTitle(name string, arguments []byte) string {
 	return name
 }
 
-func (a *fakeAgent) Model() llm.Model {
+func (c *fakeConversation) Model() llm.Model {
 	return llm.Model{
 		Provider:      "test",
 		Name:          "model",
@@ -941,39 +941,39 @@ func (a *fakeAgent) Model() llm.Model {
 	}
 }
 
-func (a *fakeAgent) ReasoningLevel() llm.ReasoningLevel {
+func (c *fakeConversation) ReasoningLevel() llm.ReasoningLevel {
 	return llm.ReasoningLevelOff
 }
 
-func (a *fakeAgent) ContextUsage() llm.Usage {
+func (c *fakeConversation) ContextUsage() llm.Usage {
 	return llm.Usage{}
 }
 
-func (a *fakeAgent) NewConversation() error {
-	return a.newConversationErr
+func (c *fakeConversation) NewConversation() error {
+	return c.newConversationErr
 }
 
-func (a *fakeAgent) CompactConversation(ctx context.Context) error {
-	if a.compactBlockUntilCancel {
-		if a.compactStarted != nil {
-			close(a.compactStarted)
+func (c *fakeConversation) CompactConversation(ctx context.Context) error {
+	if c.compactBlockUntilCancel {
+		if c.compactStarted != nil {
+			close(c.compactStarted)
 		}
 		<-ctx.Done()
 		return ctx.Err()
 	}
-	return a.compactConversationErr
+	return c.compactConversationErr
 }
 
-func (a *fakeAgent) SwitchModel(llm.Model) error {
-	return a.switchModelErr
+func (c *fakeConversation) SwitchModel(llm.Model) error {
+	return c.switchModelErr
 }
 
-func (a *fakeAgent) SwitchReasoningLevel(llm.ReasoningLevel) error {
-	return a.switchReasoningLevelErr
+func (c *fakeConversation) SwitchReasoningLevel(llm.ReasoningLevel) error {
+	return c.switchReasoningLevelErr
 }
 
-func (a *fakeAgent) Prompt(context.Context, string) (<-chan agent.Event, <-chan error) {
-	events := make(chan agent.Event)
+func (c *fakeConversation) Prompt(context.Context, string) (<-chan runtime.Event, <-chan error) {
+	events := make(chan runtime.Event)
 	errs := make(chan error)
 	close(events)
 	close(errs)
