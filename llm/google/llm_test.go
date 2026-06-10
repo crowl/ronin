@@ -34,9 +34,23 @@ func TestSetReasoningLevelValidates(t *testing.T) {
 func TestPredictNext(t *testing.T) {
 	t.Run("streams tool call stop reason and usage", func(t *testing.T) {
 		stream := strings.Join([]string{
-			`data: {"candidates":[{"content":{"parts":[{"text":"thinking","thought":true},{"text":"hello"},{"thoughtSignature":"sig","functionCall":{"id":"call-1","name":"tool","args":{"x":1}}}]}}]}`,
+			`data: {"event_type":"step.start","index":0,"step":{"type":"thought","id":"sig"}}`,
 			``,
-			`data: {"usageMetadata":{"promptTokenCount":3,"candidatesTokenCount":4,"thoughtsTokenCount":5,"cachedContentTokenCount":2,"totalTokenCount":12}}`,
+			`data: {"event_type":"step.delta","index":0,"delta":{"type":"thought","text":"thinking"}}`,
+			``,
+			`data: {"event_type":"step.stop","index":0}`,
+			``,
+			`data: {"event_type":"step.start","index":1,"step":{"type":"model_output"}}`,
+			``,
+			`data: {"event_type":"step.delta","index":1,"delta":{"type":"text","text":"hello"}}`,
+			``,
+			`data: {"event_type":"step.stop","index":1}`,
+			``,
+			`data: {"event_type":"step.start","index":2,"step":{"type":"function_call","id":"call-1","name":"tool"}}`,
+			``,
+			`data: {"event_type":"step.delta","index":2,"delta":{"type":"arguments","partial_arguments":"{\"x\":1}"}}`,
+			``,
+			`data: {"event_type":"step.stop","index":2,"metadata":{"total_usage":{"total_input_tokens":3,"total_output_tokens":4,"total_thought_tokens":5,"total_cached_tokens":2,"total_tokens":12}}}`,
 			``,
 		}, "\n")
 
@@ -70,7 +84,7 @@ func TestPredictNext(t *testing.T) {
 		if text.Text != "hello" {
 			t.Fatalf("text = %q", text.Text)
 		}
-		if toolCall.ID != "call-1" || toolCall.Name != "tool" || string(toolCall.Arguments) != `{"x":1}` || toolCall.ThoughtSignature != "sig" {
+		if toolCall.ID != "call-1" || toolCall.Name != "tool" || string(toolCall.Arguments) != `{"x":1}` {
 			t.Fatalf("tool call = %#v", toolCall)
 		}
 		if finished.StopReason != llm.StopReasonToolUse {
@@ -83,9 +97,13 @@ func TestPredictNext(t *testing.T) {
 
 	t.Run("emits finish after earlier usage and later content", func(t *testing.T) {
 		stream := strings.Join([]string{
-			`data: {"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":2,"totalTokenCount":3}}`,
+			`data: {"event_type":"step.stop","index":0,"metadata":{"total_usage":{"total_input_tokens":1,"total_output_tokens":2,"total_tokens":3}}}`,
 			``,
-			`data: {"candidates":[{"content":{"parts":[{"text":"late"}]}}]}`,
+			`data: {"event_type":"step.start","index":1,"step":{"type":"model_output"}}`,
+			``,
+			`data: {"event_type":"step.delta","index":1,"delta":{"type":"text","text":"late"}}`,
+			``,
+			`data: {"event_type":"step.stop","index":1}`,
 			``,
 		}, "\n")
 
@@ -109,7 +127,7 @@ func TestPredictNext(t *testing.T) {
 	})
 
 	t.Run("emits fallback finish at EOF", func(t *testing.T) {
-		events, err := predictWithStream(t, "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"hello\"}]}}]}\n\n")
+		events, err := predictWithStream(t, "data: {\"type\":\"step.start\",\"index\":0,\"step\":{\"type\":\"model_output\"}}\n\ndata: {\"type\":\"step.delta\",\"index\":0,\"delta\":{\"type\":\"text\",\"text\":\"hello\"}}\n\ndata: {\"type\":\"step.stop\",\"index\":0}\n\n")
 		if err != nil {
 			t.Fatalf("predict: %v", err)
 		}
@@ -123,7 +141,7 @@ func TestPredictNext(t *testing.T) {
 	})
 
 	t.Run("returns invalid tool arguments on error channel", func(t *testing.T) {
-		stream := "data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"id\":\"call-1\",\"name\":\"tool\",\"args\": invalid}}]}}]}\n\n"
+		stream := "data: {\"type\":\"step.start\",\"index\":0,\"step\":{\"type\":\"function_call\",\"id\":\"call-1\",\"name\":\"tool\"}}\n\ndata: {\"type\":\"step.delta\",\"index\":0,\"delta\":{\"type\":\"arguments\",\"partial_arguments\":invalid}}\n\n"
 		_, err := predictWithStream(t, stream)
 		if err == nil || !strings.Contains(err.Error(), "parse gemini event") {
 			t.Fatalf("error = %v, want parse gemini event", err)
@@ -132,7 +150,17 @@ func TestPredictNext(t *testing.T) {
 
 	t.Run("generated tool call IDs are request local", func(t *testing.T) {
 		stream := strings.Join([]string{
-			`data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"tool","args":{} }},{"functionCall":{"name":"tool","args":{}}}]}}]}`,
+			`data: {"event_type":"step.start","index":0,"step":{"type":"function_call","name":"tool"}}`,
+			``,
+			`data: {"event_type":"step.delta","index":0,"delta":{"type":"arguments","partial_arguments":"{}"}}`,
+			``,
+			`data: {"event_type":"step.stop","index":0}`,
+			``,
+			`data: {"event_type":"step.start","index":1,"step":{"type":"function_call","name":"tool"}}`,
+			``,
+			`data: {"event_type":"step.delta","index":1,"delta":{"type":"arguments","partial_arguments":"{}"}}`,
+			``,
+			`data: {"event_type":"step.stop","index":1}`,
 			``,
 		}, "\n")
 
@@ -163,7 +191,7 @@ func TestPredictNext(t *testing.T) {
 				t.Fatalf("decode request: %v", err)
 			}
 			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = w.Write([]byte("data: {\"usageMetadata\":{\"totalTokenCount\":1}}\n\n"))
+			_, _ = w.Write([]byte("data: {\"type\":\"step.stop\",\"index\":0,\"metadata\":{\"total_usage\":{\"total_tokens\":1}}}\n\n"))
 		}))
 		defer server.Close()
 
@@ -185,12 +213,12 @@ func TestPredictNext(t *testing.T) {
 			t.Fatalf("predict: %v", err)
 		}
 
-		contents := body["contents"].([]any)
-		first := contents[0].(map[string]any)
-		parts := first["parts"].([]any)
-		part := parts[0].(map[string]any)
-		if part["text"] != "error: oops" {
-			t.Fatalf("text = %#v, want error message", part["text"])
+		input := body["input"].([]any)
+		first := input[0].(map[string]any)
+		contents := first["content"].([]any)
+		content := contents[0].(map[string]any)
+		if content["text"] != "error: oops" {
+			t.Fatalf("text = %#v, want error message", content["text"])
 		}
 	})
 }
@@ -205,7 +233,7 @@ func TestPredictNextStructured(t *testing.T) {
 				t.Fatalf("decode request: %v", err)
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"{\"answer\":\"ok\"}"}]}}]}`))
+			_, _ = w.Write([]byte(`{"steps":[{"type":"model_output","content":[{"type":"text","text":"{\"answer\":\"ok\"}"}]}]}`))
 		}))
 		defer server.Close()
 
@@ -237,31 +265,32 @@ func TestPredictNextStructured(t *testing.T) {
 		if string(got) != `{"answer":"ok"}` {
 			t.Fatalf("structured output = %s, want answer", got)
 		}
-		if !strings.HasSuffix(escapedPath, "/models/test%20model:generateContent") {
-			t.Fatalf("escaped path = %q, want generateContent endpoint", escapedPath)
+		if !strings.HasSuffix(escapedPath, "/interactions") {
+			t.Fatalf("escaped path = %q, want interactions endpoint", escapedPath)
 		}
 
-		generationConfig, ok := body["generationConfig"].(map[string]any)
-		if !ok {
-			t.Fatalf("generationConfig = %#v, want map", body["generationConfig"])
+		responseFormat, ok := body["response_format"].([]any)
+		if !ok || len(responseFormat) == 0 {
+			t.Fatalf("response_format = %#v, want slice", body["response_format"])
 		}
-		if generationConfig["responseMimeType"] != "application/json" {
-			t.Fatalf("responseMimeType = %#v, want application/json", generationConfig["responseMimeType"])
+		format := responseFormat[0].(map[string]any)
+		if format["mime_type"] != "application/json" {
+			t.Fatalf("mime_type = %#v, want application/json", format["mime_type"])
 		}
-		if generationConfig["maxOutputTokens"] != float64(123) {
-			t.Fatalf("maxOutputTokens = %#v, want 123", generationConfig["maxOutputTokens"])
-		}
-		schema, ok := generationConfig["responseJsonSchema"].(map[string]any)
+		schema, ok := format["schema"].(map[string]any)
 		if !ok || schema["type"] != "object" {
-			t.Fatalf("responseJsonSchema = %#v, want object schema", generationConfig["responseJsonSchema"])
+			t.Fatalf("schema = %#v, want object schema", format["schema"])
 		}
-		systemInstruction, ok := body["systemInstruction"].(map[string]any)
+
+		generationConfig, ok := body["generation_config"].(map[string]any)
 		if !ok {
-			t.Fatalf("systemInstruction = %#v, want map", body["systemInstruction"])
+			t.Fatalf("generation_config = %#v, want map", body["generation_config"])
 		}
-		parts := systemInstruction["parts"].([]any)
-		if parts[0].(map[string]any)["text"] != "system" {
-			t.Fatalf("systemInstruction parts = %#v, want system", parts)
+		if generationConfig["max_output_tokens"] != float64(123) {
+			t.Fatalf("max_output_tokens = %#v, want 123", generationConfig["max_output_tokens"])
+		}
+		if body["system_instruction"] != "system" {
+			t.Fatalf("system_instruction = %#v, want system", body["system_instruction"])
 		}
 	})
 
@@ -275,7 +304,7 @@ func TestPredictNextStructured(t *testing.T) {
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"{\"answer\":\"ok\"}"}]}}]}`))
+			_, _ = w.Write([]byte(`{"steps":[{"type":"model_output","content":[{"type":"text","text":"{\"answer\":\"ok\"}"}]}]}`))
 		}))
 		defer server.Close()
 
@@ -311,7 +340,7 @@ func TestPredictNextStructured(t *testing.T) {
 	t.Run("rejects_invalid_json_output", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"not json"}]}}]}`))
+			_, _ = w.Write([]byte(`{"steps":[{"type":"model_output","content":[{"type":"text","text":"not json"}]}]}`))
 		}))
 		defer server.Close()
 

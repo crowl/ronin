@@ -10,7 +10,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 
@@ -110,9 +109,8 @@ func (s *LLM) PredictNextStructured(ctx context.Context, req llm.PredictNextStru
 	}
 
 	endpoint := fmt.Sprintf(
-		"%s/models/%s:generateContent",
+		"%s/interactions",
 		strings.TrimRight(s.baseURL, "/"),
-		url.PathEscape(s.model.Name),
 	)
 
 	resp, err := httpretry.Do(ctx, s.client, func() (*http.Request, error) {
@@ -144,7 +142,7 @@ func (s *LLM) PredictNextStructured(ctx context.Context, req llm.PredictNextStru
 		return nil, fmt.Errorf("read gemini structured response: %w", err)
 	}
 
-	var structuredResp geminiStreamEvent
+	var structuredResp geminiInteractionResponse
 	if err := json.Unmarshal(data, &structuredResp); err != nil {
 		return nil, fmt.Errorf("parse gemini structured response: %w", err)
 	}
@@ -171,9 +169,8 @@ func (s *LLM) stream(ctx context.Context, req llm.PredictNextRequest, events cha
 	}
 
 	endpoint := fmt.Sprintf(
-		"%s/models/%s:streamGenerateContent?alt=sse&",
+		"%s/interactions",
 		strings.TrimRight(s.baseURL, "/"),
-		url.PathEscape(s.model.Name),
 	)
 
 	resp, err := httpretry.Do(ctx, s.client, func() (*http.Request, error) {
@@ -209,7 +206,9 @@ func (s *LLM) stream(ctx context.Context, req llm.PredictNextRequest, events cha
 	scanner.Buffer(make([]byte, 1024), 10*1024*1024)
 
 	var dataLines []string
-	state := geminiStreamState{}
+	state := geminiStreamState{
+		activeSteps: make(map[int]*geminiActiveStep),
+	}
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -218,6 +217,9 @@ func (s *LLM) stream(ctx context.Context, req llm.PredictNextRequest, events cha
 				return err
 			}
 			dataLines = nil
+			if state.finished {
+				break
+			}
 			continue
 		}
 		if strings.HasPrefix(line, ":") {
@@ -243,32 +245,31 @@ func (s *LLM) stream(ctx context.Context, req llm.PredictNextRequest, events cha
 	})
 }
 
-func (s *LLM) buildPayload(req llm.PredictNextRequest) (*geminiRequest, error) {
-	contents, err := convertMessages(req.Messages)
+func (s *LLM) buildPayload(req llm.PredictNextRequest) (*geminiInteractionRequest, error) {
+	input, err := convertMessagesToSteps(req.Messages)
 	if err != nil {
 		return nil, err
 	}
 
-	payload := &geminiRequest{
-		Contents: contents,
-	}
-
-	if req.SystemPrompt != "" {
-		payload.SystemInstruction = &geminiSystemInstruction{
-			Parts: []geminiPart{{Text: req.SystemPrompt}},
-		}
+	payload := &geminiInteractionRequest{
+		Model:             s.model.Name,
+		Input:             input,
+		SystemInstruction: req.SystemPrompt,
+		Store:             false,
+		Stream:            true,
 	}
 
 	if len(req.Tools) > 0 {
-		decls := make([]geminiFunctionDeclaration, 0, len(req.Tools))
+		decls := make([]geminiTool, 0, len(req.Tools))
 		for _, tool := range req.Tools {
-			decls = append(decls, geminiFunctionDeclaration{
-				Name:                 tool.Name(),
-				Description:          tool.Description(),
-				ParametersJSONSchema: tool.Parameters(),
+			decls = append(decls, geminiTool{
+				Type:        "function",
+				Name:        tool.Name(),
+				Description: tool.Description(),
+				Parameters:  tool.Parameters(),
 			})
 		}
-		payload.Tools = []geminiTool{{FunctionDeclarations: decls}}
+		payload.Tools = decls
 	}
 
 	generationConfig := geminiGenerationConfig{}
@@ -276,121 +277,149 @@ func (s *LLM) buildPayload(req llm.PredictNextRequest) (*geminiRequest, error) {
 		generationConfig.MaxOutputTokens = req.MaxTokens
 	}
 	if reasoningLevel := s.ReasoningLevel(); reasoningLevel != llm.ReasoningLevelOff {
-		generationConfig.ThinkingConfig = buildThinkingConfig(reasoningLevel)
+		generationConfig.ThinkingLevel = buildThinkingLevel(reasoningLevel)
+		generationConfig.ThinkingSummaries = "auto"
 	}
-	if generationConfig.MaxOutputTokens > 0 || generationConfig.ThinkingConfig != nil {
+	if generationConfig.MaxOutputTokens > 0 || generationConfig.ThinkingLevel != "" {
 		payload.GenerationConfig = &generationConfig
 	}
 
 	return payload, nil
 }
 
-func (s *LLM) buildStructuredPayload(req llm.PredictNextStructuredRequest) (*geminiRequest, error) {
+func (s *LLM) buildStructuredPayload(req llm.PredictNextStructuredRequest) (*geminiInteractionRequest, error) {
 	if req.Schema == nil {
 		return nil, errors.New("structured output schema is required")
 	}
-	contents, err := convertMessages(req.Messages)
+	input, err := convertMessagesToSteps(req.Messages)
 	if err != nil {
 		return nil, err
 	}
 
-	payload := &geminiRequest{
-		Contents: contents,
+	payload := &geminiInteractionRequest{
+		Model:             s.model.Name,
+		Input:             input,
+		SystemInstruction: req.SystemPrompt,
+		Store:             false,
+		ResponseFormat: []geminiResponseFormat{
+			{
+				Type:     "text",
+				MimeType: "application/json",
+				Schema:   req.Schema,
+			},
+		},
 	}
 
-	if req.SystemPrompt != "" {
-		payload.SystemInstruction = &geminiSystemInstruction{
-			Parts: []geminiPart{{Text: req.SystemPrompt}},
-		}
-	}
-
-	generationConfig := geminiGenerationConfig{
-		ResponseMimeType:   "application/json",
-		ResponseJSONSchema: req.Schema,
-	}
+	generationConfig := geminiGenerationConfig{}
 	if req.MaxTokens > 0 {
 		generationConfig.MaxOutputTokens = req.MaxTokens
 	}
 	if reasoningLevel := s.ReasoningLevel(); reasoningLevel != llm.ReasoningLevelOff {
-		generationConfig.ThinkingConfig = buildThinkingConfig(reasoningLevel)
+		generationConfig.ThinkingLevel = buildThinkingLevel(reasoningLevel)
+		generationConfig.ThinkingSummaries = "auto"
 	}
-	payload.GenerationConfig = &generationConfig
+	if generationConfig.MaxOutputTokens > 0 || generationConfig.ThinkingLevel != "" {
+		payload.GenerationConfig = &generationConfig
+	}
 
 	return payload, nil
 }
 
-type geminiRequest struct {
-	Contents          []geminiContent          `json:"contents"`
-	SystemInstruction *geminiSystemInstruction `json:"systemInstruction,omitempty"`
-	Tools             []geminiTool             `json:"tools,omitempty"`
-	GenerationConfig  *geminiGenerationConfig  `json:"generationConfig,omitempty"`
+type geminiInteractionRequest struct {
+	Model             string                  `json:"model"`
+	Input             []geminiStep            `json:"input"`
+	SystemInstruction string                  `json:"system_instruction,omitempty"`
+	Tools             []geminiTool            `json:"tools,omitempty"`
+	ResponseFormat    []geminiResponseFormat  `json:"response_format,omitempty"`
+	Stream            bool                    `json:"stream,omitempty"`
+	Store             bool                    `json:"store"`
+	GenerationConfig  *geminiGenerationConfig `json:"generation_config,omitempty"`
 }
 
-type geminiSystemInstruction struct {
-	Parts []geminiPart `json:"parts"`
+type geminiStep struct {
+	Type      string          `json:"type"`
+	Content   []geminiContent `json:"content,omitempty"`
+	ID        string          `json:"id,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Arguments json.RawMessage `json:"arguments,omitempty"`
+	CallID    string          `json:"call_id,omitempty"`
+	IsError   bool            `json:"is_error,omitempty"`
+	Result    []geminiContent `json:"result,omitempty"`
+	Signature string          `json:"signature,omitempty"`
+	Summary   []geminiContent `json:"summary,omitempty"`
+}
+
+type geminiContent struct {
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
 }
 
 type geminiTool struct {
-	FunctionDeclarations []geminiFunctionDeclaration `json:"functionDeclarations"`
+	Type        string             `json:"type"`
+	Name        string             `json:"name"`
+	Description string             `json:"description,omitempty"`
+	Parameters  *jsonschema.Schema `json:"parameters,omitempty"`
 }
 
-type geminiFunctionDeclaration struct {
-	Name                 string             `json:"name"`
-	Description          string             `json:"description"`
-	ParametersJSONSchema *jsonschema.Schema `json:"parametersJsonSchema"`
+type geminiResponseFormat struct {
+	Type     string             `json:"type"`
+	MimeType string             `json:"mime_type,omitempty"`
+	Schema   *jsonschema.Schema `json:"schema,omitempty"`
 }
 
 type geminiGenerationConfig struct {
-	MaxOutputTokens    int                   `json:"maxOutputTokens,omitempty"`
-	ThinkingConfig     *geminiThinkingConfig `json:"thinkingConfig,omitempty"`
-	ResponseMimeType   string                `json:"responseMimeType,omitempty"`
-	ResponseJSONSchema *jsonschema.Schema    `json:"responseJsonSchema,omitempty"`
+	MaxOutputTokens   int    `json:"max_output_tokens,omitempty"`
+	ThinkingLevel     string `json:"thinking_level,omitempty"`
+	ThinkingSummaries string `json:"thinking_summaries,omitempty"`
 }
 
-type geminiThinkingConfig struct {
-	ThinkingBudget  *int   `json:"thinkingBudget,omitempty"`
-	ThinkingLevel   string `json:"thinkingLevel,omitempty"`
-	IncludeThoughts bool   `json:"includeThoughts,omitempty"`
-}
-
-func buildThinkingConfig(reasoning llm.ReasoningLevel) *geminiThinkingConfig {
+func buildThinkingLevel(reasoning llm.ReasoningLevel) string {
 	if reasoning == llm.ReasoningLevelOff {
-		budget := 0
-		return &geminiThinkingConfig{ThinkingBudget: new(budget)}
+		return "minimal"
 	}
-
-	level := strings.ToUpper(string(reasoning))
-	if reasoning == llm.ReasoningLevelExtraHigh {
-		level = "HIGH"
+	level := string(reasoning)
+	if level == "xhigh" {
+		return "high"
 	}
-
-	return &geminiThinkingConfig{
-		ThinkingLevel:   level,
-		IncludeThoughts: true,
-	}
+	return level
 }
 
-func convertMessages(messages []llm.Message) ([]geminiContent, error) {
-	contents := make([]geminiContent, 0, len(messages))
+func convertMessagesToSteps(messages []llm.Message) ([]geminiStep, error) {
+	steps := make([]geminiStep, 0, len(messages))
 	for _, msg := range messages {
 		switch typedMsg := msg.(type) {
 		case llm.UserMessage:
-			contents = append(contents, geminiContent{
-				Role: "user",
-				Parts: []geminiPart{
-					{Text: typedMsg.Text},
+			steps = append(steps, geminiStep{
+				Type: "user_input",
+				Content: []geminiContent{
+					{Type: "text", Text: typedMsg.Text},
 				},
 			})
 		case llm.AssistantMessage:
-			var parts []geminiPart
 			for _, block := range typedMsg.Blocks {
 				switch b := block.(type) {
 				case llm.TextBlock:
 					if b.Text != "" {
-						parts = append(parts, geminiPart{Text: b.Text})
+						steps = append(steps, geminiStep{
+							Type: "model_output",
+							Content: []geminiContent{
+								{Type: "text", Text: b.Text},
+							},
+						})
 					}
 				case llm.ThinkingBlock:
-					continue
+					step := geminiStep{
+						Type: "thought",
+					}
+					if b.Signature != "" {
+						step.Signature = b.Signature
+					}
+					if b.Text != "" {
+						step.Summary = []geminiContent{
+							{Type: "text", Text: b.Text},
+						}
+					}
+					steps = append(steps, step)
 				case llm.ToolCallBlock:
 					args := b.Arguments
 					if len(args) == 0 || strings.TrimSpace(string(args)) == "" {
@@ -399,66 +428,47 @@ func convertMessages(messages []llm.Message) ([]geminiContent, error) {
 					if !json.Valid(args) {
 						return nil, fmt.Errorf("tool call %q arguments: invalid JSON", b.ID)
 					}
-					part := geminiPart{
-						FunctionCall: &geminiFunctionCall{
-							Name: b.Name,
-							Args: args,
-						},
-					}
-					if b.ThoughtSignature != "" {
-						part.ThoughtSignature = b.ThoughtSignature
-					}
-					parts = append(parts, part)
+					steps = append(steps, geminiStep{
+						Type:      "function_call",
+						ID:        b.ID,
+						Name:      b.Name,
+						Arguments: args,
+					})
 				default:
 					return nil, fmt.Errorf("unsupported assistant block %T", block)
 				}
 			}
-			if len(parts) > 0 {
-				contents = append(contents, geminiContent{
-					Role:  "model",
-					Parts: parts,
-				})
-			}
 		case llm.ToolOutputMessage:
-			contents = append(contents, geminiContent{
-				Role: "user",
-				Parts: []geminiPart{
-					{
-						FunctionResponse: &geminiFunctionResponse{
-							Name: typedMsg.ToolName,
-							Response: geminiFunctionResponseData{
-								Output: typedMsg.ToolOutput,
-							},
-						},
-					},
+			steps = append(steps, geminiStep{
+				Type:   "function_result",
+				Name:   typedMsg.ToolName,
+				CallID: typedMsg.ToolCallID,
+				Result: []geminiContent{
+					{Type: "text", Text: typedMsg.ToolOutput},
 				},
 			})
 		case llm.ToolErrorMessage:
-			contents = append(contents, geminiContent{
-				Role: "user",
-				Parts: []geminiPart{
-					{
-						FunctionResponse: &geminiFunctionResponse{
-							Name: typedMsg.ToolName,
-							Response: geminiFunctionResponseData{
-								Error: errorText(typedMsg.Error),
-							},
-						},
-					},
+			steps = append(steps, geminiStep{
+				Type:    "function_result",
+				Name:    typedMsg.ToolName,
+				CallID:  typedMsg.ToolCallID,
+				IsError: true,
+				Result: []geminiContent{
+					{Type: "text", Text: errorText(typedMsg.Error)},
 				},
 			})
 		case llm.ErrorMessage:
-			contents = append(contents, geminiContent{
-				Role: "user",
-				Parts: []geminiPart{
-					{Text: "error: " + errorText(typedMsg.Error)},
+			steps = append(steps, geminiStep{
+				Type: "user_input",
+				Content: []geminiContent{
+					{Type: "text", Text: "error: " + errorText(typedMsg.Error)},
 				},
 			})
 		default:
 			return nil, fmt.Errorf("unsupported message %T", msg)
 		}
 	}
-	return contents, nil
+	return steps, nil
 }
 
 type geminiStreamState struct {
@@ -466,67 +476,83 @@ type geminiStreamState struct {
 	usage       llm.Usage
 	callCounter uint64
 	blockIndex  int
+	activeSteps map[int]*geminiActiveStep
+	finished    bool
+}
+
+type geminiActiveStep struct {
+	typeStr     string
+	id          string
+	name        string
+	blockIndex  int
+	accumulated strings.Builder
 }
 
 type geminiStreamEvent struct {
-	Candidates    []geminiCandidate    `json:"candidates"`
-	UsageMetadata *geminiUsageMetadata `json:"usageMetadata"`
+	Type        string                 `json:"event_type"`
+	Index       int                    `json:"index"`
+	Step        *geminiStepDetail      `json:"step,omitempty"`
+	Delta       *geminiDeltaDetail     `json:"delta,omitempty"`
+	Status      string                 `json:"status,omitempty"`
+	Metadata    *geminiStreamMetadata  `json:"metadata,omitempty"`
+	Interaction *geminiInteractionInfo `json:"interaction,omitempty"`
 }
 
-type geminiCandidate struct {
-	Content geminiContent `json:"content"`
+type geminiStepDetail struct {
+	Type      string `json:"type"`
+	ID        string `json:"id,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Signature string `json:"signature,omitempty"`
 }
 
-type geminiContent struct {
-	Role  string       `json:"role,omitempty"`
-	Parts []geminiPart `json:"parts"`
+type geminiDeltaDetail struct {
+	Type             string         `json:"type"`
+	Text             string         `json:"text,omitempty"`
+	PartialArguments string         `json:"partial_arguments,omitempty"`
+	Arguments        string         `json:"arguments,omitempty"`
+	Signature        string         `json:"signature,omitempty"`
+	Content          *geminiContent `json:"content,omitempty"`
 }
 
-type geminiPart struct {
-	Text             string                  `json:"text,omitempty"`
-	Thought          bool                    `json:"thought,omitempty"`
-	ThoughtSignature string                  `json:"thoughtSignature,omitempty"`
-	FunctionCall     *geminiFunctionCall     `json:"functionCall,omitempty"`
-	FunctionResponse *geminiFunctionResponse `json:"functionResponse,omitempty"`
+type geminiStreamMetadata struct {
+	TotalUsage *geminiUsage `json:"total_usage,omitempty"`
 }
 
-type geminiFunctionCall struct {
-	ID   string          `json:"id,omitempty"`
-	Name string          `json:"name"`
-	Args json.RawMessage `json:"args"`
+type geminiInteractionInfo struct {
+	ID     string       `json:"id"`
+	Status string       `json:"status"`
+	Usage  *geminiUsage `json:"usage,omitempty"`
 }
 
-type geminiFunctionResponse struct {
-	Name     string                     `json:"name"`
-	Response geminiFunctionResponseData `json:"response"`
+type geminiInteractionResponse struct {
+	ID    string       `json:"id"`
+	Steps []geminiStep `json:"steps"`
+	Usage *geminiUsage `json:"usage"`
 }
 
-type geminiFunctionResponseData struct {
-	Output string `json:"output,omitempty"`
-	Error  string `json:"error,omitempty"`
+type geminiUsage struct {
+	TotalCachedTokens  int `json:"total_cached_tokens"`
+	TotalInputTokens   int `json:"total_input_tokens"`
+	TotalOutputTokens  int `json:"total_output_tokens"`
+	TotalThoughtTokens int `json:"total_thought_tokens"`
+	TotalTokens        int `json:"total_tokens"`
 }
 
-type geminiUsageMetadata struct {
-	PromptTokenCount        int `json:"promptTokenCount"`
-	CandidatesTokenCount    int `json:"candidatesTokenCount"`
-	ThoughtsTokenCount      int `json:"thoughtsTokenCount"`
-	CachedContentTokenCount int `json:"cachedContentTokenCount"`
-	TotalTokenCount         int `json:"totalTokenCount"`
-}
-
-func (event geminiStreamEvent) OutputText() string {
+func (resp geminiInteractionResponse) OutputText() string {
 	var b strings.Builder
-	for _, candidate := range event.Candidates {
-		for _, part := range candidate.Content.Parts {
-			if !part.Thought {
-				b.WriteString(part.Text)
+	for _, step := range resp.Steps {
+		if step.Type == "model_output" {
+			for _, content := range step.Content {
+				if content.Type == "text" {
+					b.WriteString(content.Text)
+				}
 			}
 		}
 	}
 	return b.String()
 }
 
-func (state geminiStreamState) stopReason() llm.StopReason {
+func (state *geminiStreamState) stopReason() llm.StopReason {
 	if state.toolEmitted {
 		return llm.StopReasonToolUse
 	}
@@ -543,79 +569,146 @@ func handleData(ctx context.Context, data string, state *geminiStreamState, even
 		return fmt.Errorf("parse gemini event: %w", err)
 	}
 
-	for _, candidate := range event.Candidates {
-		for _, part := range candidate.Content.Parts {
-			if part.Text != "" {
-				if part.Thought {
-					if err := sendEvent(ctx, events, llm.BlockStarted{Index: state.blockIndex, Kind: llm.BlockKindThinking}); err != nil {
-						return err
-					}
-					if err := sendEvent(ctx, events, llm.ThinkingDelta{Index: state.blockIndex, Text: part.Text}); err != nil {
-						return err
-					}
-					if err := sendEvent(ctx, events, llm.BlockEnded{Index: state.blockIndex, Block: llm.ThinkingBlock{Text: part.Text, Signature: part.ThoughtSignature}}); err != nil {
-						return err
-					}
-					state.blockIndex++
-				} else {
-					if err := sendEvent(ctx, events, llm.BlockStarted{Index: state.blockIndex, Kind: llm.BlockKindText}); err != nil {
-						return err
-					}
-					if err := sendEvent(ctx, events, llm.TextDelta{Index: state.blockIndex, Text: part.Text}); err != nil {
-						return err
-					}
-					if err := sendEvent(ctx, events, llm.BlockEnded{Index: state.blockIndex, Block: llm.TextBlock{Text: part.Text}}); err != nil {
-						return err
-					}
-					state.blockIndex++
-				}
-			}
-			if part.FunctionCall != nil {
-				id := part.FunctionCall.ID
-				if id == "" {
-					state.callCounter++
-					id = fmt.Sprintf("%s_%d", part.FunctionCall.Name, state.callCounter)
-				}
-
-				args := part.FunctionCall.Args
-				if len(args) == 0 || strings.TrimSpace(string(args)) == "" {
-					args = json.RawMessage("{}")
-				}
-				if !json.Valid(args) {
-					return fmt.Errorf("gemini function call %q arguments: invalid JSON", part.FunctionCall.Name)
-				}
-
-				if err := sendEvent(ctx, events, llm.BlockStarted{Index: state.blockIndex, Kind: llm.BlockKindToolCall}); err != nil {
-					return err
-				}
-				if err := sendEvent(ctx, events, llm.ToolCallArgumentsDelta{Index: state.blockIndex, Arguments: string(args)}); err != nil {
-					return err
-				}
-				if err := sendEvent(ctx, events, llm.BlockEnded{
-					Index: state.blockIndex,
-					Block: llm.ToolCallBlock{
-						ID:               id,
-						Name:             part.FunctionCall.Name,
-						Arguments:        args,
-						ThoughtSignature: part.ThoughtSignature,
-					},
-				}); err != nil {
-					return err
-				}
-				state.blockIndex++
-
-				state.toolEmitted = true
-			}
+	// Handle token usage metadata updates
+	if event.Metadata != nil && event.Metadata.TotalUsage != nil {
+		state.usage = llm.Usage{
+			InputTokens:  event.Metadata.TotalUsage.TotalInputTokens,
+			OutputTokens: event.Metadata.TotalUsage.TotalOutputTokens + event.Metadata.TotalUsage.TotalThoughtTokens,
+			CachedTokens: event.Metadata.TotalUsage.TotalCachedTokens,
+			TotalTokens:  event.Metadata.TotalUsage.TotalTokens,
+		}
+	}
+	if event.Interaction != nil && event.Interaction.Usage != nil {
+		state.usage = llm.Usage{
+			InputTokens:  event.Interaction.Usage.TotalInputTokens,
+			OutputTokens: event.Interaction.Usage.TotalOutputTokens + event.Interaction.Usage.TotalThoughtTokens,
+			CachedTokens: event.Interaction.Usage.TotalCachedTokens,
+			TotalTokens:  event.Interaction.Usage.TotalTokens,
 		}
 	}
 
-	if event.UsageMetadata != nil {
-		state.usage = llm.Usage{
-			InputTokens:  event.UsageMetadata.PromptTokenCount,
-			OutputTokens: event.UsageMetadata.CandidatesTokenCount + event.UsageMetadata.ThoughtsTokenCount,
-			CachedTokens: event.UsageMetadata.CachedContentTokenCount,
-			TotalTokens:  event.UsageMetadata.TotalTokenCount,
+	switch event.Type {
+	case "interaction.completed", "interaction.requires_action":
+		state.finished = true
+
+	case "step.start":
+		if event.Step == nil {
+			return nil
 		}
+		blockIndex := state.blockIndex
+		state.blockIndex++
+
+		var kind llm.BlockKind
+		switch event.Step.Type {
+		case "thought":
+			kind = llm.BlockKindThinking
+		case "model_output":
+			kind = llm.BlockKindText
+		case "function_call":
+			kind = llm.BlockKindToolCall
+			state.toolEmitted = true
+		default:
+			// ignore unknown step types
+			return nil
+		}
+
+		active := &geminiActiveStep{
+			typeStr:    event.Step.Type,
+			id:         event.Step.ID,
+			name:       event.Step.Name,
+			blockIndex: blockIndex,
+		}
+		if state.activeSteps == nil {
+			state.activeSteps = make(map[int]*geminiActiveStep)
+		}
+		state.activeSteps[event.Index] = active
+
+		if err := sendEvent(ctx, events, llm.BlockStarted{Index: blockIndex, Kind: kind}); err != nil {
+			return err
+		}
+
+	case "step.delta":
+		if event.Delta == nil {
+			return nil
+		}
+		active, ok := state.activeSteps[event.Index]
+		if !ok {
+			return nil
+		}
+
+		switch event.Delta.Type {
+		case "thought", "thought_summary":
+			textVal := event.Delta.Text
+			if event.Delta.Content != nil {
+				textVal = event.Delta.Content.Text
+			}
+			active.accumulated.WriteString(textVal)
+			if err := sendEvent(ctx, events, llm.ThinkingDelta{Index: active.blockIndex, Text: textVal}); err != nil {
+				return err
+			}
+		case "thought_signature":
+			if event.Delta.Signature != "" {
+				active.id = event.Delta.Signature
+			}
+		case "text":
+			active.accumulated.WriteString(event.Delta.Text)
+			if err := sendEvent(ctx, events, llm.TextDelta{Index: active.blockIndex, Text: event.Delta.Text}); err != nil {
+				return err
+			}
+		case "arguments", "arguments_delta":
+			argsVal := event.Delta.Arguments
+			if argsVal == "" {
+				argsVal = event.Delta.PartialArguments
+			}
+			active.accumulated.WriteString(argsVal)
+			if err := sendEvent(ctx, events, llm.ToolCallArgumentsDelta{Index: active.blockIndex, Arguments: argsVal}); err != nil {
+				return err
+			}
+		}
+
+	case "step.stop":
+		active, ok := state.activeSteps[event.Index]
+		if !ok {
+			return nil
+		}
+
+		var block llm.AssistantBlock
+		switch active.typeStr {
+		case "thought":
+			block = llm.ThinkingBlock{
+				Text:      active.accumulated.String(),
+				Signature: active.id,
+			}
+		case "model_output":
+			block = llm.TextBlock{
+				Text: active.accumulated.String(),
+			}
+		case "function_call":
+			id := active.id
+			if id == "" {
+				state.callCounter++
+				id = fmt.Sprintf("%s_%d", active.name, state.callCounter)
+			}
+			args := []byte(active.accumulated.String())
+			if len(args) == 0 || strings.TrimSpace(string(args)) == "" {
+				args = []byte("{}")
+			}
+			if !json.Valid(args) {
+				return fmt.Errorf("gemini function call %q arguments: invalid JSON", active.name)
+			}
+			block = llm.ToolCallBlock{
+				ID:        id,
+				Name:      active.name,
+				Arguments: json.RawMessage(args),
+			}
+		default:
+			return nil
+		}
+
+		if err := sendEvent(ctx, events, llm.BlockEnded{Index: active.blockIndex, Block: block}); err != nil {
+			return err
+		}
+		delete(state.activeSteps, event.Index)
 	}
 
 	return nil
