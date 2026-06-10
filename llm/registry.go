@@ -7,7 +7,7 @@ import (
 	"sync"
 )
 
-type Factory func(ReasoningLevel) (Assistant, error)
+type Factory func(ReasoningLevel) (ModelClient, error)
 
 var (
 	registryMu sync.RWMutex
@@ -43,7 +43,7 @@ func RegisterModel(model Model, factory Factory) error {
 	return nil
 }
 
-func LoadAssistant(model Model, level ReasoningLevel) (Assistant, error) {
+func LoadModelClient(model Model, level ReasoningLevel) (ModelClient, error) {
 	registryMu.RLock()
 	factory, ok := registry[model]
 	registryMu.RUnlock()

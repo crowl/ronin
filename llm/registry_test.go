@@ -15,18 +15,18 @@ func TestRegistry(t *testing.T) {
 	t.Run("load returns fresh instances", func(t *testing.T) {
 		model := llm.Model{Provider: "test", Name: "fresh"}
 		calls := 0
-		if err := llm.RegisterModel(model, func(level llm.ReasoningLevel) (llm.Assistant, error) {
+		if err := llm.RegisterModel(model, func(level llm.ReasoningLevel) (llm.ModelClient, error) {
 			calls++
-			return &fakeLLM{model: model, reasoningLevel: level}, nil
+			return &fakeModelClient{model: model, reasoningLevel: level}, nil
 		}); err != nil {
 			t.Fatalf("register: %v", err)
 		}
 
-		first, err := llm.LoadAssistant(model, llm.ReasoningLevelLow)
+		first, err := llm.LoadModelClient(model, llm.ReasoningLevelLow)
 		if err != nil {
 			t.Fatalf("first load: %v", err)
 		}
-		second, err := llm.LoadAssistant(model, llm.ReasoningLevelHigh)
+		second, err := llm.LoadModelClient(model, llm.ReasoningLevelHigh)
 		if err != nil {
 			t.Fatalf("second load: %v", err)
 		}
@@ -47,8 +47,8 @@ func TestRegistry(t *testing.T) {
 
 	t.Run("duplicate registration rejected", func(t *testing.T) {
 		model := llm.Model{Provider: "test", Name: "duplicate"}
-		factory := func(llm.ReasoningLevel) (llm.Assistant, error) {
-			return &fakeLLM{model: model}, nil
+		factory := func(llm.ReasoningLevel) (llm.ModelClient, error) {
+			return &fakeModelClient{model: model}, nil
 		}
 		if err := llm.RegisterModel(model, factory); err != nil {
 			t.Fatalf("register: %v", err)
@@ -69,12 +69,12 @@ func TestRegistry(t *testing.T) {
 	t.Run("factory errors propagate", func(t *testing.T) {
 		model := llm.Model{Provider: "test", Name: "factory-error"}
 		expected := errors.New("boom")
-		if err := llm.RegisterModel(model, func(llm.ReasoningLevel) (llm.Assistant, error) {
+		if err := llm.RegisterModel(model, func(llm.ReasoningLevel) (llm.ModelClient, error) {
 			return nil, expected
 		}); err != nil {
 			t.Fatalf("register: %v", err)
 		}
-		_, err := llm.LoadAssistant(model, llm.ReasoningLevelMedium)
+		_, err := llm.LoadModelClient(model, llm.ReasoningLevelMedium)
 		if !errors.Is(err, expected) {
 			t.Fatalf("load error = %v, want wrapped expected error", err)
 		}
@@ -88,8 +88,8 @@ func TestRegistry(t *testing.T) {
 		}
 		for _, model := range models {
 			registeredModel := model
-			if err := llm.RegisterModel(registeredModel, func(level llm.ReasoningLevel) (llm.Assistant, error) {
-				return &fakeLLM{model: registeredModel, reasoningLevel: level}, nil
+			if err := llm.RegisterModel(registeredModel, func(level llm.ReasoningLevel) (llm.ModelClient, error) {
+				return &fakeModelClient{model: registeredModel, reasoningLevel: level}, nil
 			}); err != nil {
 				t.Fatalf("register %s: %v", model, err)
 			}
@@ -113,28 +113,28 @@ func TestRegistry(t *testing.T) {
 	})
 }
 
-type fakeLLM struct {
+type fakeModelClient struct {
 	model          llm.Model
 	reasoningLevel llm.ReasoningLevel
 }
 
-func (l *fakeLLM) Model() llm.Model {
+func (l *fakeModelClient) Model() llm.Model {
 	return l.model
 }
 
-func (l *fakeLLM) ReasoningLevel() llm.ReasoningLevel {
+func (l *fakeModelClient) ReasoningLevel() llm.ReasoningLevel {
 	return l.reasoningLevel
 }
 
-func (l *fakeLLM) SetReasoningLevel(level llm.ReasoningLevel) error {
+func (l *fakeModelClient) SetReasoningLevel(level llm.ReasoningLevel) error {
 	l.reasoningLevel = level
 	return nil
 }
 
-func (l *fakeLLM) PredictNext(context.Context, llm.PredictNextRequest) (<-chan llm.PredictionEvent, <-chan error) {
+func (l *fakeModelClient) PredictNext(context.Context, llm.PredictNextRequest) (<-chan llm.PredictionEvent, <-chan error) {
 	panic("not implemented")
 }
 
-func (l *fakeLLM) PredictNextStructured(context.Context, llm.PredictNextStructuredRequest) (json.RawMessage, error) {
+func (l *fakeModelClient) PredictNextStructured(context.Context, llm.PredictNextStructuredRequest) (json.RawMessage, error) {
 	panic("not implemented")
 }

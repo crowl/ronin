@@ -34,7 +34,7 @@ type ToolCallTitleProvider interface {
 
 type ConversationConfig struct {
 	CWD          string
-	Assistant    llm.Assistant
+	ModelClient  llm.ModelClient
 	Compactor    Compactor
 	Tools        []Tool
 	SystemPrompt string
@@ -47,8 +47,8 @@ type ConversationConfig struct {
 const defaultMaxTurns = 512
 
 func NewConversation(cfg ConversationConfig) (*Conversation, error) {
-	if cfg.Assistant == nil {
-		return nil, errors.New("llm is required")
+	if cfg.ModelClient == nil {
+		return nil, errors.New("model client is required")
 	}
 	now := cfg.Now
 	if now == nil {
@@ -95,7 +95,7 @@ func NewConversation(cfg ConversationConfig) (*Conversation, error) {
 		systemPrompt: cfg.SystemPrompt,
 		maxTurns:     maxTurns,
 		now:          now,
-		assistant:    cfg.Assistant,
+		modelClient:  cfg.ModelClient,
 		contextUsage: contextUsage,
 		toolDefs:     toolDefs,
 		toolByName:   toolByName,
@@ -111,7 +111,7 @@ type Conversation struct {
 	maxTurns     int
 	now          func() time.Time
 
-	assistant    llm.Assistant
+	modelClient  llm.ModelClient
 	contextUsage llm.Usage
 
 	toolDefs   []llm.Tool
@@ -145,11 +145,11 @@ func (c *Conversation) ToolCallTitle(name string, arguments []byte) string {
 }
 
 func (c *Conversation) Model() llm.Model {
-	return c.assistant.Model()
+	return c.modelClient.Model()
 }
 
 func (c *Conversation) ReasoningLevel() llm.ReasoningLevel {
-	return c.assistant.ReasoningLevel()
+	return c.modelClient.ReasoningLevel()
 }
 
 func (c *Conversation) ContextUsage() llm.Usage {
@@ -157,9 +157,9 @@ func (c *Conversation) ContextUsage() llm.Usage {
 }
 
 func (c *Conversation) SwitchModel(model llm.Model) error {
-	newAssistant, err := llm.LoadAssistant(model, c.assistant.ReasoningLevel())
+	newModelClient, err := llm.LoadModelClient(model, c.modelClient.ReasoningLevel())
 	if err != nil {
-		return fmt.Errorf("select llm: %w", err)
+		return fmt.Errorf("select model client: %w", err)
 	}
 
 	updatedSession := c.session
@@ -172,14 +172,14 @@ func (c *Conversation) SwitchModel(model llm.Model) error {
 		}
 	}
 
-	c.assistant = newAssistant
+	c.modelClient = newModelClient
 	c.session = updatedSession
 	return nil
 }
 
 func (c *Conversation) SwitchReasoningLevel(lvl llm.ReasoningLevel) error {
-	prevLevel := c.assistant.ReasoningLevel()
-	if err := c.assistant.SetReasoningLevel(lvl); err != nil {
+	prevLevel := c.modelClient.ReasoningLevel()
+	if err := c.modelClient.SetReasoningLevel(lvl); err != nil {
 		return fmt.Errorf("set reasoning level: %w", err)
 	}
 
@@ -189,7 +189,7 @@ func (c *Conversation) SwitchReasoningLevel(lvl llm.ReasoningLevel) error {
 
 	if c.sessionStore != nil && c.session.ID != "" {
 		if err := c.sessionStore.Save(updatedSession); err != nil {
-			rollbackErr := c.assistant.SetReasoningLevel(prevLevel)
+			rollbackErr := c.modelClient.SetReasoningLevel(prevLevel)
 			if rollbackErr != nil {
 				return errors.Join(
 					fmt.Errorf("save session reasoning level: %w", err),
@@ -225,8 +225,8 @@ func (c *Conversation) CompactConversation(ctx context.Context) error {
 
 func (c *Conversation) NewConversation() error {
 	if c.sessionStore != nil && c.session.ID != "" {
-		model := c.assistant.Model()
-		reasoningLevel := c.assistant.ReasoningLevel()
+		model := c.modelClient.Model()
+		reasoningLevel := c.modelClient.ReasoningLevel()
 		metadata := session.Metadata{
 			Model: config.Model{
 				Provider: model.Provider,
@@ -338,7 +338,7 @@ func (c *Conversation) run(ctx context.Context, prompt string, events chan<- Eve
 			Messages:     append([]llm.Message(nil), c.session.Messages...),
 		}
 
-		predictionEventsCh, predictionErrCh := c.assistant.PredictNext(ctx, request)
+		predictionEventsCh, predictionErrCh := c.modelClient.PredictNext(ctx, request)
 
 		for event := range predictionEventsCh {
 			switch typedEvent := event.(type) {

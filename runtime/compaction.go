@@ -29,23 +29,23 @@ var (
 const defaultCompactKeepMessages = 12
 
 type DefaultCompactorConfig struct {
-	SessionID string
-	LLM       llm.Assistant
-	Now       func() time.Time
+	SessionID   string
+	ModelClient llm.ModelClient
+	Now         func() time.Time
 }
 
 func NewDefaultCompactor(cfg DefaultCompactorConfig) (*DefaultCompactor, error) {
 	return &DefaultCompactor{
-		sessionID: cfg.SessionID,
-		llm:       cfg.LLM,
-		now:       cfg.Now,
+		sessionID:   cfg.SessionID,
+		modelClient: cfg.ModelClient,
+		now:         cfg.Now,
 	}, nil
 }
 
 type DefaultCompactor struct {
-	sessionID string
-	llm       llm.Assistant
-	now       func() time.Time
+	sessionID   string
+	modelClient llm.ModelClient
+	now         func() time.Time
 }
 
 type compactionSummary struct {
@@ -106,7 +106,7 @@ func (c *DefaultCompactor) generateCompactionSummary(ctx context.Context, factSh
 		Text:      prompt.String(),
 	}
 
-	raw, err := c.llm.PredictNextStructured(ctx, llm.PredictNextStructuredRequest{
+	raw, err := c.modelClient.PredictNextStructured(ctx, llm.PredictNextStructuredRequest{
 		SystemPrompt: "You compact coding conversation context into precise structured JSON.",
 		Messages:     []llm.Message{msg},
 		Schema:       jsonschema.FromType[compactionSummary](),

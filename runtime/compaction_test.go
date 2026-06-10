@@ -13,7 +13,7 @@ import (
 
 func TestDefaultCompactor(t *testing.T) {
 	t.Run("replaces older messages with compacted context and keeps recent messages", func(t *testing.T) {
-		assistant := &fakeStructuredAssistant{raw: json.RawMessage(`{
+		modelClient := &fakeStructuredModelClient{raw: json.RawMessage(`{
 			"current_goal":"Implement compaction",
 			"user_preferences":["Use structured output"],
 			"decisions":["Keep recent messages"],
@@ -24,8 +24,8 @@ func TestDefaultCompactor(t *testing.T) {
 		}`)}
 		wantTime := time.Unix(1700000000, 0)
 		compactor, err := NewDefaultCompactor(DefaultCompactorConfig{
-			LLM: assistant,
-			Now: func() time.Time { return wantTime },
+			ModelClient: modelClient,
+			Now:         func() time.Time { return wantTime },
 		})
 		if err != nil {
 			t.Fatalf("NewDefaultCompactor() error = %v", err)
@@ -65,21 +65,21 @@ func TestDefaultCompactor(t *testing.T) {
 				t.Fatalf("message %d was not preserved", i)
 			}
 		}
-		if assistant.lastRequest.Schema == nil {
+		if modelClient.lastRequest.Schema == nil {
 			t.Fatal("structured schema = nil, want schema")
 		}
-		if len(assistant.lastRequest.Messages) != 1 {
-			t.Fatalf("structured messages = %d, want 1", len(assistant.lastRequest.Messages))
+		if len(modelClient.lastRequest.Messages) != 1 {
+			t.Fatalf("structured messages = %d, want 1", len(modelClient.lastRequest.Messages))
 		}
-		prompt := assistant.lastRequest.Messages[0].(llm.UserMessage).Text
+		prompt := modelClient.lastRequest.Messages[0].(llm.UserMessage).Text
 		if !strings.Contains(prompt, "Source facts") || !strings.Contains(prompt, "message 1") {
 			t.Fatalf("structured prompt missing fact sheet:\n%s", prompt)
 		}
 	})
 
 	t.Run("keeps_tool_call_with_recent_tool_result", func(t *testing.T) {
-		assistant := &fakeStructuredAssistant{raw: json.RawMessage(`{"current_goal":"goal"}`)}
-		compactor, err := NewDefaultCompactor(DefaultCompactorConfig{LLM: assistant})
+		modelClient := &fakeStructuredModelClient{raw: json.RawMessage(`{"current_goal":"goal"}`)}
+		compactor, err := NewDefaultCompactor(DefaultCompactorConfig{ModelClient: modelClient})
 		if err != nil {
 			t.Fatalf("NewDefaultCompactor() error = %v", err)
 		}
@@ -108,8 +108,8 @@ func TestDefaultCompactor(t *testing.T) {
 	})
 
 	t.Run("returns_error_when_not_enough_messages", func(t *testing.T) {
-		assistant := &fakeStructuredAssistant{raw: json.RawMessage(`{"current_goal":"goal"}`)}
-		compactor, err := NewDefaultCompactor(DefaultCompactorConfig{LLM: assistant})
+		modelClient := &fakeStructuredModelClient{raw: json.RawMessage(`{"current_goal":"goal"}`)}
+		compactor, err := NewDefaultCompactor(DefaultCompactorConfig{ModelClient: modelClient})
 		if err != nil {
 			t.Fatalf("NewDefaultCompactor() error = %v", err)
 		}
@@ -122,8 +122,8 @@ func TestDefaultCompactor(t *testing.T) {
 
 	t.Run("propagates_structured_prediction_error", func(t *testing.T) {
 		wantErr := errors.New("structured failed")
-		assistant := &fakeStructuredAssistant{err: wantErr}
-		compactor, err := NewDefaultCompactor(DefaultCompactorConfig{LLM: assistant})
+		modelClient := &fakeStructuredModelClient{err: wantErr}
+		compactor, err := NewDefaultCompactor(DefaultCompactorConfig{ModelClient: modelClient})
 		if err != nil {
 			t.Fatalf("NewDefaultCompactor() error = %v", err)
 		}
@@ -143,29 +143,29 @@ func makeCompactionMessages(count int) []llm.Message {
 	return messages
 }
 
-type fakeStructuredAssistant struct {
+type fakeStructuredModelClient struct {
 	raw         json.RawMessage
 	err         error
 	lastRequest llm.PredictNextStructuredRequest
 }
 
-func (f *fakeStructuredAssistant) Model() llm.Model {
+func (f *fakeStructuredModelClient) Model() llm.Model {
 	return llm.Model{Provider: "fake", Name: "structured"}
 }
 
-func (f *fakeStructuredAssistant) ReasoningLevel() llm.ReasoningLevel {
+func (f *fakeStructuredModelClient) ReasoningLevel() llm.ReasoningLevel {
 	return llm.ReasoningLevelOff
 }
 
-func (f *fakeStructuredAssistant) SetReasoningLevel(llm.ReasoningLevel) error {
+func (f *fakeStructuredModelClient) SetReasoningLevel(llm.ReasoningLevel) error {
 	return nil
 }
 
-func (f *fakeStructuredAssistant) PredictNext(context.Context, llm.PredictNextRequest) (<-chan llm.PredictionEvent, <-chan error) {
+func (f *fakeStructuredModelClient) PredictNext(context.Context, llm.PredictNextRequest) (<-chan llm.PredictionEvent, <-chan error) {
 	panic("not implemented")
 }
 
-func (f *fakeStructuredAssistant) PredictNextStructured(_ context.Context, req llm.PredictNextStructuredRequest) (json.RawMessage, error) {
+func (f *fakeStructuredModelClient) PredictNextStructured(_ context.Context, req llm.PredictNextStructuredRequest) (json.RawMessage, error) {
 	f.lastRequest = req
 	if f.err != nil {
 		return nil, f.err

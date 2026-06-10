@@ -95,9 +95,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	assistant, err := llm.LoadAssistant(model, level)
+	modelClient, err := llm.LoadModelClient(model, level)
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "failed to load LLM assistant: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "failed to load LLM model client: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -148,8 +148,8 @@ func main() {
 	}
 
 	compactor, err := runtime.NewDefaultCompactor(runtime.DefaultCompactorConfig{
-		LLM: assistant,
-		Now: func() time.Time { return time.Now() },
+		ModelClient: modelClient,
+		Now:         func() time.Time { return time.Now() },
 	})
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "failed to initialize compactor: %v\n", err)
@@ -174,7 +174,7 @@ func main() {
 
 	conv, err := runtime.NewConversation(runtime.ConversationConfig{
 		CWD:          workingDir,
-		Assistant:    assistant,
+		ModelClient:  modelClient,
 		Compactor:    compactor,
 		Tools:        tools,
 		SystemPrompt: systemPrompt,

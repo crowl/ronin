@@ -7,7 +7,7 @@ import (
 	"github.com/crowl/ronin/jsonschema"
 )
 
-type Assistant interface {
+type ModelClient interface {
 	Model() Model
 	ReasoningLevel() ReasoningLevel
 	SetReasoningLevel(ReasoningLevel) error

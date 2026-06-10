@@ -21,7 +21,7 @@ import (
 
 func TestNew(t *testing.T) {
 	t.Run("rejects nil tool", func(t *testing.T) {
-		_, err := runtime.NewConversation(runtime.ConversationConfig{Assistant: &fakeLLM{}, Tools: []runtime.Tool{nil}})
+		_, err := runtime.NewConversation(runtime.ConversationConfig{ModelClient: &fakeModelClient{}, Tools: []runtime.Tool{nil}})
 		if err == nil || !strings.Contains(err.Error(), "nil") {
 			t.Fatalf("New() error = %v, want nil tool error", err)
 		}
@@ -30,7 +30,7 @@ func TestNew(t *testing.T) {
 	t.Run("initializes context usage from latest restored assistant message", func(t *testing.T) {
 		wantUsage := llm.Usage{InputTokens: 30, OutputTokens: 12, CachedTokens: 5, TotalTokens: 42}
 		agt, err := runtime.NewConversation(runtime.ConversationConfig{
-			Assistant: &fakeLLM{},
+			ModelClient: &fakeModelClient{},
 			Session: session.Session{Messages: []llm.Message{
 				llm.AssistantMessage{Usage: llm.Usage{InputTokens: 1, OutputTokens: 2, TotalTokens: 3}},
 				llm.UserMessage{Text: "after first assistant"},
@@ -51,8 +51,8 @@ func TestNew(t *testing.T) {
 		messages[0] = llm.UserMessage{Text: "original"}
 
 		agt, err := runtime.NewConversation(runtime.ConversationConfig{
-			Assistant: &fakeLLM{},
-			Session:   session.Session{Messages: messages},
+			ModelClient: &fakeModelClient{},
+			Session:     session.Session{Messages: messages},
 		})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
@@ -68,7 +68,7 @@ func TestNew(t *testing.T) {
 func TestPromptLifecycle(t *testing.T) {
 	t.Run("llm error emits processing error and ended", func(t *testing.T) {
 		wantErr := errors.New("boom")
-		agt, err := runtime.NewConversation(runtime.ConversationConfig{Assistant: &fakeLLM{err: wantErr}})
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{ModelClient: &fakeModelClient{err: wantErr}})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -87,7 +87,7 @@ func TestPromptLifecycle(t *testing.T) {
 		toolErr := errors.New("tool failed")
 		tool := fakeTool{name: "fail", err: toolErr}
 		agt, err := runtime.NewConversation(runtime.ConversationConfig{
-			Assistant: &fakeLLM{eventBatches: [][]llm.PredictionEvent{
+			ModelClient: &fakeModelClient{eventBatches: [][]llm.PredictionEvent{
 				{
 					llm.BlockEnded{Block: llm.ToolCallBlock{ID: "call-1", Name: "fail", Arguments: json.RawMessage(`{}`)}},
 					llm.PredictionFinished{},
@@ -116,7 +116,7 @@ func TestPromptLifecycle(t *testing.T) {
 
 	t.Run("unknown tool call emits failed and ended", func(t *testing.T) {
 		agt, err := runtime.NewConversation(runtime.ConversationConfig{
-			Assistant: &fakeLLM{eventBatches: [][]llm.PredictionEvent{
+			ModelClient: &fakeModelClient{eventBatches: [][]llm.PredictionEvent{
 				{
 					llm.BlockEnded{Block: llm.ToolCallBlock{ID: "call-1", Name: "missing", Arguments: json.RawMessage(`{}`)}},
 					llm.PredictionFinished{},
@@ -145,7 +145,7 @@ func TestPromptLifecycle(t *testing.T) {
 	t.Run("configured clock controls timestamps", func(t *testing.T) {
 		want := time.Unix(1700000000, 123000000)
 		agt, err := runtime.NewConversation(runtime.ConversationConfig{
-			Assistant: &fakeLLM{events: []llm.PredictionEvent{
+			ModelClient: &fakeModelClient{events: []llm.PredictionEvent{
 				llm.TextDelta{Text: "hello"},
 				llm.BlockEnded{Block: llm.TextBlock{Text: "hello"}},
 				llm.PredictionFinished{},
@@ -172,7 +172,7 @@ func TestPromptLifecycle(t *testing.T) {
 	t.Run("incremental tool emits chunks before final result", func(t *testing.T) {
 		incrementalTool := fakeIncrementalTool{fakeTool: fakeTool{name: "stream", result: fakeResult{artifacts: []tool.Artifact{tool.ShellStreamArtifact{Stream: tool.ShellStreamStdout, Content: "final"}}}}, artifacts: []tool.Artifact{tool.ShellStreamArtifact{Stream: tool.ShellStreamStdout, Content: "live"}}}
 		agt, err := runtime.NewConversation(runtime.ConversationConfig{
-			Assistant: &fakeLLM{eventBatches: [][]llm.PredictionEvent{
+			ModelClient: &fakeModelClient{eventBatches: [][]llm.PredictionEvent{
 				{
 					llm.BlockEnded{Block: llm.ToolCallBlock{ID: "call-1", Name: "stream", Arguments: json.RawMessage(`{}`)}},
 					llm.PredictionFinished{},
@@ -228,8 +228,8 @@ func TestPromptLifecycle(t *testing.T) {
 func TestNewConversation(t *testing.T) {
 	t.Run("without persistence clears messages in memory", func(t *testing.T) {
 		agt, err := runtime.NewConversation(runtime.ConversationConfig{
-			Assistant: &fakeLLM{},
-			Session:   session.Session{Messages: []llm.Message{llm.UserMessage{Text: "old"}}},
+			ModelClient: &fakeModelClient{},
+			Session:     session.Session{Messages: []llm.Message{llm.UserMessage{Text: "old"}}},
 		})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
@@ -243,10 +243,10 @@ func TestNewConversation(t *testing.T) {
 		}
 	})
 
-	t.Run("uses assistant metadata when creating a new session", func(t *testing.T) {
+	t.Run("uses model client metadata when creating a new session", func(t *testing.T) {
 		store := &fakeSessionStore{sessions: map[string]session.Session{"sess-1": {ID: "sess-1"}}, activeID: "sess-1"}
 		agt, err := runtime.NewConversation(runtime.ConversationConfig{
-			Assistant:    &fakeLLM{model: llm.Model{Provider: "provider-a", Name: "model-a"}, reasoningLevel: llm.ReasoningLevelHigh},
+			ModelClient:  &fakeModelClient{model: llm.Model{Provider: "provider-a", Name: "model-a"}, reasoningLevel: llm.ReasoningLevelHigh},
 			SessionStore: store,
 			Session: session.Session{
 				ID:             "sess-1",
@@ -263,7 +263,7 @@ func TestNewConversation(t *testing.T) {
 			t.Fatalf("NewConversation() error = %v", err)
 		}
 		if got := store.sessions["new-sess-123"]; got.Model != (config.Model{Provider: "provider-a", Name: "model-a"}) || got.ReasoningLevel != string(llm.ReasoningLevelHigh) {
-			t.Fatalf("created session metadata = %#v, want assistant metadata", got)
+			t.Fatalf("created session metadata = %#v, want model client metadata", got)
 		}
 	})
 
@@ -274,7 +274,7 @@ func TestNewConversation(t *testing.T) {
 			clearErr: errors.New("clear failed"),
 		}
 		agt, err := runtime.NewConversation(runtime.ConversationConfig{
-			Assistant:    &fakeLLM{},
+			ModelClient:  &fakeModelClient{},
 			SessionStore: store,
 			Session:      session.Session{ID: "sess-1", Messages: []llm.Message{llm.UserMessage{Text: "old"}}},
 		})
@@ -300,7 +300,7 @@ func TestNewConversation(t *testing.T) {
 			createErr: errors.New("create failed"),
 		}
 		agt, err := runtime.NewConversation(runtime.ConversationConfig{
-			Assistant:    &fakeLLM{},
+			ModelClient:  &fakeModelClient{},
 			SessionStore: store,
 			Session:      session.Session{ID: "sess-1", Messages: []llm.Message{llm.UserMessage{Text: "old"}}},
 		})
@@ -323,8 +323,8 @@ func TestNewConversation(t *testing.T) {
 func TestSessionMutationTransactions(t *testing.T) {
 	t.Run("SwitchModel save failure leaves active model unchanged", func(t *testing.T) {
 		model := llm.Model{Provider: "test", Name: "switch-model-failure"}
-		if err := llm.RegisterModel(model, func(level llm.ReasoningLevel) (llm.Assistant, error) {
-			return &fakeLLM{model: model, reasoningLevel: level}, nil
+		if err := llm.RegisterModel(model, func(level llm.ReasoningLevel) (llm.ModelClient, error) {
+			return &fakeModelClient{model: model, reasoningLevel: level}, nil
 		}); err != nil {
 			t.Fatalf("RegisterModel() error = %v", err)
 		}
@@ -336,7 +336,7 @@ func TestSessionMutationTransactions(t *testing.T) {
 		}
 		originalModel := llm.Model{Provider: "test", Name: "original"}
 		agt, err := runtime.NewConversation(runtime.ConversationConfig{
-			Assistant:    &fakeLLM{model: originalModel},
+			ModelClient:  &fakeModelClient{model: originalModel},
 			SessionStore: store,
 			Session:      store.sessions[store.activeID],
 		})
@@ -361,8 +361,8 @@ func TestSessionMutationTransactions(t *testing.T) {
 
 	t.Run("SwitchReasoningLevel save failure rolls back runtime level", func(t *testing.T) {
 		store := &fakeSessionStore{sessions: map[string]session.Session{"sess-1": {ID: "sess-1", ReasoningLevel: string(llm.ReasoningLevelOff)}}, activeID: "sess-1", saveErr: errors.New("save failed")}
-		original := &fakeLLM{model: llm.Model{Provider: "test", Name: "reasoning"}, reasoningLevel: llm.ReasoningLevelOff}
-		agt, err := runtime.NewConversation(runtime.ConversationConfig{Assistant: original, SessionStore: store, Session: store.sessions[store.activeID]})
+		original := &fakeModelClient{model: llm.Model{Provider: "test", Name: "reasoning"}, reasoningLevel: llm.ReasoningLevelOff}
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{ModelClient: original, SessionStore: store, Session: store.sessions[store.activeID]})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -385,9 +385,9 @@ func TestCompactConversation(t *testing.T) {
 		compacted := []llm.Message{llm.UserMessage{Text: "compacted"}}
 		compactor := &fakeCompactor{messages: compacted}
 		agt, err := runtime.NewConversation(runtime.ConversationConfig{
-			Assistant: &fakeLLM{},
-			Compactor: compactor,
-			Session:   session.Session{Messages: []llm.Message{llm.UserMessage{Text: "old"}}},
+			ModelClient: &fakeModelClient{},
+			Compactor:   compactor,
+			Session:     session.Session{Messages: []llm.Message{llm.UserMessage{Text: "old"}}},
 		})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
@@ -408,9 +408,9 @@ func TestCompactConversation(t *testing.T) {
 	t.Run("preserves_messages_on_failure", func(t *testing.T) {
 		wantErr := errors.New("compact failed")
 		agt, err := runtime.NewConversation(runtime.ConversationConfig{
-			Assistant: &fakeLLM{},
-			Compactor: &fakeCompactor{err: wantErr},
-			Session:   session.Session{Messages: []llm.Message{llm.UserMessage{Text: "old"}}},
+			ModelClient: &fakeModelClient{},
+			Compactor:   &fakeCompactor{err: wantErr},
+			Session:     session.Session{Messages: []llm.Message{llm.UserMessage{Text: "old"}}},
 		})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
@@ -429,9 +429,9 @@ func TestCompactConversation(t *testing.T) {
 	t.Run("propagates_caller_context", func(t *testing.T) {
 		compactor := &fakeCompactor{messages: []llm.Message{llm.UserMessage{Text: "compacted"}}}
 		agt, err := runtime.NewConversation(runtime.ConversationConfig{
-			Assistant: &fakeLLM{},
-			Compactor: compactor,
-			Session:   session.Session{Messages: []llm.Message{llm.UserMessage{Text: "old"}}},
+			ModelClient: &fakeModelClient{},
+			Compactor:   compactor,
+			Session:     session.Session{Messages: []llm.Message{llm.UserMessage{Text: "old"}}},
 		})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
@@ -448,7 +448,7 @@ func TestCompactConversation(t *testing.T) {
 	})
 
 	t.Run("requires_configured_compactor", func(t *testing.T) {
-		agt, err := runtime.NewConversation(runtime.ConversationConfig{Assistant: &fakeLLM{}})
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{ModelClient: &fakeModelClient{}})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -527,7 +527,7 @@ func writeFile(t *testing.T, path string, content string) {
 	}
 }
 
-type fakeLLM struct {
+type fakeModelClient struct {
 	events         []llm.PredictionEvent
 	eventBatches   [][]llm.PredictionEvent
 	model          llm.Model
@@ -536,13 +536,13 @@ type fakeLLM struct {
 	predictCalls   int
 }
 
-func (f *fakeLLM) Model() llm.Model                   { return f.model }
-func (f *fakeLLM) ReasoningLevel() llm.ReasoningLevel { return f.reasoningLevel }
-func (f *fakeLLM) SetReasoningLevel(level llm.ReasoningLevel) error {
+func (f *fakeModelClient) Model() llm.Model                   { return f.model }
+func (f *fakeModelClient) ReasoningLevel() llm.ReasoningLevel { return f.reasoningLevel }
+func (f *fakeModelClient) SetReasoningLevel(level llm.ReasoningLevel) error {
 	f.reasoningLevel = level
 	return nil
 }
-func (f *fakeLLM) PredictNext(_ context.Context, _ llm.PredictNextRequest) (<-chan llm.PredictionEvent, <-chan error) {
+func (f *fakeModelClient) PredictNext(_ context.Context, _ llm.PredictNextRequest) (<-chan llm.PredictionEvent, <-chan error) {
 	events := f.events
 	if f.eventBatches != nil {
 		if f.predictCalls < len(f.eventBatches) {
@@ -566,7 +566,7 @@ func (f *fakeLLM) PredictNext(_ context.Context, _ llm.PredictNextRequest) (<-ch
 	f.predictCalls++
 	return eventsCh, errsCh
 }
-func (f *fakeLLM) PredictNextStructured(context.Context, llm.PredictNextStructuredRequest) (json.RawMessage, error) {
+func (f *fakeModelClient) PredictNextStructured(context.Context, llm.PredictNextStructuredRequest) (json.RawMessage, error) {
 	panic("not implemented")
 }
 
@@ -672,7 +672,7 @@ func (f *fakeSessionStore) Clear(workingDir string) error {
 func TestSessionPersistence(t *testing.T) {
 	t.Run("loads messages from ActiveSession when Messages is empty", func(t *testing.T) {
 		activeSess := session.Session{ID: "sess-1", Messages: []llm.Message{llm.UserMessage{Text: "restored text"}}}
-		agt, err := runtime.NewConversation(runtime.ConversationConfig{Assistant: &fakeLLM{}, Session: activeSess})
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{ModelClient: &fakeModelClient{}, Session: activeSess})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -684,7 +684,7 @@ func TestSessionPersistence(t *testing.T) {
 
 	t.Run("saves session after successful Prompt", func(t *testing.T) {
 		store := &fakeSessionStore{sessions: map[string]session.Session{"sess-1": {ID: "sess-1"}}, activeID: "sess-1"}
-		agt, err := runtime.NewConversation(runtime.ConversationConfig{Assistant: &fakeLLM{events: []llm.PredictionEvent{llm.TextDelta{Text: "reply"}, llm.BlockEnded{Block: llm.TextBlock{Text: "reply"}}, llm.PredictionFinished{}}}, SessionStore: store, Session: store.sessions[store.activeID]})
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{ModelClient: &fakeModelClient{events: []llm.PredictionEvent{llm.TextDelta{Text: "reply"}, llm.BlockEnded{Block: llm.TextBlock{Text: "reply"}}, llm.PredictionFinished{}}}, SessionStore: store, Session: store.sessions[store.activeID]})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -704,7 +704,7 @@ func TestSessionPersistence(t *testing.T) {
 
 	t.Run("emits SessionSaveFailed event and returns error on save failure", func(t *testing.T) {
 		store := &fakeSessionStore{sessions: map[string]session.Session{"sess-1": {ID: "sess-1"}}, activeID: "sess-1", saveErr: errors.New("disk full")}
-		agt, err := runtime.NewConversation(runtime.ConversationConfig{Assistant: &fakeLLM{events: []llm.PredictionEvent{llm.TextDelta{Text: "reply"}, llm.BlockEnded{Block: llm.TextBlock{Text: "reply"}}, llm.PredictionFinished{}}}, SessionStore: store, Session: store.sessions[store.activeID]})
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{ModelClient: &fakeModelClient{events: []llm.PredictionEvent{llm.TextDelta{Text: "reply"}, llm.BlockEnded{Block: llm.TextBlock{Text: "reply"}}, llm.PredictionFinished{}}}, SessionStore: store, Session: store.sessions[store.activeID]})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -719,10 +719,10 @@ func TestSessionPersistence(t *testing.T) {
 
 	t.Run("saves session after SwitchModel and SwitchReasoningLevel", func(t *testing.T) {
 		store := &fakeSessionStore{sessions: map[string]session.Session{"sess-1": {ID: "sess-1"}}, activeID: "sess-1"}
-		_ = llm.RegisterModel(llm.Model{Provider: "openai", Name: "gpt-4"}, func(lvl llm.ReasoningLevel) (llm.Assistant, error) {
-			return &fakeLLM{model: llm.Model{Provider: "openai", Name: "gpt-4"}, reasoningLevel: lvl}, nil
+		_ = llm.RegisterModel(llm.Model{Provider: "openai", Name: "gpt-4"}, func(lvl llm.ReasoningLevel) (llm.ModelClient, error) {
+			return &fakeModelClient{model: llm.Model{Provider: "openai", Name: "gpt-4"}, reasoningLevel: lvl}, nil
 		})
-		agt, err := runtime.NewConversation(runtime.ConversationConfig{Assistant: &fakeLLM{model: llm.Model{Provider: "openai", Name: "gpt-3.5"}}, SessionStore: store, Session: store.sessions[store.activeID]})
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{ModelClient: &fakeModelClient{model: llm.Model{Provider: "openai", Name: "gpt-3.5"}}, SessionStore: store, Session: store.sessions[store.activeID]})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -744,7 +744,7 @@ func TestSessionPersistence(t *testing.T) {
 
 	t.Run("clears session and creates a new one on NewConversation", func(t *testing.T) {
 		store := &fakeSessionStore{sessions: map[string]session.Session{"sess-1": {ID: "sess-1"}}, activeID: "sess-1"}
-		agt, err := runtime.NewConversation(runtime.ConversationConfig{Assistant: &fakeLLM{}, SessionStore: store, Session: store.sessions[store.activeID]})
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{ModelClient: &fakeModelClient{}, SessionStore: store, Session: store.sessions[store.activeID]})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}

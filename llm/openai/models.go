@@ -28,7 +28,7 @@ func Setup(apiKey string) error {
 	}
 	for _, model := range models {
 		registeredModel := model
-		if err := llm.RegisterModel(registeredModel, func(level llm.ReasoningLevel) (llm.Assistant, error) {
+		if err := llm.RegisterModel(registeredModel, func(level llm.ReasoningLevel) (llm.ModelClient, error) {
 			newLLM, err := NewLLM(LLMConfig{
 				APIKey:         apiKey,
 				Model:          registeredModel,
@@ -63,7 +63,7 @@ func SetupOAuth() error {
 	}
 	for _, model := range models {
 		registeredModel := model
-		if err := llm.RegisterModel(registeredModel, func(level llm.ReasoningLevel) (llm.Assistant, error) {
+		if err := llm.RegisterModel(registeredModel, func(level llm.ReasoningLevel) (llm.ModelClient, error) {
 			newLLM, err := NewLLM(LLMConfig{
 				APIKey:         "oauth-placeholder",
 				Model:          registeredModel,
