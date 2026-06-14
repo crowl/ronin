@@ -427,15 +427,70 @@ func (p statusBar) Lines(width int, theme Theme) []string {
 	if p.Model.ContextWindow > 0 {
 		contextPercent = min(100.0, (float64(contextUsed)*100)/float64(p.Model.ContextWindow))
 	}
-	usageParts = append(usageParts, fmt.Sprintf("%.1f%%/%d", contextPercent, p.Model.ContextWindow))
+	contextPercentText := fmt.Sprintf("%.1f%%/%d", contextPercent, p.Model.ContextWindow)
 	usageStatus := strings.Join(usageParts, " ")
 
 	modelStatus := fmt.Sprintf("%s %s", p.Model, p.ReasoningLevel)
 
 	return []string{
 		theme.UI.StatusBar.Apply(text.Fill(cwdStatus, width)),
-		theme.UI.StatusBar.Apply(twoColumnsLine(usageStatus, modelStatus, width)),
+		statusBarUsageLine(usageStatus, contextPercentText, contextPercent, modelStatus, width, theme),
 	}
+}
+
+func statusBarUsageLine(usageStatus string, contextPercentText string, contextPercent float64, modelStatus string, width int, theme Theme) string {
+	if width <= 0 {
+		return ""
+	}
+
+	modelStatus = text.Truncate(modelStatus, width)
+	modelWidth := text.VisibleLen(modelStatus)
+	statusColumnWidth := width - modelWidth
+	statusContentWidth := statusColumnWidth
+	if modelWidth > 0 && statusContentWidth > 0 {
+		statusContentWidth--
+	}
+	if statusContentWidth < 0 {
+		statusContentWidth = 0
+	}
+
+	return statusBarUsageStatus(usageStatus, contextPercentText, contextPercent, statusContentWidth, statusColumnWidth, theme) + theme.UI.StatusBar.Apply(modelStatus)
+}
+
+func statusBarUsageStatus(usageStatus string, contextPercentText string, contextPercent float64, contentWidth int, columnWidth int, theme Theme) string {
+	if columnWidth <= 0 {
+		return ""
+	}
+
+	fullStatus := usageStatus
+	if contextPercentText != "" {
+		fullStatus += " " + contextPercentText
+	}
+	if text.VisibleLen(fullStatus) > contentWidth {
+		return theme.UI.StatusBar.Apply(text.Fill(text.Truncate(fullStatus, contentWidth), columnWidth))
+	}
+
+	var b strings.Builder
+	b.WriteString(theme.UI.StatusBar.Apply(usageStatus))
+	if contextPercentText != "" {
+		b.WriteString(theme.UI.StatusBar.Apply(" "))
+		b.WriteString(statusBarContextPercentStyle(contextPercent, theme).Apply(contextPercentText))
+	}
+	visible := text.VisibleLen(b.String())
+	if visible < columnWidth {
+		b.WriteString(theme.UI.StatusBar.Apply(strings.Repeat(" ", columnWidth-visible)))
+	}
+	return b.String()
+}
+
+func statusBarContextPercentStyle(contextPercent float64, theme Theme) Style {
+	if contextPercent >= 80 {
+		return theme.UI.StatusBar.Merge(theme.Box.Error.Container)
+	}
+	if contextPercent >= 50 {
+		return theme.UI.StatusBar.Merge(theme.Text.Normal)
+	}
+	return theme.UI.StatusBar
 }
 
 func twoColumnsLine(left string, right string, width int) string {

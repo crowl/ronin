@@ -198,33 +198,48 @@ func TestTUIRendering(t *testing.T) {
 		}
 	})
 
-	t.Run("status bar context usage uses latest context usage", func(t *testing.T) {
-		lines := statusBar{
-			CWD:            ".",
-			Model:          llm.Model{Provider: "test", Name: "model", ContextWindow: 1000},
-			ReasoningLevel: llm.ReasoningLevelOff,
-			ContextUsage:   llm.Usage{InputTokens: 100, OutputTokens: 50, CachedTokens: 25},
-		}.Lines(120, DefaultTheme())
+	t.Run("status bar context usage colors percentage by threshold", func(t *testing.T) {
+		theme := Theme{
+			Text: TextTheme{
+				Normal: Style{FG: "green"},
+			},
+			UI: UITheme{
+				StatusBar: Style{FG: "blue"},
+			},
+			Box: BoxTheme{
+				Error: BoxStyle{Container: Style{FG: "red"}},
+			},
+		}
 
-		if len(lines) != 2 {
-			t.Fatalf("line count\ngot:  %d\nwant: 2", len(lines))
+		assertPercentStyle := func(t *testing.T, usage llm.Usage, tokenText string, percentText string, style Style) {
+			t.Helper()
+
+			lines := statusBar{
+				CWD:            ".",
+				Model:          llm.Model{Provider: "test", Name: "model", ContextWindow: 1000},
+				ReasoningLevel: llm.ReasoningLevelOff,
+				ContextUsage:   usage,
+			}.Lines(120, theme)
+
+			if len(lines) != 2 {
+				t.Fatalf("line count\ngot:  %d\nwant: 2", len(lines))
+			}
+			usageLine := lines[1]
+			styledPercent := style.Apply(percentText)
+			if !strings.Contains(usageLine, styledPercent) {
+				t.Fatalf("status usage line missing percentage with expected style\nline: %q\nwant segment: %q", usageLine, styledPercent)
+			}
+			if !strings.Contains(usageLine, tokenText) {
+				t.Fatalf("status usage line missing token counts\nline: %q\nwant: %q", usageLine, tokenText)
+			}
+			if !strings.Contains(usageLine, "test:model off") {
+				t.Fatalf("status usage line missing model details: %q", usageLine)
+			}
 		}
-		usageLine := lines[1]
-		if !strings.Contains(usageLine, "↑100") {
-			t.Fatalf("status usage line missing context input tokens: %q", usageLine)
-		}
-		if !strings.Contains(usageLine, "↓50") {
-			t.Fatalf("status usage line missing context output tokens: %q", usageLine)
-		}
-		if !strings.Contains(usageLine, "R25") {
-			t.Fatalf("status usage line missing context cached tokens: %q", usageLine)
-		}
-		if !strings.Contains(usageLine, "15.0%/1000") {
-			t.Fatalf("status usage line used wrong context usage: %q", usageLine)
-		}
-		if !strings.Contains(usageLine, "test:model off") {
-			t.Fatalf("status usage line missing model details: %q", usageLine)
-		}
+
+		assertPercentStyle(t, llm.Usage{InputTokens: 100, OutputTokens: 50, CachedTokens: 25}, "↑100 ↓50 R25", "15.0%/1000", theme.UI.StatusBar)
+		assertPercentStyle(t, llm.Usage{InputTokens: 500}, "↑500 ↓0 R0", "50.0%/1000", theme.UI.StatusBar.Merge(theme.Text.Normal))
+		assertPercentStyle(t, llm.Usage{InputTokens: 800}, "↑800 ↓0 R0", "80.0%/1000", theme.UI.StatusBar.Merge(theme.Box.Error.Container))
 	})
 }
 
