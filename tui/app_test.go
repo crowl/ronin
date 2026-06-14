@@ -237,9 +237,52 @@ func TestTUIRendering(t *testing.T) {
 			}
 		}
 
-		assertPercentStyle(t, llm.Usage{InputTokens: 100, OutputTokens: 50, CachedTokens: 25}, "↑100 ↓50 R25", "15.0%/1000", theme.UI.StatusBar)
-		assertPercentStyle(t, llm.Usage{InputTokens: 500}, "↑500 ↓0 R0", "50.0%/1000", theme.UI.StatusBar.Merge(theme.Text.Normal))
-		assertPercentStyle(t, llm.Usage{InputTokens: 800}, "↑800 ↓0 R0", "80.0%/1000", theme.UI.StatusBar.Merge(theme.Box.Error.Container))
+		assertPercentStyle(t, llm.Usage{InputTokens: 100, OutputTokens: 50, CachedTokens: 25}, "↑100 ↓50 R25", "15.0%/1.0K", theme.UI.StatusBar)
+		assertPercentStyle(t, llm.Usage{InputTokens: 500}, "↑500 ↓0 R0", "50.0%/1.0K", theme.UI.StatusBar.Merge(theme.Text.Normal))
+		assertPercentStyle(t, llm.Usage{InputTokens: 800}, "↑800 ↓0 R0", "80.0%/1.0K", theme.UI.StatusBar.Merge(theme.Box.Error.Container))
+	})
+
+	t.Run("status bar abbreviates thousands in token counts and context window", func(t *testing.T) {
+		cases := []struct {
+			name   string
+			tokens int
+			want   string
+		}{
+			{name: "below thousand", tokens: 999, want: "999"},
+			{name: "exact thousand", tokens: 1000, want: "1.0K"},
+			{name: "one decimal", tokens: 2356, want: "2.3K"},
+			{name: "trailing hundred", tokens: 2900, want: "2.9K"},
+			{name: "ten thousands", tokens: 14678, want: "14.6K"},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				if got := statusBarTokenCountText(tc.tokens); got != tc.want {
+					t.Fatalf("statusBarTokenCountText(%d) = %q, want %q", tc.tokens, got, tc.want)
+				}
+			})
+		}
+
+		lines := statusBar{
+			CWD:            ".",
+			Model:          llm.Model{Provider: "test", Name: "model", ContextWindow: 14678},
+			ReasoningLevel: llm.ReasoningLevelOff,
+			ContextUsage: llm.Usage{
+				InputTokens:  2356,
+				OutputTokens: 2900,
+				CachedTokens: 1000,
+			},
+		}.Lines(120, Theme{})
+
+		if len(lines) != 2 {
+			t.Fatalf("line count\ngot:  %d\nwant: 2", len(lines))
+		}
+		usageLine := lines[1]
+		for _, want := range []string{"↑2.3K ↓2.9K R1.0K", "35.8%/14.6K"} {
+			if !strings.Contains(usageLine, want) {
+				t.Fatalf("status usage line missing %q: %q", want, usageLine)
+			}
+		}
 	})
 }
 

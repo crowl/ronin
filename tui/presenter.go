@@ -417,9 +417,9 @@ func (p statusBar) Lines(width int, theme Theme) []string {
 	}
 
 	usageParts := []string{
-		fmt.Sprintf("↑%d", p.ContextUsage.InputTokens),
-		fmt.Sprintf("↓%d", p.ContextUsage.OutputTokens),
-		fmt.Sprintf("R%d", p.ContextUsage.CachedTokens),
+		fmt.Sprintf("↑%s", statusBarTokenCountText(p.ContextUsage.InputTokens)),
+		fmt.Sprintf("↓%s", statusBarTokenCountText(p.ContextUsage.OutputTokens)),
+		fmt.Sprintf("R%s", statusBarTokenCountText(p.ContextUsage.CachedTokens)),
 	}
 
 	contextUsed := p.ContextUsage.InputTokens + p.ContextUsage.OutputTokens
@@ -427,7 +427,7 @@ func (p statusBar) Lines(width int, theme Theme) []string {
 	if p.Model.ContextWindow > 0 {
 		contextPercent = min(100.0, (float64(contextUsed)*100)/float64(p.Model.ContextWindow))
 	}
-	contextPercentText := fmt.Sprintf("%.1f%%/%d", contextPercent, p.Model.ContextWindow)
+	contextPercentText := fmt.Sprintf("%.1f%%/%s", contextPercent, statusBarTokenCountText(int(p.Model.ContextWindow)))
 	usageStatus := strings.Join(usageParts, " ")
 
 	modelStatus := fmt.Sprintf("%s %s", p.Model, p.ReasoningLevel)
@@ -436,6 +436,13 @@ func (p statusBar) Lines(width int, theme Theme) []string {
 		theme.UI.StatusBar.Apply(text.Fill(cwdStatus, width)),
 		statusBarUsageLine(usageStatus, contextPercentText, contextPercent, modelStatus, width, theme),
 	}
+}
+
+func statusBarTokenCountText(tokens int) string {
+	if tokens < 1000 {
+		return fmt.Sprintf("%d", tokens)
+	}
+	return fmt.Sprintf("%d.%dK", tokens/1000, (tokens%1000)/100)
 }
 
 func statusBarUsageLine(usageStatus string, contextPercentText string, contextPercent float64, modelStatus string, width int, theme Theme) string {
