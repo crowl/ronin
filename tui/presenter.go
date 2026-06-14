@@ -64,8 +64,9 @@ func renderBoxLinesAt(block box, width int, theme Theme, toolsExpanded bool, now
 	case toolCallBox:
 		boxStyle := theme.Box.ToolCall
 		lines = append(lines, boxStyle.ApplyBody(text.Fill("", width)))
-		header := " " + typedBlock.Title
-		lines = append(lines, boxStyle.ApplyTitle(text.Fill(header, width)))
+		for _, header := range text.Wrap(" ", typedBlock.Title, width) {
+			lines = append(lines, boxStyle.ApplyTitle(text.Fill(header, width)))
+		}
 		lines = append(lines, boxStyle.ApplyBody(text.Fill("", width)))
 		var artifactLines []string
 		for _, artifact := range typedBlock.Artifacts {

@@ -2,7 +2,10 @@ package tui
 
 import (
 	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/crowl/ronin/tui/internal/text"
 )
 
 func TestRenderAssistantThinkingBoxBoldUsesThinkingTextColor(t *testing.T) {
@@ -28,6 +31,47 @@ func TestRenderAssistantThinkingBoxBoldUsesThinkingTextColor(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("thinking box bold style\ngot:  %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestRenderToolCallBoxWrapsLongTitleWithTitleStyle(t *testing.T) {
+	theme := Theme{
+		Box: BoxTheme{
+			ToolCall: BoxStyle{
+				Container: Style{FG: "white"},
+				Title:     Style{FG: "red", Bold: true},
+				Meta:      Style{FG: "blue"},
+			},
+		},
+	}
+	box := toolCallBox{Title: "$ go test ./tui -run TestRenderToolCallBox Wraps Long Title"}
+
+	got := renderBoxLinesAt(box, 24, theme, false, box.StartedAt)
+	wantTitleLines := []string{
+		" $ go test ./tui -run",
+		" TestRenderToolCallBox",
+		" Wraps Long Title",
+	}
+	if len(got) < 1+len(wantTitleLines) {
+		t.Fatalf("tool call lines too short\ngot: %#v", got)
+	}
+
+	var gotTitle string
+	for i, want := range wantTitleLines {
+		line := got[i+1]
+		plain := strings.TrimRight(text.StripANSI(line), " ")
+		if plain != want {
+			t.Fatalf("wrapped title line %d\ngot:  %q\nwant: %q", i, plain, want)
+		}
+		if !strings.HasPrefix(line, "\x1b[1;31") {
+			t.Fatalf("wrapped title line %d does not use title style\ngot: %q", i, line)
+		}
+		gotTitle += strings.ReplaceAll(strings.TrimSpace(plain), " ", "")
+	}
+
+	wantTitle := strings.ReplaceAll(box.Title, " ", "")
+	if gotTitle != wantTitle {
+		t.Fatalf("wrapped title content\ngot:  %q\nwant: %q", gotTitle, wantTitle)
 	}
 }
 
