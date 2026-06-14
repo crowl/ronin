@@ -125,7 +125,7 @@ func LightTheme() Theme {
 		Text:            paletteDark,
 		TextMuted:       paletteMuted,
 		TextStrong:      paletteDarkest,
-		TextThinking:    paletteMid,
+		TextThinking:    paletteDim,
 		Surface:         paletteLightest,
 		SurfaceRaised:   paletteLighter,
 		SurfaceSelected: paletteLight,

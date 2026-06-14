@@ -202,10 +202,10 @@ func TestBuiltInThemeLogicalColors(t *testing.T) {
 						Container: tui.Style{FG: "#343A40"},
 					},
 					AssistantThinking: tui.BoxStyle{
-						Container: tui.Style{FG: "#ADB5BD"},
-						Body:      tui.Style{FG: "#ADB5BD", Italic: true},
-						Strong:    tui.Style{FG: "#ADB5BD", Bold: true},
-						Emphasis:  tui.Style{FG: "#ADB5BD", Italic: true},
+						Container: tui.Style{FG: "#495057"},
+						Body:      tui.Style{FG: "#495057", Italic: true},
+						Strong:    tui.Style{FG: "#495057", Bold: true},
+						Emphasis:  tui.Style{FG: "#495057", Italic: true},
 						Code:      tui.Style{FG: "#343A40", Bold: true},
 					},
 					ToolCall: tui.BoxStyle{
@@ -234,6 +234,19 @@ func TestBuiltInThemeLogicalColors(t *testing.T) {
 				t.Fatalf("theme colors\ngot:  %#v\nwant: %#v", tt.theme, tt.want)
 			}
 		})
+	}
+}
+
+func TestLightThemeThinkingTextUsesReadableMutedColor(t *testing.T) {
+	light := tui.LightTheme().Box.AssistantThinking
+	if got, want := light.Container.FG, tui.Color("#495057"); got != want {
+		t.Fatalf("light thinking container color\ngot:  %q\nwant: %q", got, want)
+	}
+	if got, want := light.Body.FG, tui.Color("#495057"); got != want {
+		t.Fatalf("light thinking body color\ngot:  %q\nwant: %q", got, want)
+	}
+	if got, want := tui.DarkTheme().Box.AssistantThinking.Body.FG, tui.Color("#ADB5BD"); got != want {
+		t.Fatalf("dark thinking body color changed\ngot:  %q\nwant: %q", got, want)
 	}
 }
 
@@ -343,12 +356,27 @@ func assertThemeColorIsInverse(t *testing.T, path string, light, dark tui.Color,
 	if isSemanticAccentPath(path) {
 		return
 	}
+	if isContextualContrastPath(path) {
+		return
+	}
 	want, ok := inverse[light]
 	if !ok {
 		return
 	}
 	if dark != want {
 		t.Fatalf("%s is not palette inverse\nlight: %q\ndark:  %q\nwant:  %q", path, light, dark, want)
+	}
+}
+
+func isContextualContrastPath(path string) bool {
+	switch path {
+	case "theme.Box.AssistantThinking.Container.FG",
+		"theme.Box.AssistantThinking.Body.FG",
+		"theme.Box.AssistantThinking.Strong.FG",
+		"theme.Box.AssistantThinking.Emphasis.FG":
+		return true
+	default:
+		return false
 	}
 }
 
