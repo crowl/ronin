@@ -86,10 +86,12 @@ func (m AssistantMessage) Thinking() string {
 }
 
 type ToolOutputMessage struct {
-	Timestamp  time.Time
-	ToolName   string
-	ToolCallID string
-	ToolOutput string
+	Timestamp               time.Time
+	ToolName                string
+	ToolCallID              string
+	ToolOutput              string
+	RawToolOutput           string
+	ToolOutputWasSummarized bool
 }
 
 type ToolErrorMessage struct {

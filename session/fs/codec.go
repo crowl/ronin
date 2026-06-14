@@ -25,16 +25,18 @@ type sessionJSON struct {
 }
 
 type messageJSON struct {
-	Type       string      `json:"type"`
-	Timestamp  time.Time   `json:"timestamp"`
-	Text       string      `json:"text,omitempty"`
-	Blocks     []blockJSON `json:"blocks,omitempty"`
-	StopReason string      `json:"stop_reason,omitempty"`
-	Usage      llm.Usage   `json:"usage,omitempty"`
-	ToolName   string      `json:"tool_name,omitempty"`
-	ToolCallID string      `json:"tool_call_id,omitempty"`
-	ToolOutput string      `json:"tool_output,omitempty"`
-	Error      string      `json:"error,omitempty"`
+	Type                    string      `json:"type"`
+	Timestamp               time.Time   `json:"timestamp"`
+	Text                    string      `json:"text,omitempty"`
+	Blocks                  []blockJSON `json:"blocks,omitempty"`
+	StopReason              string      `json:"stop_reason,omitempty"`
+	Usage                   llm.Usage   `json:"usage,omitempty"`
+	ToolName                string      `json:"tool_name,omitempty"`
+	ToolCallID              string      `json:"tool_call_id,omitempty"`
+	ToolOutput              string      `json:"tool_output,omitempty"`
+	RawToolOutput           string      `json:"raw_tool_output,omitempty"`
+	ToolOutputWasSummarized bool        `json:"tool_output_was_summarized,omitempty"`
+	Error                   string      `json:"error,omitempty"`
 }
 
 type blockJSON struct {
@@ -130,7 +132,7 @@ func encodeMessage(message llm.Message) (messageJSON, error) {
 		}
 		return encoded, nil
 	case llm.ToolOutputMessage:
-		return messageJSON{Type: "tool_output", Timestamp: m.Timestamp, ToolName: m.ToolName, ToolCallID: m.ToolCallID, ToolOutput: m.ToolOutput}, nil
+		return messageJSON{Type: "tool_output", Timestamp: m.Timestamp, ToolName: m.ToolName, ToolCallID: m.ToolCallID, ToolOutput: m.ToolOutput, RawToolOutput: m.RawToolOutput, ToolOutputWasSummarized: m.ToolOutputWasSummarized}, nil
 	case llm.ToolErrorMessage:
 		return messageJSON{Type: "tool_error", Timestamp: m.Timestamp, ToolName: m.ToolName, ToolCallID: m.ToolCallID, Error: errorText(m.Error)}, nil
 	case llm.ErrorMessage:
@@ -160,7 +162,7 @@ func decodeMessage(encoded messageJSON) (llm.Message, error) {
 		}
 		return message, nil
 	case "tool_output":
-		return llm.ToolOutputMessage{Timestamp: encoded.Timestamp, ToolName: encoded.ToolName, ToolCallID: encoded.ToolCallID, ToolOutput: encoded.ToolOutput}, nil
+		return llm.ToolOutputMessage{Timestamp: encoded.Timestamp, ToolName: encoded.ToolName, ToolCallID: encoded.ToolCallID, ToolOutput: encoded.ToolOutput, RawToolOutput: encoded.RawToolOutput, ToolOutputWasSummarized: encoded.ToolOutputWasSummarized}, nil
 	case "tool_error":
 		return llm.ToolErrorMessage{Timestamp: encoded.Timestamp, ToolName: encoded.ToolName, ToolCallID: encoded.ToolCallID, Error: errors.New(encoded.Error)}, nil
 	case "error":
