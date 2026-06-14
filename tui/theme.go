@@ -83,33 +83,40 @@ const (
 	paletteDim      Color = "#495057"
 	paletteDark     Color = "#343A40"
 	paletteDarkest  Color = "#212529"
+
+	darkGreen  Color = "#238636"
+	darkRed    Color = "#F85149"
+	lightGreen Color = "#2DA44E"
+	lightRed   Color = "#CF222E"
 )
 
 type themeColors struct {
 	Text            Color
 	TextMuted       Color
 	TextStrong      Color
+	TextThinking    Color
 	Surface         Color
 	SurfaceRaised   Color
 	SurfaceSelected Color
 	Separator       Color
-	DiffAdded       Color
-	DiffRemoved     Color
-	Error           Color
+	AccentText      Color
+	Green           Color
+	Red             Color
 }
 
 func DarkTheme() Theme {
 	return themeFromColors(themeColors{
 		Text:            paletteLighter,
-		TextMuted:       paletteSoft,
+		TextMuted:       paletteMuted,
 		TextStrong:      paletteLightest,
+		TextThinking:    paletteMid,
 		Surface:         paletteDarkest,
 		SurfaceRaised:   paletteDark,
 		SurfaceSelected: paletteDim,
 		Separator:       paletteMid,
-		DiffAdded:       "color-22",
-		DiffRemoved:     "color-52",
-		Error:           "color-203",
+		AccentText:      paletteLightest,
+		Green:           darkGreen,
+		Red:             darkRed,
 	})
 }
 
@@ -118,13 +125,14 @@ func LightTheme() Theme {
 		Text:            paletteDark,
 		TextMuted:       paletteMuted,
 		TextStrong:      paletteDarkest,
+		TextThinking:    paletteMid,
 		Surface:         paletteLightest,
 		SurfaceRaised:   paletteLighter,
 		SurfaceSelected: paletteLight,
 		Separator:       paletteMid,
-		DiffAdded:       "color-194",
-		DiffRemoved:     "color-224",
-		Error:           "color-124",
+		AccentText:      paletteLightest,
+		Green:           lightGreen,
+		Red:             lightRed,
 	})
 }
 
@@ -155,10 +163,10 @@ func themeFromColors(c themeColors) Theme {
 				Container: Style{FG: c.Text},
 			},
 			AssistantThinking: BoxStyle{
-				Container: Style{FG: c.TextMuted},
-				Body:      Style{FG: c.TextMuted, Italic: true},
-				Strong:    Style{FG: c.Text, Bold: true},
-				Emphasis:  Style{FG: c.TextMuted, Italic: true},
+				Container: Style{FG: c.TextThinking},
+				Body:      Style{FG: c.TextThinking, Italic: true},
+				Strong:    Style{FG: c.TextThinking, Bold: true},
+				Emphasis:  Style{FG: c.TextThinking, Italic: true},
 				Code:      Style{FG: c.Text, Bold: true},
 			},
 			ToolCall: BoxStyle{
@@ -166,15 +174,15 @@ func themeFromColors(c themeColors) Theme {
 				Title:       Style{FG: c.TextStrong, Bold: true},
 				Meta:        Style{FG: c.TextMuted},
 				Muted:       Style{FG: c.TextMuted},
-				DiffAdded:   Style{FG: c.Text, BG: c.DiffAdded},
-				DiffRemoved: Style{FG: c.Text, BG: c.DiffRemoved},
+				DiffAdded:   Style{FG: c.AccentText, BG: c.Green},
+				DiffRemoved: Style{FG: c.AccentText, BG: c.Red},
 			},
 			System: BoxStyle{
 				Container: Style{FG: c.TextMuted},
 				Muted:     Style{FG: c.TextMuted},
 			},
 			Error: BoxStyle{
-				Container: Style{FG: c.Error},
+				Container: Style{FG: c.Red},
 			},
 		},
 	}
@@ -240,11 +248,11 @@ func (b BoxStyle) ApplyDiffRemoved(v string) string {
 func (b BoxStyle) TextTheme(fallback TextTheme) TextTheme {
 	base := b.Container.Merge(b.Body)
 	return TextTheme{
-		Normal:   base.Merge(fallback.Normal),
-		Muted:    base.Merge(fallback.Muted).Merge(b.Muted),
-		Strong:   base.Merge(fallback.Strong).Merge(b.Strong),
-		Emphasis: base.Merge(fallback.Emphasis).Merge(b.Emphasis),
-		Code:     base.Merge(fallback.Code).Merge(b.Code),
+		Normal:   fallback.Normal.Merge(base),
+		Muted:    fallback.Muted.Merge(base).Merge(b.Muted),
+		Strong:   fallback.Strong.Merge(base).Merge(b.Strong),
+		Emphasis: fallback.Emphasis.Merge(base).Merge(b.Emphasis),
+		Code:     fallback.Code.Merge(base).Merge(b.Code),
 	}
 }
 

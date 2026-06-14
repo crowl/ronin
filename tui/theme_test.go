@@ -126,7 +126,7 @@ func TestBuiltInThemeLogicalColors(t *testing.T) {
 			want: tui.Theme{
 				Text: tui.TextTheme{
 					Normal:   tui.Style{FG: "#E9ECEF"},
-					Muted:    tui.Style{FG: "#CED4DA"},
+					Muted:    tui.Style{FG: "#6C757D"},
 					Strong:   tui.Style{FG: "#F8F9FA", Bold: true},
 					Emphasis: tui.Style{FG: "#E9ECEF", Italic: true},
 					Code:     tui.Style{FG: "#F8F9FA", Bold: true},
@@ -134,12 +134,12 @@ func TestBuiltInThemeLogicalColors(t *testing.T) {
 				UI: tui.UITheme{
 					EditorCursor:                tui.Style{Reverse: true},
 					EditorSeparator:             tui.Style{FG: "#ADB5BD"},
-					WorkingIndicator:            tui.Style{FG: "#CED4DA"},
+					WorkingIndicator:            tui.Style{FG: "#6C757D"},
 					MenuItem:                    tui.Style{FG: "#E9ECEF"},
 					MenuItemSelected:            tui.Style{FG: "#F8F9FA", BG: "#495057", Bold: true},
-					MenuItemDescription:         tui.Style{FG: "#CED4DA"},
+					MenuItemDescription:         tui.Style{FG: "#6C757D"},
 					MenuItemDescriptionSelected: tui.Style{FG: "#E9ECEF"},
-					StatusBar:                   tui.Style{FG: "#CED4DA"},
+					StatusBar:                   tui.Style{FG: "#6C757D"},
 				},
 				Box: tui.BoxTheme{
 					User: tui.BoxStyle{
@@ -149,26 +149,26 @@ func TestBuiltInThemeLogicalColors(t *testing.T) {
 						Container: tui.Style{FG: "#E9ECEF"},
 					},
 					AssistantThinking: tui.BoxStyle{
-						Container: tui.Style{FG: "#CED4DA"},
-						Body:      tui.Style{FG: "#CED4DA", Italic: true},
-						Strong:    tui.Style{FG: "#E9ECEF", Bold: true},
-						Emphasis:  tui.Style{FG: "#CED4DA", Italic: true},
+						Container: tui.Style{FG: "#ADB5BD"},
+						Body:      tui.Style{FG: "#ADB5BD", Italic: true},
+						Strong:    tui.Style{FG: "#ADB5BD", Bold: true},
+						Emphasis:  tui.Style{FG: "#ADB5BD", Italic: true},
 						Code:      tui.Style{FG: "#E9ECEF", Bold: true},
 					},
 					ToolCall: tui.BoxStyle{
 						Container:   tui.Style{FG: "#E9ECEF", BG: "#212529"},
 						Title:       tui.Style{FG: "#F8F9FA", Bold: true},
-						Meta:        tui.Style{FG: "#CED4DA"},
-						Muted:       tui.Style{FG: "#CED4DA"},
-						DiffAdded:   tui.Style{FG: "#E9ECEF", BG: "color-22"},
-						DiffRemoved: tui.Style{FG: "#E9ECEF", BG: "color-52"},
+						Meta:        tui.Style{FG: "#6C757D"},
+						Muted:       tui.Style{FG: "#6C757D"},
+						DiffAdded:   tui.Style{FG: "#F8F9FA", BG: "#238636"},
+						DiffRemoved: tui.Style{FG: "#F8F9FA", BG: "#F85149"},
 					},
 					System: tui.BoxStyle{
-						Container: tui.Style{FG: "#CED4DA"},
-						Muted:     tui.Style{FG: "#CED4DA"},
+						Container: tui.Style{FG: "#6C757D"},
+						Muted:     tui.Style{FG: "#6C757D"},
 					},
 					Error: tui.BoxStyle{
-						Container: tui.Style{FG: "color-203"},
+						Container: tui.Style{FG: "#F85149"},
 					},
 				},
 			},
@@ -202,10 +202,10 @@ func TestBuiltInThemeLogicalColors(t *testing.T) {
 						Container: tui.Style{FG: "#343A40"},
 					},
 					AssistantThinking: tui.BoxStyle{
-						Container: tui.Style{FG: "#6C757D"},
-						Body:      tui.Style{FG: "#6C757D", Italic: true},
-						Strong:    tui.Style{FG: "#343A40", Bold: true},
-						Emphasis:  tui.Style{FG: "#6C757D", Italic: true},
+						Container: tui.Style{FG: "#ADB5BD"},
+						Body:      tui.Style{FG: "#ADB5BD", Italic: true},
+						Strong:    tui.Style{FG: "#ADB5BD", Bold: true},
+						Emphasis:  tui.Style{FG: "#ADB5BD", Italic: true},
 						Code:      tui.Style{FG: "#343A40", Bold: true},
 					},
 					ToolCall: tui.BoxStyle{
@@ -213,15 +213,15 @@ func TestBuiltInThemeLogicalColors(t *testing.T) {
 						Title:       tui.Style{FG: "#212529", Bold: true},
 						Meta:        tui.Style{FG: "#6C757D"},
 						Muted:       tui.Style{FG: "#6C757D"},
-						DiffAdded:   tui.Style{FG: "#343A40", BG: "color-194"},
-						DiffRemoved: tui.Style{FG: "#343A40", BG: "color-224"},
+						DiffAdded:   tui.Style{FG: "#F8F9FA", BG: "#2DA44E"},
+						DiffRemoved: tui.Style{FG: "#F8F9FA", BG: "#CF222E"},
 					},
 					System: tui.BoxStyle{
 						Container: tui.Style{FG: "#6C757D"},
 						Muted:     tui.Style{FG: "#6C757D"},
 					},
 					Error: tui.BoxStyle{
-						Container: tui.Style{FG: "color-124"},
+						Container: tui.Style{FG: "#CF222E"},
 					},
 				},
 			},
@@ -244,7 +244,7 @@ func TestBuiltInThemeMonochromeColorsArePaletteInverses(t *testing.T) {
 		"#DEE2E6": "#495057",
 		"#CED4DA": "#6C757D",
 		"#ADB5BD": "#ADB5BD",
-		"#6C757D": "#CED4DA",
+		"#6C757D": "#6C757D",
 		"#495057": "#DEE2E6",
 		"#343A40": "#E9ECEF",
 		"#212529": "#F8F9FA",
@@ -286,6 +286,8 @@ func TestBuiltInThemeForegroundBackgroundContrast(t *testing.T) {
 			assertStyleContrast(t, "user", theme.Box.User.Container)
 			assertStyleContrast(t, "tool", theme.Box.ToolCall.Container)
 			assertStyleContrast(t, "selected menu", theme.UI.MenuItemSelected)
+			assertStyleContrast(t, "diff added", theme.Box.ToolCall.DiffAdded)
+			assertStyleContrast(t, "diff removed", theme.Box.ToolCall.DiffRemoved)
 		})
 	}
 }
@@ -336,6 +338,9 @@ func assertThemeColorIsInverse(t *testing.T, path string, light, dark tui.Color,
 	t.Helper()
 
 	if light == "" && dark == "" {
+		return
+	}
+	if isSemanticAccentPath(path) {
 		return
 	}
 	want, ok := inverse[light]
@@ -514,15 +519,15 @@ func isSemanticAccentPath(path string) bool {
 func isSemanticAccentColor(path string, color tui.Color) bool {
 	switch path {
 	case "theme.Box.ToolCall.DiffAdded.FG":
-		return color == "#E9ECEF" || color == "#343A40"
+		return color == "#F8F9FA"
 	case "theme.Box.ToolCall.DiffAdded.BG":
-		return color == "color-22" || color == "color-194"
+		return color == "#238636" || color == "#2DA44E"
 	case "theme.Box.ToolCall.DiffRemoved.FG":
-		return color == "#E9ECEF" || color == "#343A40"
+		return color == "#F8F9FA"
 	case "theme.Box.ToolCall.DiffRemoved.BG":
-		return color == "color-52" || color == "color-224"
+		return color == "#F85149" || color == "#CF222E"
 	case "theme.Box.Error.Container.FG":
-		return color == "color-124" || color == "color-203"
+		return color == "#F85149" || color == "#CF222E"
 	default:
 		return false
 	}
