@@ -43,6 +43,13 @@ func TestToolCall(t *testing.T) {
 		}
 	})
 
+	t.Run("parameters do not expose max bytes", func(t *testing.T) {
+		schema := readfile.New(t.TempDir(), fsutil.NewReadCache()).Parameters()
+		if _, ok := schema.Properties["max_bytes"]; ok {
+			t.Fatal("Parameters() exposes max_bytes")
+		}
+	})
+
 	t.Run("auto mode omits repeated full content", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "hello.txt")

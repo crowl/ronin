@@ -35,7 +35,7 @@ type Args struct {
 	Mode        string `json:"mode,omitempty" jsonschema:"Read mode: auto, full, or metadata. Defaults to auto; auto may omit repeated unchanged full reads."`
 	KnownSHA256 string `json:"known_sha256,omitempty" jsonschema:"Optional SHA-256 already known by the model. Auto mode may omit content when it matches."`
 	Range       *Range `json:"range,omitempty" jsonschema:"Optional 1-based line range to return."`
-	MaxBytes    int64  `json:"max_bytes,omitempty" jsonschema:"Optional maximum bytes to read. Defaults to the read limit when omitted or zero."`
+	MaxBytes    int64  `json:"max_bytes,omitempty" jsonschema:"-"`
 }
 
 func (a Args) Validate() error {
