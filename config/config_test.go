@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -68,7 +69,7 @@ func TestLoad(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Load() error = %v", err)
 		}
-		if settings != defaultSettings() {
+		if !reflect.DeepEqual(settings, defaultSettings()) {
 			t.Fatalf("Load() = %#v, want %#v", settings, defaultSettings())
 		}
 
@@ -82,7 +83,7 @@ func TestLoad(t *testing.T) {
 		if err := json.Unmarshal(data, &written); err != nil {
 			t.Fatalf("written config is not valid JSON: %v", err)
 		}
-		if written != defaultSettings() {
+		if !reflect.DeepEqual(written, defaultSettings()) {
 			t.Fatalf("written config = %#v, want %#v", written, defaultSettings())
 		}
 	})
@@ -102,11 +103,12 @@ func TestLoad(t *testing.T) {
 		}
 
 		want := config.Settings{
-			Model:          config.Model{Provider: "anthropic", Name: "claude"},
-			ReasoningLevel: "high",
-			MaxTurns:       10,
+			Model:                   config.Model{Provider: "anthropic", Name: "claude"},
+			ReasoningLevel:          "high",
+			MaxTurns:                10,
+			ToolOutputSummarization: config.ToolOutputSummarization{},
 		}
-		if settings != want {
+		if !reflect.DeepEqual(settings, want) {
 			t.Fatalf("Load() = %#v, want %#v", settings, want)
 		}
 	})
@@ -123,7 +125,7 @@ func TestLoad(t *testing.T) {
 		if err != nil {
 			t.Fatalf("second Load() error = %v", err)
 		}
-		if first != second {
+		if !reflect.DeepEqual(first, second) {
 			t.Fatalf("round-trip mismatch: first = %#v, second = %#v", first, second)
 		}
 	})
@@ -186,6 +188,13 @@ func defaultSettings() config.Settings {
 		Model:          config.Model{Provider: "openai", Name: "gpt-5.5"},
 		ReasoningLevel: "medium",
 		MaxTurns:       512,
+		ToolOutputSummarization: config.ToolOutputSummarization{
+			Enabled:          false,
+			MinBytes:         16_000,
+			MaxSummaryTokens: 1_000,
+			SummarizeErrors:  false,
+			ExcludedTools:    []string{"read_file", "edit_file", "write_file"},
+		},
 	}
 }
 

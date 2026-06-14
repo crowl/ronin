@@ -172,16 +172,24 @@ func main() {
 	activeSession.Model = config.Model{Provider: model.Provider, Name: model.Name}
 	activeSession.ReasoningLevel = string(level)
 
+	summarizer, summarizationPolicy, err := toolOutputSummarization(settings)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "failed to initialize tool output summarization: %v\n", err)
+		os.Exit(1)
+	}
+
 	conv, err := runtime.NewConversation(runtime.ConversationConfig{
-		CWD:          workingDir,
-		ModelClient:  modelClient,
-		Compactor:    compactor,
-		Tools:        tools,
-		SystemPrompt: systemPrompt,
-		MaxTurns:     settings.MaxTurns,
-		Now:          func() time.Time { return time.Now() },
-		SessionStore: sessionStore,
-		Session:      activeSession,
+		CWD:                           workingDir,
+		ModelClient:                   modelClient,
+		Compactor:                     compactor,
+		ToolOutputSummarizer:          summarizer,
+		ToolOutputSummarizationPolicy: summarizationPolicy,
+		Tools:                         tools,
+		SystemPrompt:                  systemPrompt,
+		MaxTurns:                      settings.MaxTurns,
+		Now:                           func() time.Time { return time.Now() },
+		SessionStore:                  sessionStore,
+		Session:                       activeSession,
 	})
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "failed to initialize conversation: %v\n", err)
@@ -205,6 +213,45 @@ func main() {
 	}
 
 	os.Exit(0)
+}
+
+func toolOutputSummarization(settings config.Settings) (runtime.ToolOutputSummarizer, runtime.ToolOutputSummarizationPolicy, error) {
+	policy := runtime.DefaultToolOutputSummarizationPolicy()
+	cfg := settings.ToolOutputSummarization
+	policy.Enabled = cfg.Enabled
+	if cfg.MinBytes > 0 {
+		policy.MinBytes = cfg.MinBytes
+	}
+	if cfg.MaxSummaryTokens > 0 {
+		policy.MaxSummaryTokens = cfg.MaxSummaryTokens
+	}
+	policy.SummarizeErrors = cfg.SummarizeErrors
+	if cfg.ExcludedTools != nil {
+		policy.ExcludedTools = make(map[string]bool, len(cfg.ExcludedTools))
+		for _, name := range cfg.ExcludedTools {
+			if name != "" {
+				policy.ExcludedTools[name] = true
+			}
+		}
+	}
+
+	if !policy.Enabled {
+		return nil, policy, nil
+	}
+
+	model := llm.Model{Provider: cfg.Model.Provider, Name: cfg.Model.Name}
+	summaryClient, err := llm.LoadModelClient(model, llm.ReasoningLevelOff)
+	if err != nil {
+		return nil, policy, fmt.Errorf("load summary model client: %w", err)
+	}
+	summarizer, err := runtime.NewDefaultToolOutputSummarizer(runtime.DefaultToolOutputSummarizerConfig{
+		ModelClient: summaryClient,
+		Now:         func() time.Time { return time.Now() },
+	})
+	if err != nil {
+		return nil, policy, err
+	}
+	return summarizer, policy, nil
 }
 
 func startupSession(store session.Store, workingDir string, metadata session.Metadata, resume bool) (session.Session, error) {

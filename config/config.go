@@ -25,10 +25,20 @@ type Model struct {
 	Name     string `json:"name"`
 }
 
+type ToolOutputSummarization struct {
+	Enabled          bool     `json:"enabled"`
+	Model            Model    `json:"model"`
+	MinBytes         int      `json:"min_bytes"`
+	MaxSummaryTokens int      `json:"max_summary_tokens"`
+	SummarizeErrors  bool     `json:"summarize_errors"`
+	ExcludedTools    []string `json:"excluded_tools"`
+}
+
 type Settings struct {
-	Model          Model  `json:"model"`
-	ReasoningLevel string `json:"reasoning_level"`
-	MaxTurns       int    `json:"max_turns"`
+	Model                   Model                   `json:"model"`
+	ReasoningLevel          string                  `json:"reasoning_level"`
+	MaxTurns                int                     `json:"max_turns"`
+	ToolOutputSummarization ToolOutputSummarization `json:"tool_output_summarization"`
 }
 
 // Load resolves the config directory, writes a default config.json on first
@@ -122,6 +132,13 @@ func defaultSettings() Settings {
 		},
 		ReasoningLevel: defaultReasoningLevel,
 		MaxTurns:       defaultMaxTurns,
+		ToolOutputSummarization: ToolOutputSummarization{
+			Enabled:          false,
+			MinBytes:         16_000,
+			MaxSummaryTokens: 1_000,
+			SummarizeErrors:  false,
+			ExcludedTools:    []string{"read_file", "edit_file", "write_file"},
+		},
 	}
 }
 
@@ -146,6 +163,20 @@ func validate(settings Settings) error {
 	}
 	if settings.MaxTurns <= 0 {
 		return fmt.Errorf("max_turns must be greater than 0, got %d", settings.MaxTurns)
+	}
+	if settings.ToolOutputSummarization.Enabled {
+		if settings.ToolOutputSummarization.Model.Provider == "" {
+			return errors.New("tool_output_summarization.model.provider must not be empty when enabled")
+		}
+		if settings.ToolOutputSummarization.Model.Name == "" {
+			return errors.New("tool_output_summarization.model.name must not be empty when enabled")
+		}
+	}
+	if settings.ToolOutputSummarization.MinBytes < 0 {
+		return fmt.Errorf("tool_output_summarization.min_bytes must be non-negative, got %d", settings.ToolOutputSummarization.MinBytes)
+	}
+	if settings.ToolOutputSummarization.MaxSummaryTokens < 0 {
+		return fmt.Errorf("tool_output_summarization.max_summary_tokens must be non-negative, got %d", settings.ToolOutputSummarization.MaxSummaryTokens)
 	}
 	return nil
 }
