@@ -46,6 +46,22 @@ func TestFromType(t *testing.T) {
 		assertRequired(t, schema.Required, []string{"required"})
 	})
 
+	t.Run("jsonschema dash tag skips field", func(t *testing.T) {
+		type args struct {
+			Visible string `json:"visible"`
+			Hidden  string `json:"hidden,omitempty" jsonschema:"-"`
+		}
+
+		schema := jsonschema.FromType[args]()
+		if _, ok := schema.Properties["visible"]; !ok {
+			t.Fatal("visible property missing")
+		}
+		if _, ok := schema.Properties["hidden"]; ok {
+			t.Fatal("hidden property present")
+		}
+		assertRequired(t, schema.Required, []string{"visible"})
+	})
+
 	t.Run("nested structs and slices", func(t *testing.T) {
 		type child struct {
 			Name string `json:"name"`

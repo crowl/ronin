@@ -72,6 +72,10 @@ func structSchema(t reflect.Type) *Schema {
 			continue
 		}
 
+		if strings.TrimSpace(field.Tag.Get("jsonschema")) == "-" {
+			continue
+		}
+
 		name, options, skip := parseJSONTag(field)
 		if skip {
 			continue
