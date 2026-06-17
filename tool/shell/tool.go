@@ -19,7 +19,7 @@ import (
 type Args struct {
 	Command        string            `json:"command" jsonschema:"Command passed to sh -c."`
 	Workdir        string            `json:"workdir,omitempty" jsonschema:"Working directory. Relative paths resolve from the current working directory; absolute paths are allowed."`
-	TimeoutMS      int               `json:"timeout_ms,omitempty" jsonschema:"Timeout in milliseconds. Defaults to 30000 and is capped at 90000."`
+	TimeoutMS      int               `json:"timeout_ms,omitempty" jsonschema:"Timeout in milliseconds. Defaults to 300000 and is capped at 900000."`
 	Stdin          string            `json:"stdin,omitempty" jsonschema:"Optional standard input for the command."`
 	Env            map[string]string `json:"env,omitempty" jsonschema:"Optional extra environment variables. Invalid names are ignored."`
 	MaxOutputBytes int64             `json:"max_output_bytes,omitempty" jsonschema:"Maximum bytes to capture from stdout and stderr. Extra output is truncated."`
@@ -109,8 +109,8 @@ func (t *Tool) CallTitle(rawArgs json.RawMessage) (string, error) {
 }
 
 const (
-	defaultTimeout        = 30_000 * time.Millisecond
-	maxTimeout            = 90_000 * time.Millisecond
+	defaultTimeout        = 5 * time.Minute
+	maxTimeout            = 15 * time.Minute
 	cleanupTimeout        = 2_000 * time.Millisecond
 	defaultMaxOutputBytes = 128 * 1024
 	maxOutputBytes        = 8 * 1024 * 1024
