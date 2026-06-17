@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crowl/ronin/acp"
 	"github.com/crowl/ronin/config"
 	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/llm/anthropic"
@@ -28,12 +29,14 @@ import (
 )
 
 func main() {
+	var acpMode bool
 	var resume bool
 	var prompt string
 	var workingDir string
 	var modelFlag string
 	var reasoningLevelFlag string
 
+	flag.BoolVar(&acpMode, "acp", false, "Run an ACP server over stdin/stdout.")
 	flag.BoolVar(&resume, "resume", false, "Load the active session for the working directory instead of starting a fresh session.")
 	flag.StringVar(&prompt, "prompt", "", "Prompt to run without launching the TUI.")
 	flag.StringVar(&workingDir, "working_dir", ".", "Working directory. Defaults to the current directory.")
@@ -164,7 +167,7 @@ func main() {
 	activeSession, err := startupSession(sessionStore, workingDir, session.Metadata{
 		Model:          settings.Model,
 		ReasoningLevel: settings.ReasoningLevel,
-	}, resume)
+	}, resume || acpMode)
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
@@ -194,6 +197,22 @@ func main() {
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "failed to initialize conversation: %v\n", err)
 		os.Exit(1)
+	}
+
+	if acpMode {
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
+		defer cancel()
+
+		if err := acp.Serve(ctx, acp.Config{
+			Conversation: conv,
+			Input:        os.Stdin,
+			Output:       os.Stdout,
+			Log:          os.Stderr,
+		}); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
 	}
 
 	if prompt != "" {
