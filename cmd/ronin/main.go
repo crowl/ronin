@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -164,55 +165,129 @@ func main() {
 		Now: func() time.Time { return time.Now() },
 	})
 
-	activeSession, err := startupSession(sessionStore, workingDir, session.Metadata{
-		Model:          settings.Model,
-		ReasoningLevel: settings.ReasoningLevel,
-	}, resume || acpMode)
-	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
-		os.Exit(1)
-	}
-	activeSession.Model = config.Model{Provider: model.Provider, Name: model.Name}
-	activeSession.ReasoningLevel = string(level)
-
 	summarizer, summarizationPolicy, err := toolOutputSummarization(settings)
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "failed to initialize tool output summarization: %v\n", err)
 		os.Exit(1)
 	}
 
-	conv, err := runtime.NewConversation(runtime.ConversationConfig{
-		CWD:                           workingDir,
-		ModelClient:                   modelClient,
-		Compactor:                     compactor,
-		ToolOutputSummarizer:          summarizer,
-		ToolOutputSummarizationPolicy: summarizationPolicy,
-		Tools:                         tools,
-		SystemPrompt:                  systemPrompt,
-		MaxTurns:                      settings.MaxTurns,
-		Now:                           func() time.Time { return time.Now() },
-		SessionStore:                  sessionStore,
-		Session:                       activeSession,
-	})
-	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "failed to initialize conversation: %v\n", err)
-		os.Exit(1)
+	// buildConversation creates a conversation for an existing session record.
+	// Each conversation owns its own model client so per-session model and
+	// reasoning switches stay isolated.
+	buildConversation := func(activeSession session.Session) (*runtime.Conversation, error) {
+		client, err := llm.LoadModelClient(model, level)
+		if err != nil {
+			return nil, fmt.Errorf("load model client: %w", err)
+		}
+		activeSession.Model = config.Model{Provider: model.Provider, Name: model.Name}
+		activeSession.ReasoningLevel = string(level)
+		return runtime.NewConversation(runtime.ConversationConfig{
+			CWD:                           workingDir,
+			ModelClient:                   client,
+			Compactor:                     compactor,
+			ToolOutputSummarizer:          summarizer,
+			ToolOutputSummarizationPolicy: summarizationPolicy,
+			Tools:                         tools,
+			SystemPrompt:                  systemPrompt,
+			MaxTurns:                      settings.MaxTurns,
+			Now:                           func() time.Time { return time.Now() },
+			SessionStore:                  sessionStore,
+			Session:                       activeSession,
+		})
 	}
 
 	if acpMode {
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
 		defer cancel()
 
+		newConversation := func() (acp.Conversation, error) {
+			activeSession, err := sessionStore.Create(workingDir, session.Metadata{
+				Model:          settings.Model,
+				ReasoningLevel: settings.ReasoningLevel,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("create session: %w", err)
+			}
+			conv, err := buildConversation(activeSession)
+			if err != nil {
+				return nil, err
+			}
+			return conv, nil
+		}
+
+		loadConversation := func(sessionID string) (acp.Conversation, bool, error) {
+			activeSession, ok, err := sessionStore.Load(sessionID)
+			if err != nil {
+				return nil, false, fmt.Errorf("load session: %w", err)
+			}
+			if !ok {
+				return nil, false, nil
+			}
+			if !sameWorkingDir(activeSession.WorkingDir, workingDir) {
+				return nil, false, nil
+			}
+			conv, err := buildConversation(activeSession)
+			if err != nil {
+				return nil, false, err
+			}
+			return conv, true, nil
+		}
+
+		absWorkingDir, err := filepath.Abs(workingDir)
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "resolve working directory: %v\n", err)
+			os.Exit(1)
+		}
+
+		listSessions := func(cwd string) ([]acp.SessionSummary, error) {
+			if cwd != "" && !sameWorkingDir(cwd, absWorkingDir) {
+				return nil, nil
+			}
+			refs, err := sessionStore.List(absWorkingDir)
+			if err != nil {
+				return nil, err
+			}
+			summaries := make([]acp.SessionSummary, 0, len(refs))
+			for _, ref := range refs {
+				summaries = append(summaries, acp.SessionSummary{
+					SessionID: ref.ID,
+					CWD:       absWorkingDir,
+					Title:     ref.Title,
+					UpdatedAt: ref.UpdatedAt,
+				})
+			}
+			return summaries, nil
+		}
+
 		if err := acp.Serve(ctx, acp.Config{
-			Conversation: conv,
-			Input:        os.Stdin,
-			Output:       os.Stdout,
-			Log:          os.Stderr,
+			NewConversation:  newConversation,
+			LoadConversation: loadConversation,
+			DeleteSession:    sessionStore.Delete,
+			ListSessions:     listSessions,
+			CWD:              workingDir,
+			Input:            os.Stdin,
+			Output:           os.Stdout,
+			Log:              os.Stderr,
 		}); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
 			os.Exit(1)
 		}
 		os.Exit(0)
+	}
+
+	activeSession, err := startupSession(sessionStore, workingDir, session.Metadata{
+		Model:          settings.Model,
+		ReasoningLevel: settings.ReasoningLevel,
+	}, resume)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(1)
+	}
+
+	conv, err := buildConversation(activeSession)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "failed to initialize conversation: %v\n", err)
+		os.Exit(1)
 	}
 
 	if prompt != "" {
@@ -289,6 +364,18 @@ func startupSession(store session.Store, workingDir string, metadata session.Met
 		return session.Session{}, fmt.Errorf("failed to create session: %w", err)
 	}
 	return activeSession, nil
+}
+
+func sameWorkingDir(a, b string) bool {
+	absA, err := filepath.Abs(a)
+	if err != nil {
+		return false
+	}
+	absB, err := filepath.Abs(b)
+	if err != nil {
+		return false
+	}
+	return filepath.Clean(absA) == filepath.Clean(absB)
 }
 
 func parseModelFlag(value string) (config.Model, error) {
