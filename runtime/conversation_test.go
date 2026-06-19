@@ -393,32 +393,6 @@ func TestNewConversation(t *testing.T) {
 		}
 	})
 
-	t.Run("preserves existing messages when clear fails", func(t *testing.T) {
-		store := &fakeSessionStore{
-			sessions: map[string]session.Session{"sess-1": {ID: "sess-1"}},
-			activeID: "sess-1",
-			clearErr: errors.New("clear failed"),
-		}
-		agt, err := runtime.NewConversation(runtime.ConversationConfig{
-			ModelClient:  &fakeModelClient{},
-			SessionStore: store,
-			Session:      session.Session{ID: "sess-1", Messages: []llm.Message{llm.UserMessage{Text: "old"}}},
-		})
-		if err != nil {
-			t.Fatalf("New() error = %v", err)
-		}
-
-		if err := agt.NewConversation(); err == nil || !strings.Contains(err.Error(), "clear session") {
-			t.Fatalf("NewConversation() error = %v, want clear session error", err)
-		}
-		if got := agt.Messages(); len(got) != 1 || got[0].(llm.UserMessage).Text != "old" {
-			t.Fatalf("messages = %#v, want original", got)
-		}
-		if got := agt.ContextUsage(); got != (llm.Usage{}) {
-			t.Fatalf("ContextUsage() = %#v, want zero", got)
-		}
-	})
-
 	t.Run("preserves existing messages when create fails", func(t *testing.T) {
 		store := &fakeSessionStore{
 			sessions:  map[string]session.Session{"sess-1": {ID: "sess-1"}},
@@ -769,7 +743,6 @@ type fakeSessionStore struct {
 	sessions  map[string]session.Session
 	activeID  string
 	saveErr   error
-	clearErr  error
 	createErr error
 }
 
@@ -824,9 +797,6 @@ func (f *fakeSessionStore) Delete(id string) error {
 	return nil
 }
 func (f *fakeSessionStore) Clear(workingDir string) error {
-	if f.clearErr != nil {
-		return f.clearErr
-	}
 	f.activeID = ""
 	f.sessions = nil
 	return nil
@@ -862,6 +832,35 @@ func TestSessionPersistence(t *testing.T) {
 		}
 		if saved.Messages[0].(llm.UserMessage).Text != "hello" {
 			t.Fatalf("expected first message to be 'hello', got: %q", saved.Messages[0].(llm.UserMessage).Text)
+		}
+	})
+
+	t.Run("derives session title from first prompt", func(t *testing.T) {
+		store := &fakeSessionStore{sessions: map[string]session.Session{"sess-1": {ID: "sess-1", Title: "New session"}}, activeID: "sess-1"}
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{ModelClient: &fakeModelClient{events: []llm.PredictionEvent{llm.TextDelta{Text: "reply"}, llm.BlockEnded{Block: llm.TextBlock{Text: "reply"}}, llm.PredictionFinished{}}}, SessionStore: store, Session: store.sessions[store.activeID]})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		events, errs := agt.Prompt(t.Context(), "Add a login page")
+		_ = collectEvents(events)
+		if err := <-errs; err != nil {
+			t.Fatalf("Prompt() error = %v", err)
+		}
+		if got := store.sessions["sess-1"].Title; got != "Add a login page" {
+			t.Fatalf("title = %q, want %q", got, "Add a login page")
+		}
+		if got := agt.SessionTitle(); got != "Add a login page" {
+			t.Fatalf("SessionTitle() = %q, want %q", got, "Add a login page")
+		}
+
+		// A second prompt must not overwrite the established title.
+		events, errs = agt.Prompt(t.Context(), "Now add logout")
+		_ = collectEvents(events)
+		if err := <-errs; err != nil {
+			t.Fatalf("Prompt() error = %v", err)
+		}
+		if got := store.sessions["sess-1"].Title; got != "Add a login page" {
+			t.Fatalf("title after second prompt = %q, want unchanged", got)
 		}
 	})
 
@@ -905,7 +904,7 @@ func TestSessionPersistence(t *testing.T) {
 		}
 	})
 
-	t.Run("clears session and creates a new one on NewConversation", func(t *testing.T) {
+	t.Run("creates a new active session without clearing existing sessions", func(t *testing.T) {
 		store := &fakeSessionStore{sessions: map[string]session.Session{"sess-1": {ID: "sess-1"}}, activeID: "sess-1"}
 		agt, err := runtime.NewConversation(runtime.ConversationConfig{ModelClient: &fakeModelClient{}, SessionStore: store, Session: store.sessions[store.activeID]})
 		if err != nil {
@@ -916,6 +915,9 @@ func TestSessionPersistence(t *testing.T) {
 		}
 		if store.activeID != "new-sess-123" {
 			t.Fatalf("active session ID = %q, want new-sess-123", store.activeID)
+		}
+		if _, ok := store.sessions["sess-1"]; !ok {
+			t.Fatalf("existing session sess-1 was removed, want preserved")
 		}
 	})
 }

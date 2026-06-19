@@ -134,6 +134,18 @@ func (c *Conversation) CWD() string {
 	return c.cwd
 }
 
+func (c *Conversation) SessionID() string {
+	return c.session.ID
+}
+
+func (c *Conversation) SessionTitle() string {
+	return c.session.Title
+}
+
+func (c *Conversation) SessionUpdatedAt() time.Time {
+	return c.session.UpdatedAt
+}
+
 func (c *Conversation) Messages() []llm.Message {
 	return append([]llm.Message(nil), c.session.Messages...)
 }
@@ -241,9 +253,9 @@ func (c *Conversation) NewConversation() error {
 			},
 			ReasoningLevel: string(reasoningLevel),
 		}
-		if err := c.sessionStore.Clear(c.cwd); err != nil {
-			return fmt.Errorf("clear session: %w", err)
-		}
+		// Create a fresh session and switch to it. Existing sessions for the
+		// workspace are left intact so concurrent ACP sessions are not
+		// destroyed; Create makes the new session the active one.
 		newSess, err := c.sessionStore.Create(c.cwd, metadata)
 		if err != nil {
 			return fmt.Errorf("create session: %w", err)
@@ -258,15 +270,48 @@ func (c *Conversation) NewConversation() error {
 	return nil
 }
 
+const maxTitleRunes = 60
+
+// deriveTitle builds a short session title from the first user message.
+func deriveTitle(messages []llm.Message) string {
+	for _, message := range messages {
+		user, ok := message.(llm.UserMessage)
+		if !ok {
+			continue
+		}
+		line := strings.TrimSpace(user.Text)
+		if idx := strings.IndexAny(line, "\r\n"); idx >= 0 {
+			line = strings.TrimSpace(line[:idx])
+		}
+		if line == "" {
+			return ""
+		}
+		runes := []rune(line)
+		if len(runes) > maxTitleRunes {
+			return strings.TrimSpace(string(runes[:maxTitleRunes])) + "…"
+		}
+		return line
+	}
+	return ""
+}
+
 // Prompt is not safe for concurrent use on the same Conversation.
 func (c *Conversation) Prompt(ctx context.Context, prompt string) (<-chan Event, <-chan error) {
 	events := make(chan Event, 32)
 	errs := make(chan error, 1)
 
+	firstTurn := len(c.session.Messages) == 0
+
 	go func() {
 		defer close(events)
 		defer close(errs)
 		runErr := c.run(ctx, prompt, events)
+
+		if firstTurn {
+			if title := deriveTitle(c.session.Messages); title != "" {
+				c.session.Title = title
+			}
+		}
 
 		if c.sessionStore != nil && c.session.ID != "" {
 			c.session.UpdatedAt = c.now()
