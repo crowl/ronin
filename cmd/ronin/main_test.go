@@ -222,6 +222,10 @@ func (s *fakeStartupSessionStore) LoadActive(workingDir string) (session.Session
 	return s.loaded, s.loadedOK, s.loadErr
 }
 
+func (s *fakeStartupSessionStore) Load(string) (session.Session, bool, error) {
+	return session.Session{}, false, nil
+}
+
 func (s *fakeStartupSessionStore) Create(workingDir string, metadata session.Metadata) (session.Session, error) {
 	s.createCalls++
 	s.createdWorkingDir = workingDir
@@ -230,6 +234,14 @@ func (s *fakeStartupSessionStore) Create(workingDir string, metadata session.Met
 }
 
 func (s *fakeStartupSessionStore) Save(session.Session) error {
+	return nil
+}
+
+func (s *fakeStartupSessionStore) List(string) ([]session.Ref, error) {
+	return nil, nil
+}
+
+func (s *fakeStartupSessionStore) Delete(string) error {
 	return nil
 }
 

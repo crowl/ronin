@@ -60,6 +60,20 @@ func (s *Store) LoadActive(workingDir string) (session.Session, bool, error) {
 	return record, true, nil
 }
 
+func (s *Store) Load(id string) (session.Session, bool, error) {
+	if id == "" {
+		return session.Session{}, false, errors.New("session id must not be empty")
+	}
+	record, err := s.loadSession(id)
+	if errors.Is(err, os.ErrNotExist) {
+		return session.Session{}, false, nil
+	}
+	if err != nil {
+		return session.Session{}, false, err
+	}
+	return record, true, nil
+}
+
 func (s *Store) Create(workingDir string, metadata session.Metadata) (session.Session, error) {
 	workingDir, err := cleanWorkingDir(workingDir)
 	if err != nil {
@@ -130,6 +144,51 @@ func (s *Store) Save(record session.Session) error {
 	}
 
 	return nil
+}
+
+func (s *Store) List(workingDir string) ([]session.Ref, error) {
+	workingDir, err := cleanWorkingDir(workingDir)
+	if err != nil {
+		return nil, err
+	}
+	workspace, ok, err := s.loadWorkspace(workingDir)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, nil
+	}
+	return append([]session.Ref(nil), workspace.Sessions...), nil
+}
+
+func (s *Store) Delete(id string) error {
+	if id == "" {
+		return errors.New("session id must not be empty")
+	}
+	record, err := s.loadSession(id)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	if err := os.Remove(s.recordPath(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove session record %q: %w", id, err)
+	}
+
+	workspace, ok, err := s.loadWorkspace(record.WorkingDir)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
+	workspace.Sessions = removeRef(workspace.Sessions, id)
+	if workspace.ActiveSessionID == id {
+		workspace.ActiveSessionID = latestRefID(workspace.Sessions)
+	}
+	return s.writeWorkspace(workspace)
 }
 
 func (s *Store) Clear(workingDir string) error {
@@ -283,6 +342,28 @@ func upsertRef(summaries []session.Ref, summary session.Ref) []session.Ref {
 		}
 	}
 	return append(summaries, summary)
+}
+
+func removeRef(summaries []session.Ref, id string) []session.Ref {
+	kept := summaries[:0]
+	for _, summary := range summaries {
+		if summary.ID != id {
+			kept = append(kept, summary)
+		}
+	}
+	return kept
+}
+
+func latestRefID(summaries []session.Ref) string {
+	var id string
+	var latest time.Time
+	for _, summary := range summaries {
+		if id == "" || summary.UpdatedAt.After(latest) {
+			id = summary.ID
+			latest = summary.UpdatedAt
+		}
+	}
+	return id
 }
 
 func writeFileAtomic(path string, data []byte) error {

@@ -11,8 +11,11 @@ const Version = 1
 
 type Store interface {
 	LoadActive(workingDir string) (Session, bool, error)
+	Load(id string) (Session, bool, error)
+	List(workingDir string) ([]Ref, error)
 	Create(workingDir string, metadata Metadata) (Session, error)
 	Save(record Session) error
+	Delete(id string) error
 	Clear(workingDir string) error
 }
 

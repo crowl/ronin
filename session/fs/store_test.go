@@ -29,6 +29,111 @@ func TestStoreLoadActiveMissing(t *testing.T) {
 	}
 }
 
+func TestStoreLoadByID(t *testing.T) {
+	now := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
+	workingDir := t.TempDir()
+	store := fs.NewStore(fs.StoreConfig{
+		Dir: t.TempDir(),
+		Now: fixedNow(now),
+	})
+
+	created, err := store.Create(workingDir, session.Metadata{})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	got, ok, err := store.Load(created.ID)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("Load() ok = false, want true")
+	}
+	if got.ID != created.ID {
+		t.Fatalf("Load() id = %q, want %q", got.ID, created.ID)
+	}
+
+	_, ok, err = store.Load("sess_missing")
+	if err != nil {
+		t.Fatalf("Load(missing) error = %v", err)
+	}
+	if ok {
+		t.Fatalf("Load(missing) ok = true, want false")
+	}
+}
+
+func TestStoreList(t *testing.T) {
+	now := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
+	workingDir := t.TempDir()
+	store := fs.NewStore(fs.StoreConfig{
+		Dir: t.TempDir(),
+		Now: fixedNow(now),
+	})
+
+	if refs, err := store.List(workingDir); err != nil || len(refs) != 0 {
+		t.Fatalf("List(empty) = %v, err %v, want empty", refs, err)
+	}
+
+	first, err := store.Create(workingDir, session.Metadata{})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	second, err := store.Create(workingDir, session.Metadata{})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	refs, err := store.List(workingDir)
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	ids := map[string]bool{}
+	for _, ref := range refs {
+		ids[ref.ID] = true
+	}
+	if !ids[first.ID] || !ids[second.ID] {
+		t.Fatalf("List() = %v, want both %q and %q", refs, first.ID, second.ID)
+	}
+}
+
+func TestStoreDelete(t *testing.T) {
+	now := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
+	workingDir := t.TempDir()
+	store := fs.NewStore(fs.StoreConfig{
+		Dir: t.TempDir(),
+		Now: fixedNow(now),
+	})
+
+	first, err := store.Create(workingDir, session.Metadata{})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	second, err := store.Create(workingDir, session.Metadata{})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	// second is the active session; deleting it should fall back to first.
+	if err := store.Delete(second.ID); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if _, ok, err := store.Load(second.ID); err != nil || ok {
+		t.Fatalf("Load(deleted) = ok %v err %v, want ok=false", ok, err)
+	}
+	active, ok, err := store.LoadActive(workingDir)
+	if err != nil || !ok {
+		t.Fatalf("LoadActive() = ok %v err %v, want active session", ok, err)
+	}
+	if active.ID != first.ID {
+		t.Fatalf("active session = %q, want %q", active.ID, first.ID)
+	}
+
+	// Deleting a missing session succeeds silently.
+	if err := store.Delete("sess_missing"); err != nil {
+		t.Fatalf("Delete(missing) error = %v", err)
+	}
+}
+
 func TestStoreCreateSaveLoadActive(t *testing.T) {
 	now := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
 	workingDir := t.TempDir()

@@ -780,6 +780,13 @@ func (f *fakeSessionStore) LoadActive(workingDir string) (session.Session, bool,
 	sess, ok := f.sessions[f.activeID]
 	return sess, ok, nil
 }
+func (f *fakeSessionStore) Load(id string) (session.Session, bool, error) {
+	if f.sessions == nil {
+		return session.Session{}, false, nil
+	}
+	sess, ok := f.sessions[id]
+	return sess, ok, nil
+}
 func (f *fakeSessionStore) Create(workingDir string, metadata session.Metadata) (session.Session, error) {
 	if f.createErr != nil {
 		return session.Session{}, f.createErr
@@ -800,6 +807,20 @@ func (f *fakeSessionStore) Save(record session.Session) error {
 		f.sessions = make(map[string]session.Session)
 	}
 	f.sessions[record.ID] = record
+	return nil
+}
+func (f *fakeSessionStore) List(workingDir string) ([]session.Ref, error) {
+	refs := make([]session.Ref, 0, len(f.sessions))
+	for id := range f.sessions {
+		refs = append(refs, session.Ref{ID: id})
+	}
+	return refs, nil
+}
+func (f *fakeSessionStore) Delete(id string) error {
+	delete(f.sessions, id)
+	if f.activeID == id {
+		f.activeID = ""
+	}
 	return nil
 }
 func (f *fakeSessionStore) Clear(workingDir string) error {
