@@ -12,6 +12,7 @@ var (
 	ClaudeHaiku45  = llm.Model{Provider: provider, Name: "claude-haiku-4-5", ContextWindow: 1000000}
 	ClaudeSonnet46 = llm.Model{Provider: provider, Name: "claude-sonnet-4-6", ContextWindow: 1000000}
 	ClaudeOpus48   = llm.Model{Provider: provider, Name: "claude-opus-4-8", ContextWindow: 1000000}
+	ClaudeFable5   = llm.Model{Provider: provider, Name: "claude-fable-5", ContextWindow: 1000000}
 )
 
 func Setup(apiKey string) error {
@@ -19,6 +20,7 @@ func Setup(apiKey string) error {
 		ClaudeHaiku45,
 		ClaudeSonnet46,
 		ClaudeOpus48,
+		ClaudeFable5,
 	}
 	for _, model := range models {
 		registeredModel := model

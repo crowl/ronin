@@ -11,15 +11,21 @@ import (
 const provider = "openai"
 
 var (
-	Gpt55     = llm.Model{Provider: provider, Name: "gpt-5.5", ContextWindow: 272_000}
-	Gpt55Pro  = llm.Model{Provider: provider, Name: "gpt-5.5-pro", ContextWindow: 272_000}
-	Gpt54     = llm.Model{Provider: provider, Name: "gpt-5.4", ContextWindow: 272_000}
-	Gpt54Mini = llm.Model{Provider: provider, Name: "gpt-5.4-mini", ContextWindow: 400_000}
-	Gpt54Nano = llm.Model{Provider: provider, Name: "gpt-5.4-nano", ContextWindow: 400_000}
+	Gpt56Sol   = llm.Model{Provider: provider, Name: "gpt-5.6-sol", ContextWindow: 272_000}
+	Gpt56Terra = llm.Model{Provider: provider, Name: "gpt-5.6-terra", ContextWindow: 272_000}
+	Gpt56Luna  = llm.Model{Provider: provider, Name: "gpt-5.6-luna", ContextWindow: 272_000}
+	Gpt55      = llm.Model{Provider: provider, Name: "gpt-5.5", ContextWindow: 272_000}
+	Gpt55Pro   = llm.Model{Provider: provider, Name: "gpt-5.5-pro", ContextWindow: 272_000}
+	Gpt54      = llm.Model{Provider: provider, Name: "gpt-5.4", ContextWindow: 272_000}
+	Gpt54Mini  = llm.Model{Provider: provider, Name: "gpt-5.4-mini", ContextWindow: 400_000}
+	Gpt54Nano  = llm.Model{Provider: provider, Name: "gpt-5.4-nano", ContextWindow: 400_000}
 )
 
 func Setup(apiKey string) error {
 	models := []llm.Model{
+		Gpt56Sol,
+		Gpt56Terra,
+		Gpt56Luna,
 		Gpt55,
 		Gpt55Pro,
 		Gpt54,
