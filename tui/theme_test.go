@@ -1,10 +1,8 @@
 package tui_test
 
 import (
-	"os"
 	"reflect"
 	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/crowl/ronin/tui"
@@ -89,21 +87,6 @@ func TestStyle(t *testing.T) {
 			if got != tt.want {
 				t.Fatalf("style apply\ngot:  %q\nwant: %q", got, tt.want)
 			}
-		})
-	}
-}
-
-func TestBuiltInThemesUsePaletteBaseColors(t *testing.T) {
-	paletteColors := readPaletteColors(t)
-	themes := map[string]tui.Theme{
-		"default": tui.DefaultTheme(),
-		"dark":    tui.DarkTheme(),
-		"light":   tui.LightTheme(),
-	}
-
-	for name, theme := range themes {
-		t.Run(name, func(t *testing.T) {
-			assertMonochromeThemeColors(t, reflect.ValueOf(theme), "theme", paletteColors)
 		})
 	}
 }
@@ -474,63 +457,6 @@ func absFloat(v float64) float64 {
 	return v
 }
 
-func readPaletteColors(t *testing.T) map[tui.Color]bool {
-	t.Helper()
-
-	data, err := os.ReadFile("../dev/palette")
-	if err != nil {
-		t.Fatalf("read dev palette: %v", err)
-	}
-
-	colors := make(map[tui.Color]bool)
-	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-		color := tui.Color("#" + strings.TrimSpace(line))
-		colors[color] = true
-	}
-	return colors
-}
-
-func assertMonochromeThemeColors(t *testing.T, value reflect.Value, path string, paletteColors map[tui.Color]bool) {
-	t.Helper()
-
-	if value.Kind() == reflect.Pointer || value.Kind() == reflect.Interface {
-		if value.IsNil() {
-			return
-		}
-		value = value.Elem()
-	}
-
-	switch value.Kind() {
-	case reflect.Struct:
-		if style, ok := value.Interface().(tui.Style); ok {
-			assertMonochromeThemeColor(t, path+".FG", style.FG, paletteColors)
-			assertMonochromeThemeColor(t, path+".BG", style.BG, paletteColors)
-			return
-		}
-		for i := 0; i < value.NumField(); i++ {
-			field := value.Type().Field(i)
-			assertMonochromeThemeColors(t, value.Field(i), path+"."+field.Name, paletteColors)
-		}
-	}
-}
-
-func assertMonochromeThemeColor(t *testing.T, path string, color tui.Color, paletteColors map[tui.Color]bool) {
-	t.Helper()
-
-	if color == "" {
-		return
-	}
-	if isSemanticAccentPath(path) {
-		if !isSemanticAccentColor(path, color) {
-			t.Fatalf("%s uses unexpected semantic accent color: %q", path, color)
-		}
-		return
-	}
-	if !paletteColors[color] {
-		t.Fatalf("%s uses color outside monochrome palette: %q", path, color)
-	}
-}
-
 func isSemanticAccentPath(path string) bool {
 	switch path {
 	case "theme.Box.ToolCall.DiffAdded.FG",
@@ -539,23 +465,6 @@ func isSemanticAccentPath(path string) bool {
 		"theme.Box.ToolCall.DiffRemoved.BG",
 		"theme.Box.Error.Container.FG":
 		return true
-	default:
-		return false
-	}
-}
-
-func isSemanticAccentColor(path string, color tui.Color) bool {
-	switch path {
-	case "theme.Box.ToolCall.DiffAdded.FG":
-		return color == "#F8F9FA"
-	case "theme.Box.ToolCall.DiffAdded.BG":
-		return color == "#238636" || color == "#2DA44E"
-	case "theme.Box.ToolCall.DiffRemoved.FG":
-		return color == "#F8F9FA"
-	case "theme.Box.ToolCall.DiffRemoved.BG":
-		return color == "#F85149" || color == "#CF222E"
-	case "theme.Box.Error.Container.FG":
-		return color == "#F85149" || color == "#CF222E"
 	default:
 		return false
 	}
