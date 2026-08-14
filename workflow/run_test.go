@@ -17,7 +17,7 @@ import (
 func TestRunFile(t *testing.T) {
 	t.Parallel()
 
-	t.Run("base library does not expose dofile, loadfile, pcall, or xpcall", func(t *testing.T) {
+	t.Run("base library does not expose dofile, loadfile, pcall, xpcall, or rawset", func(t *testing.T) {
 		t.Parallel()
 
 		for _, expr := range []string{
@@ -25,6 +25,7 @@ func TestRunFile(t *testing.T) {
 			"loadfile(\"x.lua\")",
 			"pcall(function() ronin.done(\"finished\") end)",
 			"xpcall(function() ronin.fail(\"broken\") end, function(err) return err end)",
+			"rawset(ronin, \"input\", \"changed\")",
 		} {
 			expr := expr
 			t.Run(expr, func(t *testing.T) {
@@ -392,8 +393,90 @@ end`, func(context.Context, AgentRequest) (AgentResult, error) {
 	})
 }
 
+func TestRunFileWithAgentInput(t *testing.T) {
+	t.Parallel()
+
+	t.Run("exposes supplied immutable input", func(t *testing.T) {
+		t.Parallel()
+
+		path := filepath.Join(t.TempDir(), "workflow.lua")
+		if err := os.WriteFile(path, []byte(`ronin.log(ronin.input)`), 0o600); err != nil {
+			t.Fatalf("WriteFile() error = %v", err)
+		}
+		var output strings.Builder
+		if err := RunFileWithAgentInputInWorkingDir(t.Context(), path, t.TempDir(), "supplied requirement", &output, nil); err != nil {
+			t.Fatalf("RunFileWithAgentInputInWorkingDir() error = %v", err)
+		}
+		if got, want := output.String(), "supplied requirement\n"; got != want {
+			t.Fatalf("output = %q, want %q", got, want)
+		}
+
+		if err := os.WriteFile(path, []byte(`ronin.input = "changed"`), 0o600); err != nil {
+			t.Fatalf("WriteFile() error = %v", err)
+		}
+		err := RunFileWithAgentInputInWorkingDir(t.Context(), path, t.TempDir(), "supplied requirement", &output, nil)
+		if err == nil || !strings.Contains(err.Error(), "ronin.input is read-only") {
+			t.Fatalf("RunFileWithAgentInputInWorkingDir() error = %v, want read-only error", err)
+		}
+
+		if err := os.WriteFile(path, []byte(`setmetatable(ronin, {})`), 0o600); err != nil {
+			t.Fatalf("WriteFile() error = %v", err)
+		}
+		err = RunFileWithAgentInputInWorkingDir(t.Context(), path, t.TempDir(), "supplied requirement", &output, nil)
+		if err == nil || !strings.Contains(err.Error(), "protected metatable") {
+			t.Fatalf("RunFileWithAgentInputInWorkingDir() error = %v, want protected metatable error", err)
+		}
+	})
+
+	t.Run("existing runners expose empty input", func(t *testing.T) {
+		t.Parallel()
+
+		stdout, err := runScript(t, `ronin.log(type(ronin.input))
+ronin.log(ronin.input)`)
+		if err != nil {
+			t.Fatalf("RunFile() error = %v", err)
+		}
+		if got, want := stdout, "string\n\n"; got != want {
+			t.Fatalf("output = %q, want %q", got, want)
+		}
+	})
+}
+
 func TestRequirementWorkflowExample(t *testing.T) {
 	t.Parallel()
+
+	t.Run("missing input fails before planning", func(t *testing.T) {
+		t.Parallel()
+
+		for _, input := range []string{"", " \t\r\n"} {
+			input := input
+			t.Run(fmt.Sprintf("input_%q", input), func(t *testing.T) {
+				var calls int
+				var output strings.Builder
+				err := RunFileWithAgentInputInWorkingDir(
+					t.Context(),
+					filepath.Join("..", "testdata", "workflow.lua"),
+					t.TempDir(),
+					input,
+					&output,
+					func(context.Context, AgentRequest) (AgentResult, error) {
+						calls++
+						return AgentResult{Text: "unexpected"}, nil
+					},
+				)
+				var failureErr *FailureError
+				if !errors.As(err, &failureErr) {
+					t.Fatalf("RunFileWithAgentInputInWorkingDir() error = %v, want FailureError", err)
+				}
+				if !strings.Contains(failureErr.Message, "software requirement is required") {
+					t.Fatalf("FailureError.Message = %q, want requirement guidance", failureErr.Message)
+				}
+				if calls != 0 {
+					t.Fatalf("agent calls = %d, want 0", calls)
+				}
+			})
+		}
+	})
 
 	t.Run("technical and requestor approval complete the workflow", func(t *testing.T) {
 		t.Parallel()
@@ -438,6 +521,11 @@ func TestRequirementWorkflowExample(t *testing.T) {
 		}
 		if !strings.Contains(requests[1].Prompt, responses[0]) {
 			t.Error("implementation prompt does not contain plan output")
+		}
+		for i, req := range requests {
+			if !strings.Contains(req.Prompt, "Implement the requested behavior.") {
+				t.Errorf("request %d prompt does not contain workflow input", i)
+			}
 		}
 		if !strings.Contains(requests[2].Prompt, responses[1]) {
 			t.Error("review prompt does not contain implementation output")
@@ -608,7 +696,7 @@ func runRequirementWorkflowExample(t *testing.T, responses []string) ([]AgentReq
 	var requests []AgentRequest
 	var output strings.Builder
 
-	err := RunFileWithAgentInWorkingDir(t.Context(), scriptPath, t.TempDir(), &output, func(_ context.Context, req AgentRequest) (AgentResult, error) {
+	err := RunFileWithAgentInputInWorkingDir(t.Context(), scriptPath, t.TempDir(), "Implement the requested behavior.", &output, func(_ context.Context, req AgentRequest) (AgentResult, error) {
 		if len(requests) >= len(responses) {
 			return AgentResult{}, fmt.Errorf("unexpected agent request %d", len(requests)+1)
 		}

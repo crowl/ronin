@@ -68,6 +68,11 @@ func RunFileWithAgent(ctx context.Context, path string, out io.Writer, agent Age
 
 // RunFileWithAgentInWorkingDir loads and executes a Lua workflow script with an explicit workflow working directory.
 func RunFileWithAgentInWorkingDir(ctx context.Context, path, workingDir string, out io.Writer, agent AgentFunc) error {
+	return RunFileWithAgentInputInWorkingDir(ctx, path, workingDir, "", out, agent)
+}
+
+// RunFileWithAgentInputInWorkingDir loads and executes a Lua workflow script with an explicit input and working directory.
+func RunFileWithAgentInputInWorkingDir(ctx context.Context, path, workingDir, input string, out io.Writer, agent AgentFunc) error {
 	if out == nil {
 		out = io.Discard
 	}
@@ -98,12 +103,14 @@ func RunFileWithAgentInWorkingDir(ctx context.Context, path, workingDir string, 
 	state.SetGlobal("pcall")
 	state.PushNil()
 	state.SetGlobal("xpcall")
+	state.PushNil()
+	state.SetGlobal("rawset")
 	lua.Require(state, "table", lua.TableOpen, true)
 	lua.Require(state, "string", lua.StringOpen, true)
 	lua.Require(state, "math", lua.MathOpen, true)
 
 	var signal *controlSignal
-	registerRonin(state, out, &signal, newAgentRuntime(ctx, agent), runtimeWorkingDir)
+	registerRonin(state, out, &signal, newAgentRuntime(ctx, agent), runtimeWorkingDir, input)
 
 	if err := lua.LoadBuffer(state, string(script), path, ""); err != nil {
 		return fmt.Errorf("parse workflow script %q: %w", path, err)
@@ -124,7 +131,7 @@ func RunFileWithAgentInWorkingDir(ctx context.Context, path, workingDir string, 
 	return nil
 }
 
-func registerRonin(state *lua.State, out io.Writer, signal **controlSignal, agent *agentRuntime, workingDir string) {
+func registerRonin(state *lua.State, out io.Writer, signal **controlSignal, agent *agentRuntime, workingDir, input string) {
 	state.NewTable()
 	state.PushGoFunction(logFunction(out))
 	state.SetField(-2, "log")
@@ -136,7 +143,40 @@ func registerRonin(state *lua.State, out io.Writer, signal **controlSignal, agen
 	state.SetField(-2, "done")
 	state.PushGoFunction(failFunction(signal))
 	state.SetField(-2, "fail")
+	state.NewTable()
+	state.PushBoolean(false)
+	state.SetField(-2, "__metatable")
+	state.PushGoFunction(workflowIndexFunction(input))
+	state.SetField(-2, "__index")
+	state.PushGoFunction(workflowNewIndexFunction())
+	state.SetField(-2, "__newindex")
+	state.SetMetaTable(-2)
 	state.SetGlobal("ronin")
+}
+
+func workflowIndexFunction(input string) lua.Function {
+	return func(state *lua.State) int {
+		key, ok := state.ToString(2)
+		if ok && key == "input" {
+			state.PushString(input)
+			return 1
+		}
+		state.PushNil()
+		return 1
+	}
+}
+
+func workflowNewIndexFunction() lua.Function {
+	return func(state *lua.State) int {
+		key, ok := state.ToString(2)
+		if ok && key == "input" {
+			panic(lua.RuntimeError("ronin.input is read-only"))
+		}
+		state.PushValue(2)
+		state.PushValue(3)
+		state.RawSet(1)
+		return 0
+	}
 }
 
 func logFunction(out io.Writer) lua.Function {

@@ -81,13 +81,17 @@ In prompt mode, assistant text is written to stdout, then the process exits when
 
 ## Lua workflows
 
-A Lua workflow can coordinate several fresh agent conversations against the same working directory. Run one with:
+A Lua workflow can coordinate several fresh agent conversations against the same working directory. Workflow input is optional at the runtime level and is exposed to Lua as the immutable string `ronin.input`. Supply input inline, from a file, or explicitly from stdin:
 
 ```sh
-go run ./cmd/ronin -working_dir /path/to/project run testdata/workflow.lua
+go run ./cmd/ronin -working_dir /path/to/project run testdata/workflow.lua "Add support for Gemini 4"
+go run ./cmd/ronin -working_dir /path/to/project run testdata/workflow.lua --input requirement.md
+cat requirement.md | go run ./cmd/ronin -working_dir /path/to/project run testdata/workflow.lua -
 ```
 
-The workflow API currently provides `ronin.run_agent`, `ronin.read`, `ronin.log`, `ronin.done`, and `ronin.fail`. Agent calls use this form:
+`--input` is an option of the `run` subcommand. Relative input paths resolve from the shell's current directory, not from `-working_dir`. Inline text, `--input`, and the unescaped `-` selector are mutually exclusive; conflicting or extra inputs fail rather than using implicit precedence. Use `--` before inline text that begins with a dash. File and stdin input are limited to 1 MiB, and stdin is read only when an unescaped `-` is explicit. A generic workflow may omit input, but the example requirement workflow rejects empty or whitespace-only input.
+
+The workflow API currently provides the read-only `ronin.input` value plus `ronin.run_agent`, `ronin.read`, `ronin.log`, `ronin.done`, and `ronin.fail`. Agent calls use this form:
 
 ```lua
 local result = ronin.run_agent({
@@ -127,7 +131,7 @@ STATUS: CHANGES_REQUIRED
 
 The example accepts approval only when `STATUS: APPROVED` is the sole, final status marker on its own terminal line. A missing, contradictory, malformed, or non-terminal marker is treated as requiring changes. This conservative policy and an explicit `max_cycles` value prevent ambiguous approval and runaway execution.
 
-[`testdata/workflow.lua`](testdata/workflow.lua) implements this loop with five implementation cycles at most. It assigns `gpt-5.6-sol` at high reasoning to planning, technical review, and requestor evaluation, and `gpt-5.6-terra` at medium reasoning to implementation. Edit the requirement and, if needed, `max_cycles` at the top of the file before running it. The model names are explicit so each role can be tuned for quality, latency, and cost.
+[`testdata/workflow.lua`](testdata/workflow.lua) implements this loop with five implementation cycles at most. It reads the software requirement from `ronin.input`, assigns `gpt-5.6-sol` at high reasoning to planning, technical review, and requestor evaluation, and uses `gpt-5.6-terra` at medium reasoning for implementation. Adjust `max_cycles` or the explicit role models in the file when needed.
 
 ## Configuration
 

@@ -1,8 +1,19 @@
--- Replace this with the software requirement to implement.
-local requirement = [[
-Add a concise description of the required behavior, its constraints, and its
-acceptance criteria here.
-]]
+local requirement = ronin.input
+
+local function contains_non_whitespace(text)
+    for i = 1, string.len(text) do
+        local char = string.sub(text, i, i)
+        if char ~= " " and char ~= "\n" and char ~= "\r" and
+            char ~= "\t" and char ~= "\f" and char ~= "\v" then
+            return true
+        end
+    end
+    return false
+end
+
+if not contains_non_whitespace(requirement) then
+    ronin.fail("A software requirement is required. Pass inline text, --input <file>, or - for stdin.")
+end
 
 -- This bound owns workflow termination; ronin.run_agent has no global call limit.
 local max_cycles = 5
