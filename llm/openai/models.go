@@ -61,6 +61,9 @@ func HasLocalOAuth() bool {
 // SetupOAuth registers the OpenAI models configured with the transparent OAuth proxy.
 func SetupOAuth() error {
 	models := []llm.Model{
+		Gpt56Sol,
+		Gpt56Terra,
+		Gpt56Luna,
 		Gpt55,
 		Gpt55Pro,
 		Gpt54,

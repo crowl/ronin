@@ -79,6 +79,56 @@ go run ./cmd/ronin -prompt "summarize this project"
 
 In prompt mode, assistant text is written to stdout, then the process exits when the conversation finishes.
 
+## Lua workflows
+
+A Lua workflow can coordinate several fresh agent conversations against the same working directory. Run one with:
+
+```sh
+go run ./cmd/ronin -working_dir /path/to/project run testdata/workflow.lua
+```
+
+The workflow API currently provides `ronin.run_agent`, `ronin.read`, `ronin.log`, `ronin.done`, and `ronin.fail`. Agent calls use this form:
+
+```lua
+local result = ronin.run_agent({
+    prompt = "Review the current working-tree changes",
+    model = "openai:gpt-5.6-sol", -- optional; defaults to CLI/config model
+    reasoning = "high",           -- optional; defaults to CLI/config level
+    system = "Act as an independent reviewer.", -- optional
+})
+
+ronin.log(result.text)
+```
+
+`prompt` is required. `model` must use `<provider>:<name>` and must be registered for the configured provider. A successful call returns `{ ok = true, text = "..." }`; provider, tool, and validation failures stop the workflow with an error. `ronin.run_agent` has no global call limit, so workflows that repeat agents must define an explicit termination bound.
+
+Every `ronin.run_agent` call starts a fresh conversation, but all agents receive the same working directory and tool access. They therefore coordinate through working-tree changes and through text explicitly included in later prompts.
+
+For implementing a software requirement, a useful bounded loop is:
+
+1. Use a strong reasoning model once to inspect the repository and produce acceptance criteria and a plan without modifying files.
+2. Give the requirement, plan, and latest feedback to an implementation agent that edits, formats, and tests the code.
+3. Have an independent technical reviewer inspect the actual diff and test state.
+4. Return technical findings to step 2 until the reviewer approves.
+5. After technical approval, use a fresh evaluator acting as the original requestor to check observable outcomes against the requirement and acceptance criteria.
+6. Return evaluator feedback to step 2, or complete when the evaluator approves.
+
+Decision agents end their response with exactly one terminal marker:
+
+```text
+STATUS: APPROVED
+```
+
+or:
+
+```text
+STATUS: CHANGES_REQUIRED
+```
+
+The example accepts approval only when `STATUS: APPROVED` is the sole, final status marker on its own terminal line. A missing, contradictory, malformed, or non-terminal marker is treated as requiring changes. This conservative policy and an explicit `max_cycles` value prevent ambiguous approval and runaway execution.
+
+[`testdata/workflow.lua`](testdata/workflow.lua) implements this loop with five implementation cycles at most. It assigns `gpt-5.6-sol` at high reasoning to planning, technical review, and requestor evaluation, and `gpt-5.6-terra` at medium reasoning to implementation. Edit the requirement and, if needed, `max_cycles` at the top of the file before running it. The model names are explicit so each role can be tuned for quality, latency, and cost.
+
 ## Configuration
 
 *ronin* keeps its configuration in `$XDG_CONFIG_HOME/ronin` when `XDG_CONFIG_HOME` is set, otherwise `$HOME/.config/ronin`. On first run it writes a default `config.json` there:

@@ -62,17 +62,16 @@ func LoadSkills(dir string) ([]Skill, error) {
 
 		skillFile := filepath.Join(absDir, entry.Name(), "SKILL.md")
 
-		data, err := os.ReadFile(skillFile)
-		if err != nil {
+		if _, err := os.Stat(skillFile); err != nil {
 			if os.IsNotExist(err) {
 				continue
 			}
-			return nil, fmt.Errorf("failed to read file %q: %w", skillFile, err)
+			return nil, fmt.Errorf("failed to stat file %q: %w", skillFile, err)
 		}
 
-		skill, err := parseSkillFile(skillFile, string(data))
+		skill, err := LoadSkillFile(skillFile)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse skill file %q: %w", skillFile, err)
+			return nil, err
 		}
 
 		if _, exists := seen[skill.Name]; exists {
@@ -84,6 +83,18 @@ func LoadSkills(dir string) ([]Skill, error) {
 	}
 
 	return skills, nil
+}
+
+func LoadSkillFile(path string) (Skill, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Skill{}, fmt.Errorf("failed to read file %q: %w", path, err)
+	}
+	skill, err := parseSkillFile(path, string(data))
+	if err != nil {
+		return Skill{}, fmt.Errorf("failed to parse skill file %q: %w", path, err)
+	}
+	return skill, nil
 }
 
 func parseSkillFile(path string, content string) (Skill, error) {

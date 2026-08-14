@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/crowl/ronin/acp"
@@ -27,6 +29,7 @@ import (
 	"github.com/crowl/ronin/tool/shell"
 	"github.com/crowl/ronin/tool/writefile"
 	"github.com/crowl/ronin/tui"
+	"github.com/crowl/ronin/workflow"
 )
 
 func main() {
@@ -36,6 +39,8 @@ func main() {
 	var workingDir string
 	var modelFlag string
 	var reasoningLevelFlag string
+	var contextFileFlags repeatedFlag
+	var skillFlags repeatedFlag
 
 	flag.BoolVar(&acpMode, "acp", false, "Run an ACP server over stdin/stdout.")
 	flag.BoolVar(&resume, "resume", false, "Load the active session for the working directory instead of starting a fresh session.")
@@ -43,31 +48,31 @@ func main() {
 	flag.StringVar(&workingDir, "working_dir", ".", "Working directory. Defaults to the current directory.")
 	flag.StringVar(&modelFlag, "model", "", "Model to use as <provider>:<name>. Overrides the configured model.")
 	flag.StringVar(&reasoningLevelFlag, "reasoning", "", "Reasoning level to use. Overrides the configured reasoning level.")
+	flag.Var(&contextFileFlags, "context-file", "Context file to include in prompt mode. May be repeated.")
+	flag.Var(&skillFlags, "skill", "Skill name, skill directory, or SKILL.md path to include in prompt mode. May be repeated.")
 
 	flag.Parse()
 
-	if openai.HasLocalOAuth() {
-		if err := openai.SetupOAuth(); err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "openai oauth setup failed: %v\n", err)
-			os.Exit(1)
-		}
-	} else if apiKey := os.Getenv("OPENAI_API_KEY"); apiKey != "" {
-		if err := openai.Setup(apiKey); err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "openai LLM provider setup failed: %v\n", err)
-			os.Exit(1)
-		}
+	workflowScript, workflowMode := workflowCommand(flag.Args())
+	if workflowMode && workflowScript == "" {
+		_, _ = fmt.Fprintln(os.Stderr, "usage: ronin run <script.lua>")
+		os.Exit(1)
 	}
-	if apiKey := os.Getenv("GEMINI_API_KEY"); apiKey != "" {
-		if err := google.Setup(apiKey); err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "google LLM provider setup failed: %v\n", err)
+
+	if workflowMode {
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
+		defer cancel()
+
+		if err := runWorkflow(ctx, workflowScript, workingDir, newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag), os.Stdout); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
 			os.Exit(1)
 		}
+		os.Exit(0)
 	}
-	if apiKey := os.Getenv("ANTHROPIC_API_KEY"); apiKey != "" {
-		if err := anthropic.Setup(apiKey); err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "anthropic LLM provider setup failed: %v\n", err)
-			os.Exit(1)
-		}
+
+	if err := setupProviders(); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(1)
 	}
 
 	if len(llm.Models()) == 0 {
@@ -117,16 +122,32 @@ func main() {
 		os.Exit(1)
 	}
 
-	skills, err := runtime.LoadSkills(skillsDir)
-	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "failed to load skills: %v\n", err)
-		os.Exit(1)
-	}
+	var skills []runtime.Skill
+	var contextFiles []runtime.ContextFile
 
-	contextFiles, err := runtime.LoadContextFiles(configDir, workingDir)
-	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "failed to load context files: %v\n", err)
-		os.Exit(1)
+	if prompt != "" {
+		skills, err = loadExplicitSkills(skillsDir, skillFlags)
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "failed to load skills: %v\n", err)
+			os.Exit(1)
+		}
+		contextFiles, err = loadExplicitContextFiles(contextFileFlags)
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "failed to load context files: %v\n", err)
+			os.Exit(1)
+		}
+	} else {
+		skills, err = runtime.LoadSkills(skillsDir)
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "failed to load skills: %v\n", err)
+			os.Exit(1)
+		}
+
+		contextFiles, err = runtime.LoadContextFiles(configDir, workingDir)
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "failed to load context files: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	readCache := fsutil.NewReadCache()
@@ -309,6 +330,190 @@ func main() {
 	os.Exit(0)
 }
 
+func setupProviders() error {
+	if openai.HasLocalOAuth() {
+		if err := openai.SetupOAuth(); err != nil {
+			return fmt.Errorf("openai oauth setup failed: %w", err)
+		}
+	} else if apiKey := os.Getenv("OPENAI_API_KEY"); apiKey != "" {
+		if err := openai.Setup(apiKey); err != nil {
+			return fmt.Errorf("openai LLM provider setup failed: %w", err)
+		}
+	}
+	if apiKey := os.Getenv("GEMINI_API_KEY"); apiKey != "" {
+		if err := google.Setup(apiKey); err != nil {
+			return fmt.Errorf("google LLM provider setup failed: %w", err)
+		}
+	}
+	if apiKey := os.Getenv("ANTHROPIC_API_KEY"); apiKey != "" {
+		if err := anthropic.Setup(apiKey); err != nil {
+			return fmt.Errorf("anthropic LLM provider setup failed: %w", err)
+		}
+	}
+	return nil
+}
+
+func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string) workflow.AgentFunc {
+	var initOnce sync.Once
+	var initErr error
+	var settings config.Settings
+	var defaultModel llm.Model
+	var defaultLevel llm.ReasoningLevel
+	var tools []runtime.Tool
+	var systemPrompt string
+	var compactor runtime.Compactor
+	var summarizer runtime.ToolOutputSummarizer
+	var summarizationPolicy runtime.ToolOutputSummarizationPolicy
+
+	init := func() {
+		if err := setupProviders(); err != nil {
+			initErr = err
+			return
+		}
+		if len(llm.Models()) == 0 {
+			initErr = fmt.Errorf("no models available, please define at least one of OPENAI_API_KEY, GEMINI_API_KEY or ANTHROPIC_API_KEY env vars, or configure local ChatGPT/Codex OAuth credentials")
+			return
+		}
+
+		settings, initErr = config.Load()
+		if initErr != nil {
+			initErr = fmt.Errorf("failed to load config: %w", initErr)
+			return
+		}
+		if modelFlag != "" {
+			override, err := parseModelFlag(modelFlag)
+			if err != nil {
+				initErr = err
+				return
+			}
+			settings.Model = override
+		}
+		if reasoningLevelFlag != "" {
+			settings.ReasoningLevel = reasoningLevelFlag
+		}
+
+		defaultModel, defaultLevel, initErr = resolveModel(settings)
+		if initErr != nil {
+			return
+		}
+		defaultClient, err := llm.LoadModelClient(defaultModel, defaultLevel)
+		if err != nil {
+			initErr = fmt.Errorf("failed to load LLM model client: %w", err)
+			return
+		}
+
+		readCache := fsutil.NewReadCache()
+		mutationQueue := fsutil.NewMutationQueue()
+		tools = []runtime.Tool{
+			readfile.New(workingDir, readCache),
+			editfile.New(workingDir, mutationQueue),
+			writefile.New(workingDir, mutationQueue),
+			shell.New(workingDir),
+			gosemantic.NewFindSymbol(workingDir),
+			gosemantic.NewOutlinePackage(workingDir),
+		}
+
+		systemPrompt, err = runtime.BuildSystemPrompt(runtime.SystemPromptInput{CWD: workingDir})
+		if err != nil {
+			initErr = fmt.Errorf("failed to build system prompt: %w", err)
+			return
+		}
+
+		compactor, err = runtime.NewDefaultCompactor(runtime.DefaultCompactorConfig{
+			ModelClient: defaultClient,
+			Now:         func() time.Time { return time.Now() },
+		})
+		if err != nil {
+			initErr = fmt.Errorf("failed to initialize compactor: %w", err)
+			return
+		}
+
+		summarizer, summarizationPolicy, err = toolOutputSummarization(settings)
+		if err != nil {
+			initErr = fmt.Errorf("failed to initialize tool output summarization: %w", err)
+			return
+		}
+	}
+
+	return func(ctx context.Context, req workflow.AgentRequest) (workflow.AgentResult, error) {
+		initOnce.Do(init)
+		if initErr != nil {
+			return workflow.AgentResult{}, initErr
+		}
+
+		agentModel := defaultModel
+		if req.Model.Provider != "" || req.Model.Name != "" {
+			resolved, err := resolveWorkflowModel(req.Model)
+			if err != nil {
+				return workflow.AgentResult{}, err
+			}
+			agentModel = resolved
+		}
+
+		agentLevel := defaultLevel
+		if req.ReasoningLevel != "" {
+			agentLevel = req.ReasoningLevel
+		}
+
+		agentSystemPrompt := systemPrompt
+		if strings.TrimSpace(req.System) != "" {
+			agentSystemPrompt += "\n\nWorkflow agent instructions:\n" + strings.TrimSpace(req.System)
+		}
+
+		client, err := llm.LoadModelClient(agentModel, agentLevel)
+		if err != nil {
+			return workflow.AgentResult{}, fmt.Errorf("load model client: %w", err)
+		}
+		conv, err := runtime.NewConversation(runtime.ConversationConfig{
+			CWD:                           workingDir,
+			ModelClient:                   client,
+			Compactor:                     compactor,
+			ToolOutputSummarizer:          summarizer,
+			ToolOutputSummarizationPolicy: summarizationPolicy,
+			Tools:                         tools,
+			SystemPrompt:                  agentSystemPrompt,
+			MaxTurns:                      settings.MaxTurns,
+			Now:                           func() time.Time { return time.Now() },
+			Session:                       session.Session{WorkingDir: workingDir},
+		})
+		if err != nil {
+			return workflow.AgentResult{}, err
+		}
+		text, err := runAgent(ctx, conv, req.Prompt)
+		if err != nil {
+			return workflow.AgentResult{}, err
+		}
+		return workflow.AgentResult{Text: text}, nil
+	}
+}
+
+func workflowCommand(args []string) (string, bool) {
+	if len(args) == 0 || args[0] != "run" {
+		return "", false
+	}
+	if len(args) < 2 || strings.HasPrefix(args[1], "-") {
+		return "", true
+	}
+	return args[1], true
+}
+
+func runWorkflow(ctx context.Context, script, workingDir string, agent workflow.AgentFunc, output io.Writer) error {
+	err := workflow.RunFileWithAgentInWorkingDir(ctx, script, workingDir, output, agent)
+	if err == nil {
+		return nil
+	}
+
+	var doneErr *workflow.DoneError
+	if errors.As(err, &doneErr) {
+		if doneErr.Message != "" {
+			_, _ = fmt.Fprintln(output, doneErr.Message)
+		}
+		return nil
+	}
+
+	return err
+}
+
 func toolOutputSummarization(settings config.Settings) (runtime.ToolOutputSummarizer, runtime.ToolOutputSummarizationPolicy, error) {
 	policy := runtime.DefaultToolOutputSummarizationPolicy()
 	cfg := settings.ToolOutputSummarization
@@ -404,8 +609,119 @@ func resolveModel(settings config.Settings) (llm.Model, llm.ReasoningLevel, erro
 	return llm.Model{}, "", fmt.Errorf("unknown model %q in config (is the provider's API key set?)", settings.Model.Provider+":"+settings.Model.Name)
 }
 
+func resolveWorkflowModel(requested llm.Model) (llm.Model, error) {
+	for _, model := range llm.Models() {
+		if model.Provider == requested.Provider && model.Name == requested.Name {
+			return model, nil
+		}
+	}
+	return llm.Model{}, fmt.Errorf("unknown ronin.run_agent model %q", requested.Provider+":"+requested.Name)
+}
+
+type repeatedFlag []string
+
+func (f *repeatedFlag) String() string {
+	if f == nil {
+		return ""
+	}
+	return strings.Join(*f, ",")
+}
+
+func (f *repeatedFlag) Set(value string) error {
+	*f = append(*f, value)
+	return nil
+}
+
+func loadExplicitContextFiles(paths []string) ([]runtime.ContextFile, error) {
+	files := make([]runtime.ContextFile, 0, len(paths))
+	for _, path := range paths {
+		clean, err := filepath.Abs(path)
+		if err != nil {
+			return nil, fmt.Errorf("resolve context file %q: %w", path, err)
+		}
+		clean = filepath.Clean(clean)
+
+		info, err := os.Stat(clean)
+		if err != nil {
+			return nil, fmt.Errorf("stat context file %q: %w", clean, err)
+		}
+		if info.IsDir() {
+			return nil, fmt.Errorf("context file %q is a directory", clean)
+		}
+		if info.Size() > runtime.MaxContextFileBytes {
+			return nil, fmt.Errorf("context file %q exceeds %d bytes", clean, runtime.MaxContextFileBytes)
+		}
+		data, err := os.ReadFile(clean)
+		if err != nil {
+			return nil, fmt.Errorf("read context file %q: %w", clean, err)
+		}
+		files = append(files, runtime.ContextFile{Path: clean, Content: string(data)})
+	}
+	return files, nil
+}
+
+func loadExplicitSkills(skillsDir string, values []string) ([]runtime.Skill, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+
+	available, err := runtime.LoadSkills(skillsDir)
+	if err != nil {
+		return nil, err
+	}
+	byName := make(map[string]runtime.Skill, len(available))
+	for _, skill := range available {
+		byName[skill.Name] = skill
+	}
+
+	skills := make([]runtime.Skill, 0, len(values))
+	for _, value := range values {
+		if skill, ok := byName[value]; ok {
+			skills = append(skills, skill)
+			continue
+		}
+		skill, err := loadExplicitSkillPath(value)
+		if err != nil {
+			return nil, err
+		}
+		skills = append(skills, skill)
+	}
+	return skills, nil
+}
+
+func loadExplicitSkillPath(value string) (runtime.Skill, error) {
+	path := value
+	if info, err := os.Stat(path); err == nil && info.IsDir() {
+		path = filepath.Join(path, "SKILL.md")
+	} else if err != nil {
+		return runtime.Skill{}, fmt.Errorf("load skill %q: not a configured skill name or readable path", value)
+	}
+
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return runtime.Skill{}, fmt.Errorf("resolve skill %q: %w", value, err)
+	}
+	abs = filepath.Clean(abs)
+
+	return runtime.LoadSkillFile(abs)
+}
+
 type prompter interface {
 	Prompt(context.Context, string) (<-chan runtime.Event, <-chan error)
+}
+
+func runAgent(ctx context.Context, conv prompter, prompt string) (string, error) {
+	var output strings.Builder
+	events, errs := conv.Prompt(ctx, prompt)
+	for event := range events {
+		if delta, ok := event.(runtime.AssistantMessageDeltaReceived); ok {
+			output.WriteString(delta.Text)
+		}
+	}
+	if err, ok := <-errs; ok && err != nil {
+		return "", err
+	}
+	return output.String(), nil
 }
 
 func runPrompt(ctx context.Context, conv prompter, prompt string, output io.Writer) error {
