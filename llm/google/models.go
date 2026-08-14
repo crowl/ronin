@@ -14,6 +14,7 @@ func Setup(apiKey string) error {
 		{Provider: provider, Name: "gemini-3.1-pro-preview-customtools", ContextWindow: 1048576},
 		{Provider: provider, Name: "gemini-3.1-flash-lite", ContextWindow: 1048576},
 		{Provider: provider, Name: "gemini-3.5-flash", ContextWindow: 1048576},
+		{Provider: provider, Name: "gemini-3.7-flash", ContextWindow: 1048576},
 		{Provider: provider, Name: "gemma-4-12b-it", ContextWindow: 256000},
 		{Provider: provider, Name: "gemma-4-26b-a4b-it", ContextWindow: 256000},
 		{Provider: provider, Name: "gemma-4-31b-it", ContextWindow: 256000},
