@@ -45,6 +45,17 @@ If found, *ronin* configures the transparent OAuth proxy, enabling you to use yo
 
 If no local `auth.json` is found, *ronin* falls back to using the standard `OPENAI_API_KEY` environment variable if configured.
 
+### OpenAI API root override
+
+Set `OPENAI_BASE_URL` to use an OpenAI-compatible API root with an API key:
+
+```sh
+export OPENAI_API_KEY=...
+export OPENAI_BASE_URL=https://proxy.example.com/v1
+```
+
+This is an API root, not a complete endpoint. Ronin appends `/responses`, so this example sends requests to `https://proxy.example.com/v1/responses`; trailing slashes are normalized. Setting `OPENAI_BASE_URL` requires `OPENAI_API_KEY` and bypasses local ChatGPT/Codex OAuth credentials.
+
 To set up your local OAuth credentials, run the official login flow:
 ```sh
 npx @openai/codex login

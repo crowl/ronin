@@ -347,7 +347,15 @@ func main() {
 }
 
 func setupProviders() error {
-	if openai.HasLocalOAuth() {
+	if baseURL, ok := os.LookupEnv("OPENAI_BASE_URL"); ok {
+		apiKey := os.Getenv("OPENAI_API_KEY")
+		if apiKey == "" {
+			return fmt.Errorf("OPENAI_API_KEY is required when OPENAI_BASE_URL is set")
+		}
+		if err := openai.SetupWithBaseURL(apiKey, baseURL); err != nil {
+			return fmt.Errorf("openai LLM provider setup failed: %w", err)
+		}
+	} else if openai.HasLocalOAuth() {
 		if err := openai.SetupOAuth(); err != nil {
 			return fmt.Errorf("openai oauth setup failed: %w", err)
 		}

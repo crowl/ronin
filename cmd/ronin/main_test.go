@@ -4,16 +4,152 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/crowl/ronin/config"
 	"github.com/crowl/ronin/jsonschema"
+	"github.com/crowl/ronin/llm"
+	"github.com/crowl/ronin/llm/openai"
 	"github.com/crowl/ronin/runtime"
 	"github.com/crowl/ronin/session"
 )
+
+func TestSetupProvidersDefaultOpenAIConfiguration(t *testing.T) {
+	if scenario := os.Getenv("RONIN_SETUP_PROVIDERS_DEFAULT_SCENARIO"); scenario != "" {
+		for _, name := range []string{"OPENAI_API_KEY", "GEMINI_API_KEY", "ANTHROPIC_API_KEY", "CHATGPT_LOCAL_HOME", "CODEX_HOME"} {
+			t.Setenv(name, "")
+		}
+		if err := os.Unsetenv("OPENAI_BASE_URL"); err != nil {
+			t.Fatalf("unset OPENAI_BASE_URL: %v", err)
+		}
+		t.Setenv("HOME", t.TempDir())
+
+		switch scenario {
+		case "no-credentials":
+			if err := setupProviders(); err != nil {
+				t.Fatalf("setupProviders() error = %v", err)
+			}
+			if len(llm.Models()) != 0 {
+				t.Fatalf("registered models = %v, want none", llm.Models())
+			}
+			return
+		case "api-key-fallback":
+			t.Setenv("OPENAI_API_KEY", "api-key")
+		case "oauth-precedence":
+			t.Setenv("OPENAI_API_KEY", "api-key")
+			oauthHome := t.TempDir()
+			if err := os.WriteFile(filepath.Join(oauthHome, "auth.json"), []byte(`{"tokens":{"access_token":"oauth-token"}}`), 0o600); err != nil {
+				t.Fatalf("write auth.json: %v", err)
+			}
+			t.Setenv("CHATGPT_LOCAL_HOME", oauthHome)
+		default:
+			t.Fatalf("unknown scenario %q", scenario)
+		}
+
+		if err := setupProviders(); err != nil {
+			t.Fatalf("setupProviders() error = %v", err)
+		}
+		client, err := llm.LoadModelClient(openai.Gpt56Sol, llm.ReasoningLevelOff)
+		if err != nil {
+			t.Fatalf("LoadModelClient() error = %v", err)
+		}
+		apiKey := reflect.ValueOf(client).Elem().FieldByName("apiKey").String()
+		wantAPIKey := "api-key"
+		if scenario == "oauth-precedence" {
+			wantAPIKey = "oauth-placeholder"
+		}
+		if apiKey != wantAPIKey {
+			t.Errorf("configured API key = %q, want %q", apiKey, wantAPIKey)
+		}
+		return
+	}
+
+	for _, scenario := range []string{"no-credentials", "api-key-fallback", "oauth-precedence"} {
+		t.Run(scenario, func(t *testing.T) {
+			cmd := exec.Command(os.Args[0], "-test.run=^TestSetupProvidersDefaultOpenAIConfiguration$")
+			cmd.Env = append(os.Environ(), "RONIN_SETUP_PROVIDERS_DEFAULT_SCENARIO="+scenario)
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("setupProviders subprocess failed: %v\n%s", err, output)
+			}
+		})
+	}
+}
+
+func TestSetupProvidersCustomOpenAIConfiguration(t *testing.T) {
+	for _, name := range []string{"GEMINI_API_KEY", "ANTHROPIC_API_KEY", "CHATGPT_LOCAL_HOME", "CODEX_HOME"} {
+		t.Setenv(name, "")
+	}
+	t.Setenv("HOME", t.TempDir())
+
+	t.Run("missing API key", func(t *testing.T) {
+		t.Setenv("OPENAI_BASE_URL", "https://proxy.example.com/v1")
+		t.Setenv("OPENAI_API_KEY", "")
+		err := setupProviders()
+		if err == nil || !strings.Contains(err.Error(), "OPENAI_API_KEY") || !strings.Contains(err.Error(), "OPENAI_BASE_URL") {
+			t.Fatalf("setupProviders() error = %v, want OPENAI_API_KEY requirement for OPENAI_BASE_URL", err)
+		}
+	})
+
+	t.Run("empty base URL", func(t *testing.T) {
+		t.Setenv("OPENAI_BASE_URL", "")
+		t.Setenv("OPENAI_API_KEY", "test-key")
+		err := setupProviders()
+		if err == nil || !strings.Contains(err.Error(), "OPENAI_BASE_URL") {
+			t.Fatalf("setupProviders() error = %v, want OPENAI_BASE_URL validation error", err)
+		}
+	})
+
+	t.Run("invalid base URL", func(t *testing.T) {
+		t.Setenv("OPENAI_BASE_URL", "ftp://proxy.example.com/v1")
+		t.Setenv("OPENAI_API_KEY", "test-key")
+		err := setupProviders()
+		if err == nil || !strings.Contains(err.Error(), "OPENAI_BASE_URL") {
+			t.Fatalf("setupProviders() error = %v, want OPENAI_BASE_URL validation error", err)
+		}
+	})
+
+	t.Run("custom URL bypasses local OAuth", func(t *testing.T) {
+		var gotPath string
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotPath = r.URL.Path
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{}}\n\n"))
+		}))
+		defer server.Close()
+
+		oauthHome := t.TempDir()
+		if err := os.WriteFile(filepath.Join(oauthHome, "auth.json"), []byte(`{"tokens":{"access_token":"oauth-token"}}`), 0o600); err != nil {
+			t.Fatalf("write auth.json: %v", err)
+		}
+		t.Setenv("CHATGPT_LOCAL_HOME", oauthHome)
+		t.Setenv("OPENAI_BASE_URL", server.URL+"/v1/")
+		t.Setenv("OPENAI_API_KEY", "test-key")
+		if err := setupProviders(); err != nil {
+			t.Fatalf("setupProviders() error = %v", err)
+		}
+
+		client, err := llm.LoadModelClient(openai.Gpt56Sol, llm.ReasoningLevelOff)
+		if err != nil {
+			t.Fatalf("LoadModelClient() error = %v", err)
+		}
+		events, errs := client.PredictNext(context.Background(), llm.PredictNextRequest{})
+		for range events {
+		}
+		if err := <-errs; err != nil {
+			t.Fatalf("PredictNext() error = %v", err)
+		}
+		if gotPath != "/v1/responses" {
+			t.Errorf("request path = %q, want /v1/responses", gotPath)
+		}
+	})
+}
 
 func TestParseWorkflowCommand(t *testing.T) {
 	t.Run("not a workflow command", func(t *testing.T) {
