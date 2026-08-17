@@ -492,8 +492,8 @@ func TestRequirementWorkflowExample(t *testing.T) {
 		if !errors.As(err, &doneErr) {
 			t.Fatalf("RunFileWithAgentInWorkingDir() error = %v, want DoneError", err)
 		}
-		if doneErr.Message != "Workflow completed after 1 cycle(s)." {
-			t.Fatalf("DoneError.Message = %q, want one-cycle completion", doneErr.Message)
+		if doneErr.Message != "Workflow completed after 1 cycle(s). Final implementation report:\nimplementation output" {
+			t.Fatalf("DoneError.Message = %q, want completion summary with implementation report", doneErr.Message)
 		}
 		if len(requests) != 4 {
 			t.Fatalf("agent requests = %d, want 4", len(requests))

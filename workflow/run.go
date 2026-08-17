@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -56,6 +57,53 @@ func (e *FailureError) Error() string {
 	return "workflow failed: " + e.Message
 }
 
+// Run executes a named workflow and reports structured progress.
+func Run(ctx context.Context, item Workflow, workingDir, input string, agent AgentFunc, emit func(Event)) Result {
+	result := Result{Name: item.Name, Input: input, Status: StatusCompleted, Summary: "Workflow completed"}
+	if emit != nil {
+		emit(Started{Name: item.Name})
+	}
+	if len(input) > 1<<20 {
+		result.Status = StatusFailed
+		result.Summary = "workflow input exceeds the 1 MiB limit"
+		if emit != nil {
+			emit(Finished{Result: result})
+		}
+		return result
+	}
+
+	err := runFile(ctx, item.Path, workingDir, input, io.Discard, agent, emit)
+	if err != nil {
+		var doneErr *DoneError
+		var failureErr *FailureError
+		switch {
+		case ctx.Err() != nil:
+			result.Status = StatusCancelled
+			result.Summary = "Workflow cancelled"
+		case errors.Is(err, context.Canceled):
+			result.Status = StatusCancelled
+			result.Summary = "Workflow cancelled"
+		case errors.As(err, &doneErr):
+			if doneErr.Message != "" {
+				result.Summary = doneErr.Message
+			}
+		case errors.As(err, &failureErr):
+			result.Status = StatusFailed
+			result.Summary = failureErr.Message
+			if result.Summary == "" {
+				result.Summary = "Workflow failed"
+			}
+		default:
+			result.Status = StatusFailed
+			result.Summary = err.Error()
+		}
+	}
+	if emit != nil {
+		emit(Finished{Result: result})
+	}
+	return result
+}
+
 // RunFile loads and executes a Lua workflow script.
 func RunFile(path string, out io.Writer) error {
 	return RunFileWithAgent(context.Background(), path, out, nil)
@@ -73,6 +121,10 @@ func RunFileWithAgentInWorkingDir(ctx context.Context, path, workingDir string, 
 
 // RunFileWithAgentInputInWorkingDir loads and executes a Lua workflow script with an explicit input and working directory.
 func RunFileWithAgentInputInWorkingDir(ctx context.Context, path, workingDir, input string, out io.Writer, agent AgentFunc) error {
+	return runFile(ctx, path, workingDir, input, out, agent, nil)
+}
+
+func runFile(ctx context.Context, path, workingDir, input string, out io.Writer, agent AgentFunc, emit func(Event)) error {
 	if out == nil {
 		out = io.Discard
 	}
@@ -110,7 +162,7 @@ func RunFileWithAgentInputInWorkingDir(ctx context.Context, path, workingDir, in
 	lua.Require(state, "math", lua.MathOpen, true)
 
 	var signal *controlSignal
-	registerRonin(state, out, &signal, newAgentRuntime(ctx, agent), runtimeWorkingDir, input)
+	registerRonin(state, out, &signal, newAgentRuntime(ctx, agent, emit), runtimeWorkingDir, input, emit)
 
 	if err := lua.LoadBuffer(state, string(script), path, ""); err != nil {
 		return fmt.Errorf("parse workflow script %q: %w", path, err)
@@ -131,9 +183,9 @@ func RunFileWithAgentInputInWorkingDir(ctx context.Context, path, workingDir, in
 	return nil
 }
 
-func registerRonin(state *lua.State, out io.Writer, signal **controlSignal, agent *agentRuntime, workingDir, input string) {
+func registerRonin(state *lua.State, out io.Writer, signal **controlSignal, agent *agentRuntime, workingDir, input string, emit func(Event)) {
 	state.NewTable()
-	state.PushGoFunction(logFunction(out))
+	state.PushGoFunction(logFunction(out, emit))
 	state.SetField(-2, "log")
 	state.PushGoFunction(runAgentFunction(agent))
 	state.SetField(-2, "run_agent")
@@ -179,9 +231,13 @@ func workflowNewIndexFunction() lua.Function {
 	}
 }
 
-func logFunction(out io.Writer) lua.Function {
+func logFunction(out io.Writer, emit func(Event)) lua.Function {
 	return func(state *lua.State) int {
-		_, _ = fmt.Fprintln(out, formatLogValue(state, 1, map[any]bool{}))
+		text := formatLogValue(state, 1, map[any]bool{})
+		_, _ = fmt.Fprintln(out, text)
+		if emit != nil {
+			emit(Log{Text: text})
+		}
 		return 0
 	}
 }

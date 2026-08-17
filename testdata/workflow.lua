@@ -139,7 +139,7 @@ STATUS: CHANGES_REQUIRED
             ronin.log("Final implementation report:\n" .. implementation.text)
             ronin.log("Technical review:\n" .. review.text)
             ronin.log("Requestor evaluation:\n" .. evaluation.text)
-            ronin.done("Workflow completed after " .. cycle .. " cycle(s).")
+            ronin.done("Workflow completed after " .. cycle .. " cycle(s). Final implementation report:\n" .. implementation.text)
         end
 
         feedback = "Requestor evaluation requires changes:\n\n" .. evaluation.text
