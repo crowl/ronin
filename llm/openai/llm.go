@@ -448,6 +448,11 @@ func convertMessages(messages []llm.Message) ([]openAIInput, error) {
 					Content: text.String(),
 				})
 			}
+		case llm.WorkflowResultMessage:
+			input = append(input, openAIMessageInput{
+				Role:    "user",
+				Content: typedMsg.Text(),
+			})
 		case llm.ToolOutputMessage:
 			input = append(input, openAIFunctionCallOutputInput{
 				Type:   "function_call_output",

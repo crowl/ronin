@@ -448,6 +448,11 @@ func convertMessages(messages []llm.Message) ([]anthropicMessage, error) {
 			if len(content) > 0 {
 				converted = append(converted, anthropicMessage{Role: "assistant", Content: content})
 			}
+		case llm.WorkflowResultMessage:
+			converted = append(converted, anthropicMessage{
+				Role:    "user",
+				Content: []anthropicMessageContentBlock{anthropicTextBlock{Type: "text", Text: typedMsg.Text()}},
+			})
 		case llm.ToolOutputMessage:
 			converted = append(converted, anthropicMessage{
 				Role: "user",

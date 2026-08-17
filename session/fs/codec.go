@@ -32,10 +32,14 @@ type messageJSON struct {
 	StopReason              string      `json:"stop_reason,omitempty"`
 	Usage                   llm.Usage   `json:"usage,omitempty"`
 	ToolName                string      `json:"tool_name,omitempty"`
+	Name                    string      `json:"name,omitempty"`
 	ToolCallID              string      `json:"tool_call_id,omitempty"`
 	ToolOutput              string      `json:"tool_output,omitempty"`
 	RawToolOutput           string      `json:"raw_tool_output,omitempty"`
 	ToolOutputWasSummarized bool        `json:"tool_output_was_summarized,omitempty"`
+	Status                  string      `json:"status,omitempty"`
+	Summary                 string      `json:"summary,omitempty"`
+	Input                   string      `json:"input,omitempty"`
 	Error                   string      `json:"error,omitempty"`
 }
 
@@ -131,6 +135,8 @@ func encodeMessage(message llm.Message) (messageJSON, error) {
 			encoded.Blocks = append(encoded.Blocks, encodedBlock)
 		}
 		return encoded, nil
+	case llm.WorkflowResultMessage:
+		return messageJSON{Type: "workflow_result", Timestamp: m.Timestamp, Name: m.Name, Input: m.Input, Status: string(m.Status), Summary: m.Summary}, nil
 	case llm.ToolOutputMessage:
 		return messageJSON{Type: "tool_output", Timestamp: m.Timestamp, ToolName: m.ToolName, ToolCallID: m.ToolCallID, ToolOutput: m.ToolOutput, RawToolOutput: m.RawToolOutput, ToolOutputWasSummarized: m.ToolOutputWasSummarized}, nil
 	case llm.ToolErrorMessage:
@@ -161,6 +167,8 @@ func decodeMessage(encoded messageJSON) (llm.Message, error) {
 			message.Blocks = append(message.Blocks, decodedBlock)
 		}
 		return message, nil
+	case "workflow_result":
+		return llm.WorkflowResultMessage{Timestamp: encoded.Timestamp, Name: encoded.Name, Input: encoded.Input, Status: llm.WorkflowStatus(encoded.Status), Summary: encoded.Summary}, nil
 	case "tool_output":
 		return llm.ToolOutputMessage{Timestamp: encoded.Timestamp, ToolName: encoded.ToolName, ToolCallID: encoded.ToolCallID, ToolOutput: encoded.ToolOutput, RawToolOutput: encoded.RawToolOutput, ToolOutputWasSummarized: encoded.ToolOutputWasSummarized}, nil
 	case "tool_error":

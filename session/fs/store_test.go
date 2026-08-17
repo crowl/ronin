@@ -269,8 +269,9 @@ func sampleMessages(now time.Time) []llm.Message {
 			},
 		},
 		llm.ToolOutputMessage{Timestamp: now.Add(2 * time.Second), ToolName: "read_file", ToolCallID: "call-1", ToolOutput: "contents"},
-		llm.ToolErrorMessage{Timestamp: now.Add(3 * time.Second), ToolName: "shell", ToolCallID: "call-2", Error: errors.New("tool failed")},
-		llm.ErrorMessage{Timestamp: now.Add(4 * time.Second), Error: errors.New("agent failed")},
+		llm.WorkflowResultMessage{Timestamp: now.Add(3 * time.Second), Name: "implement", Input: "build it", Status: llm.WorkflowStatusCompleted, Summary: "done"},
+		llm.ToolErrorMessage{Timestamp: now.Add(4 * time.Second), ToolName: "shell", ToolCallID: "call-2", Error: errors.New("tool failed")},
+		llm.ErrorMessage{Timestamp: now.Add(5 * time.Second), Error: errors.New("agent failed")},
 	}
 }
 
@@ -306,6 +307,11 @@ func assertMessageEqual(t *testing.T, got, want llm.Message) {
 		}
 		for i := range wantMessage.Blocks {
 			assertBlockEqual(t, gotMessage.Blocks[i], wantMessage.Blocks[i])
+		}
+	case llm.WorkflowResultMessage:
+		gotMessage, ok := got.(llm.WorkflowResultMessage)
+		if !ok || !gotMessage.Timestamp.Equal(wantMessage.Timestamp) || gotMessage.Name != wantMessage.Name || gotMessage.Input != wantMessage.Input || gotMessage.Status != wantMessage.Status || gotMessage.Summary != wantMessage.Summary {
+			t.Fatalf("message = %#v, want %#v", got, want)
 		}
 	case llm.ToolOutputMessage:
 		gotMessage, ok := got.(llm.ToolOutputMessage)

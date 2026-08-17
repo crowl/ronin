@@ -85,6 +85,26 @@ func (m AssistantMessage) Thinking() string {
 	return text.String()
 }
 
+type WorkflowStatus string
+
+const (
+	WorkflowStatusCompleted WorkflowStatus = "completed"
+	WorkflowStatusFailed    WorkflowStatus = "failed"
+	WorkflowStatusCancelled WorkflowStatus = "cancelled"
+)
+
+type WorkflowResultMessage struct {
+	Timestamp time.Time
+	Name      string
+	Input     string
+	Status    WorkflowStatus
+	Summary   string
+}
+
+func (m WorkflowResultMessage) Text() string {
+	return "Workflow " + m.Name + " " + string(m.Status) + ".\nInput:\n" + m.Input + "\nSummary:\n" + m.Summary
+}
+
 type ToolOutputMessage struct {
 	Timestamp               time.Time
 	ToolName                string
@@ -109,8 +129,9 @@ type ErrorMessage struct {
 // Message is a sealed interface that marks all LLM messages
 type Message interface{ message() }
 
-func (UserMessage) message()       {}
-func (AssistantMessage) message()  {}
-func (ToolOutputMessage) message() {}
-func (ToolErrorMessage) message()  {}
-func (ErrorMessage) message()      {}
+func (UserMessage) message()           {}
+func (AssistantMessage) message()      {}
+func (WorkflowResultMessage) message() {}
+func (ToolOutputMessage) message()     {}
+func (ToolErrorMessage) message()      {}
+func (ErrorMessage) message()          {}

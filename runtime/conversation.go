@@ -242,6 +242,22 @@ func (c *Conversation) CompactConversation(ctx context.Context) error {
 	return nil
 }
 
+func (c *Conversation) RecordWorkflowResult(message llm.WorkflowResultMessage) error {
+	if message.Timestamp.IsZero() {
+		message.Timestamp = c.now()
+	}
+	updatedSession := c.session
+	updatedSession.Messages = append(append([]llm.Message(nil), c.session.Messages...), message)
+	updatedSession.UpdatedAt = c.now()
+	if c.sessionStore != nil && c.session.ID != "" {
+		if err := c.sessionStore.Save(updatedSession); err != nil {
+			return fmt.Errorf("save workflow result: %w", err)
+		}
+	}
+	c.session = updatedSession
+	return nil
+}
+
 func (c *Conversation) NewConversation() error {
 	if c.sessionStore != nil && c.session.ID != "" {
 		model := c.modelClient.Model()

@@ -224,6 +224,9 @@ func buildCompactionFactSheet(messages []llm.Message, sessionPath string) string
 					_, _ = fmt.Fprintf(&b, "  tool_call %s args=%s\n", call.Name, compactOneLine(fmt.Sprintf("%v", call.Arguments), 400))
 				}
 			}
+		case llm.WorkflowResultMessage:
+			prefix := fmt.Sprintf("- %03d workflow %s %s", i+1, typedMsg.Name, typedMsg.Status)
+			_, _ = fmt.Fprintf(&b, "%s input=%s summary=%s\n", prefix, compactOneLine(typedMsg.Input, 500), compactOneLine(typedMsg.Summary, 700))
 		case llm.ToolOutputMessage:
 			prefix := fmt.Sprintf("- %03d %s", i+1, "tool_result")
 			_, _ = fmt.Fprintf(&b, "%s %s: %s\n", prefix, typedMsg.ToolName, compactOneLine(typedMsg.ToolOutput, 700))
