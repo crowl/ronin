@@ -382,10 +382,6 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string) work
 	var summarizationPolicy runtime.ToolOutputSummarizationPolicy
 
 	init := func() {
-		if err := setupProviders(); err != nil {
-			initErr = err
-			return
-		}
 		if len(llm.Models()) == 0 {
 			initErr = fmt.Errorf("no models available, please define at least one of OPENAI_API_KEY, GEMINI_API_KEY or ANTHROPIC_API_KEY env vars, or configure local ChatGPT/Codex OAuth credentials")
 			return
