@@ -122,6 +122,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	workflowsDir, err := config.WorkflowsDir()
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "failed to resolve workflows directory: %v\n", err)
+		os.Exit(1)
+	}
+	workflowCatalog, err := workflow.LoadCatalog(workflowsDir)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "failed to load workflows: %v\n", err)
+		os.Exit(1)
+	}
+
 	var skills []runtime.Skill
 	var contextFiles []runtime.ContextFile
 
@@ -160,6 +171,11 @@ func main() {
 		shell.New(workingDir),
 		gosemantic.NewFindSymbol(workingDir),
 		gosemantic.NewOutlinePackage(workingDir),
+	}
+
+	workflowAgent := newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag)
+	if len(workflowCatalog.Workflows()) > 0 {
+		tools = append(tools, workflow.NewTool(workflowCatalog, workingDir, workflowAgent))
 	}
 
 	systemPrompt, err := runtime.BuildSystemPrompt(runtime.SystemPromptInput{
@@ -322,7 +338,7 @@ func main() {
 		os.Exit(0)
 	}
 
-	if err := runTUI(conv); err != nil {
+	if err := runTUI(conv, workflowCatalog, workflowAgent); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
 	}
@@ -479,7 +495,7 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string) work
 		if err != nil {
 			return workflow.AgentResult{}, err
 		}
-		text, err := runAgent(ctx, conv, req.Prompt)
+		text, err := runAgent(ctx, conv, req.Prompt, req.Progress)
 		if err != nil {
 			return workflow.AgentResult{}, err
 		}
@@ -856,12 +872,42 @@ type prompter interface {
 	Prompt(context.Context, string) (<-chan runtime.Event, <-chan error)
 }
 
-func runAgent(ctx context.Context, conv prompter, prompt string) (string, error) {
+func runAgent(ctx context.Context, conv prompter, prompt string, progress func(workflow.AgentEvent)) (string, error) {
 	var output strings.Builder
 	events, errs := conv.Prompt(ctx, prompt)
 	for event := range events {
-		if delta, ok := event.(runtime.AssistantMessageDeltaReceived); ok {
-			output.WriteString(delta.Text)
+		switch event := event.(type) {
+		case runtime.AssistantThinkingDeltaReceived:
+			if progress != nil {
+				progress(workflow.AgentThinkingDelta{Text: event.Text})
+			}
+		case runtime.AssistantMessageDeltaReceived:
+			output.WriteString(event.Text)
+			if progress != nil {
+				progress(workflow.AgentTextDelta{Text: event.Text})
+			}
+		case runtime.ToolExecutionStarted:
+			if progress != nil {
+				progress(workflow.AgentToolStarted{ID: event.CallID, Title: event.CallTitle})
+			}
+		case runtime.ToolExecutionOutputDeltaReceived:
+			if progress != nil {
+				progress(workflow.AgentToolOutput{ID: event.CallID, Artifact: event.Artifact})
+			}
+		case runtime.ToolExecutionResultReceived:
+			if progress != nil {
+				for _, artifact := range event.Artifacts {
+					progress(workflow.AgentToolOutput{ID: event.CallID, Artifact: artifact})
+				}
+			}
+		case runtime.ToolExecutionFailed:
+			if progress != nil {
+				progress(workflow.AgentToolFailed{ID: event.CallID, Error: event.Error.Error()})
+			}
+		case runtime.ToolExecutionEnded:
+			if progress != nil {
+				progress(workflow.AgentToolEnded{ID: event.CallID})
+			}
 		}
 	}
 	if err, ok := <-errs; ok && err != nil {
@@ -907,7 +953,16 @@ func runPrompt(ctx context.Context, conv prompter, prompt string, output io.Writ
 	return nil
 }
 
-func runTUI(conv *runtime.Conversation) error {
+type workflowRunner struct {
+	workingDir string
+	agent      workflow.AgentFunc
+}
+
+func (r workflowRunner) Run(ctx context.Context, item workflow.Workflow, input string, emit func(workflow.Event)) workflow.Result {
+	return workflow.Run(ctx, item, r.workingDir, input, r.agent, emit)
+}
+
+func runTUI(conv *runtime.Conversation, catalog *workflow.Catalog, agent workflow.AgentFunc) error {
 	models := llm.Models()
 
 	switchModelCmds := make([]tui.Command, len(models))
@@ -930,6 +985,9 @@ func runTUI(conv *runtime.Conversation) error {
 		tui.StartNewConversation{},
 		tui.CompactConversation{},
 	}
+	for _, item := range catalog.Workflows() {
+		cmds = append(cmds, tui.InvokeWorkflow{Workflow: item})
+	}
 
 	cmds = append(cmds, switchModelCmds...)
 	cmds = append(cmds, switchReasoningLevelCmds...)
@@ -943,10 +1001,11 @@ func runTUI(conv *runtime.Conversation) error {
 	defer cancel()
 
 	if err := tui.Run(ctx, tui.Config{
-		Conversation: conv,
-		Commands:     cmds,
-		Input:        os.Stdin,
-		Output:       os.Stdout,
+		Conversation:   conv,
+		WorkflowRunner: workflowRunner{workingDir: conv.CWD(), agent: agent},
+		Commands:       cmds,
+		Input:          os.Stdin,
+		Output:         os.Stdout,
 	}); err != nil {
 		return fmt.Errorf("run tui: %w", err)
 	}

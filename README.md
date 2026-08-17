@@ -108,6 +108,26 @@ ronin.log(result.text)
 
 Every `ronin.run_agent` call starts a fresh conversation, but all agents receive the same working directory and tool access. They therefore coordinate through working-tree changes and through text explicitly included in later prompts.
 
+### Global workflow catalog and TUI
+
+Named workflows for interactive use are loaded once when Ronin starts from the global config directory:
+
+```text
+$XDG_CONFIG_HOME/ronin/workflows/
+```
+
+or, when `XDG_CONFIG_HOME` is unset:
+
+```text
+$HOME/.config/ronin/workflows/
+```
+
+Place flat, lower-case `.lua` files there, such as `implement.lua`. Subdirectories and non-Lua files are ignored. The filename stem is the workflow name. Restart Ronin after adding or changing catalog entries.
+
+In the TUI, choose `/workflow:implement`, then enter or paste the input that should become `ronin.input`. Escape leaves workflow-input mode, while Enter starts the workflow. Progress is shown as a compact timeline; use Ctrl+O to expand nested agent and tool details. A compact workflow result is saved with the conversation so later prompts and resumed sessions can discuss it.
+
+The primary conversational agent also receives a `run_workflow` tool when catalog workflows exist. You can develop a prompt in conversation and ask the agent to invoke a named workflow with it. Nested workflow agents do not receive this tool.
+
 For implementing a software requirement, a useful bounded loop is:
 
 1. Use a strong reasoning model once to inspect the repository and produce acceptance criteria and a plan without modifying files.
