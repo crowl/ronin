@@ -11,7 +11,12 @@ import (
 	"github.com/crowl/ronin/runtime"
 	"github.com/crowl/ronin/tui/internal/render"
 	"github.com/crowl/ronin/tui/internal/terminal"
+	"github.com/crowl/ronin/workflow"
 )
+
+type WorkflowRunner interface {
+	Run(context.Context, workflow.Workflow, string, func(workflow.Event)) workflow.Result
+}
 
 type Conversation interface {
 	CWD() string
@@ -19,6 +24,7 @@ type Conversation interface {
 	ReasoningLevel() llm.ReasoningLevel
 	ContextUsage() llm.Usage
 	Messages() []llm.Message
+	RecordWorkflowResult(llm.WorkflowResultMessage) error
 	NewConversation() error
 	CompactConversation(context.Context) error
 	SwitchModel(llm.Model) error
@@ -28,11 +34,12 @@ type Conversation interface {
 }
 
 type Config struct {
-	Conversation Conversation
-	Commands     []Command
-	Input        *os.File
-	Output       *os.File
-	Theme        Theme
+	Conversation   Conversation
+	WorkflowRunner WorkflowRunner
+	Commands       []Command
+	Input          *os.File
+	Output         *os.File
+	Theme          Theme
 }
 
 func Run(ctx context.Context, cfg Config) error {
@@ -62,11 +69,12 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 
 	application, err := newApp(appConfig{
-		Terminal:     term,
-		Conversation: cfg.Conversation,
-		Renderer:     renderer,
-		Commands:     cfg.Commands,
-		Theme:        theme,
+		Terminal:       term,
+		Conversation:   cfg.Conversation,
+		WorkflowRunner: cfg.WorkflowRunner,
+		Renderer:       renderer,
+		Commands:       cfg.Commands,
+		Theme:          theme,
 	})
 	if err != nil {
 		return fmt.Errorf("create app: %w", err)

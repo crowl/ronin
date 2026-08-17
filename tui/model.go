@@ -12,6 +12,7 @@ import (
 	"github.com/crowl/ronin/tool"
 	"github.com/crowl/ronin/tui/internal/editor"
 	"github.com/crowl/ronin/tui/internal/terminal"
+	"github.com/crowl/ronin/workflow"
 )
 
 type pendingTextDeltaKind int
@@ -20,6 +21,10 @@ const (
 	pendingTextDeltaNone pendingTextDeltaKind = iota
 	pendingTextDeltaThinking
 	pendingTextDeltaAssistant
+
+	maxWorkflowEntries    = 1024
+	maxWorkflowTextSize   = 16 * 1024
+	maxWorkflowDetailSize = 128 * 1024
 )
 
 type appModel struct {
@@ -36,6 +41,7 @@ type appModel struct {
 	toolsExpanded bool
 
 	steeringPrompt string
+	workflowInput  *workflow.Workflow
 
 	indicatorFrame int
 
@@ -63,6 +69,11 @@ type runCommandAction struct {
 	Command Command
 }
 
+type runWorkflowAction struct {
+	Workflow workflow.Workflow
+	Input    string
+}
+
 type modelAction interface{ modelAction() }
 
 func (noAction) modelAction()           {}
@@ -70,6 +81,7 @@ func (exitAction) modelAction()         {}
 func (cancelPromptAction) modelAction() {}
 func (submitPromptAction) modelAction() {}
 func (runCommandAction) modelAction()   {}
+func (runWorkflowAction) modelAction()  {}
 
 func newAppModel(commands []Command, theme Theme) (*appModel, error) {
 	appMenu, err := newMenu(commands)
@@ -96,6 +108,8 @@ func (m *appModel) populateInitialBoxes(conversation Conversation) {
 			m.boxes = append(m.boxes, userMessageBox{Text: msg.Text})
 		case llm.ErrorMessage:
 			m.boxes = append(m.boxes, errorMessageBox{Text: msg.Error.Error()})
+		case llm.WorkflowResultMessage:
+			m.boxes = append(m.boxes, workflowBox{Name: msg.Name, Input: msg.Input, Status: string(msg.Status), Summary: msg.Summary, StartedAt: msg.Timestamp, EndedAt: msg.Timestamp})
 		case llm.AssistantMessage:
 			for _, b := range msg.Blocks {
 				switch block := b.(type) {
@@ -158,6 +172,11 @@ func (m *appModel) handleKey(key terminal.Key) (modelUpdate, error) {
 	}
 
 	if key.Type == terminal.KeyEscape {
+		if m.workflowInput != nil && !m.working {
+			m.workflowInput = nil
+			m.editor.Clear()
+			return modelUpdate{Render: true}, nil
+		}
 		if m.working {
 			m.boxes = append(m.boxes, errorMessageBox{Text: "Operation canceled"})
 			return modelUpdate{Render: true, Action: cancelPromptAction{}}, nil
@@ -207,6 +226,11 @@ func (m *appModel) handleKey(key terminal.Key) (modelUpdate, error) {
 		return modelUpdate{Render: true}, nil
 	case editor.SubmitPrompt:
 		m.editor.Clear()
+		if m.workflowInput != nil {
+			item := *m.workflowInput
+			m.workflowInput = nil
+			return modelUpdate{Render: true, Action: runWorkflowAction{Workflow: item, Input: fx.Prompt}}, nil
+		}
 		return modelUpdate{Render: true, Action: submitPromptAction{Prompt: fx.Prompt}}, nil
 	}
 
@@ -219,6 +243,115 @@ func (m *appModel) startPrompt(prompt string) {
 	m.workingLabel = "Working"
 	m.indicatorFrame = 0
 	m.saveError = ""
+}
+
+func (m *appModel) enterWorkflowInput(item workflow.Workflow) {
+	m.workflowInput = &item
+	m.editor.Clear()
+	m.menu.Hide()
+}
+
+func (m *appModel) startWorkflow(item workflow.Workflow, input string) {
+	m.boxes = append(m.boxes, workflowBox{Name: item.Name, Input: input, StartedAt: time.Now()})
+	m.working = true
+	m.workingLabel = "Running workflow " + item.Name
+	m.indicatorFrame = 0
+	m.saveError = ""
+}
+
+func (m *appModel) handleWorkflowEvent(event workflow.Event, now time.Time) modelUpdate {
+	index := findWorkflowBoxIndex(m.boxes)
+	if index == -1 {
+		return modelUpdate{}
+	}
+	box := m.boxes[index].(workflowBox)
+	switch event := event.(type) {
+	case workflow.Log:
+		box.Entries = appendWorkflowEntry(box.Entries, workflowEntry{Text: event.Text})
+	case workflow.AgentStarted:
+		box.Entries = appendWorkflowEntry(box.Entries, workflowEntry{Text: fmt.Sprintf("Agent %d started", event.Invocation), Detail: event.Request.Prompt})
+	case workflow.AgentEventReceived:
+		switch progress := event.Event.(type) {
+		case workflow.AgentThinkingDelta:
+			box.Entries = appendWorkflowEntry(box.Entries, workflowEntry{Text: fmt.Sprintf("Agent %d thinking", event.Invocation), Detail: progress.Text})
+		case workflow.AgentTextDelta:
+			box.Entries = appendWorkflowEntry(box.Entries, workflowEntry{Text: fmt.Sprintf("Agent %d response", event.Invocation), Detail: progress.Text})
+		case workflow.AgentToolStarted:
+			box.Entries = appendWorkflowEntry(box.Entries, workflowEntry{Text: fmt.Sprintf("Agent %d: %s", event.Invocation, progress.Title)})
+		case workflow.AgentToolOutput:
+			box.Entries = appendWorkflowEntry(box.Entries, workflowEntry{Text: fmt.Sprintf("Agent %d tool output", event.Invocation), Artifacts: []tool.Artifact{progress.Artifact}})
+		case workflow.AgentToolFailed:
+			box.Entries = appendWorkflowEntry(box.Entries, workflowEntry{Text: fmt.Sprintf("Agent %d tool failed", event.Invocation), Detail: progress.Error})
+		}
+	case workflow.AgentFinished:
+		text := fmt.Sprintf("Agent %d finished", event.Invocation)
+		if event.Error != "" {
+			text = fmt.Sprintf("Agent %d failed", event.Invocation)
+		}
+		box.Entries = appendWorkflowEntry(box.Entries, workflowEntry{Text: text, Detail: event.Text + event.Error})
+	case workflow.Finished:
+		box.Status = string(event.Result.Status)
+		box.Summary = event.Result.Summary
+		box.EndedAt = now
+	}
+	m.boxes[index] = box
+	return modelUpdate{Render: true}
+}
+
+func appendWorkflowEntry(entries []workflowEntry, entry workflowEntry) []workflowEntry {
+	if len(entry.Text) > maxWorkflowTextSize {
+		entry.Text = entry.Text[:maxWorkflowTextSize] + "..."
+	}
+	if len(entry.Detail) > maxWorkflowDetailSize {
+		entry.Detail = entry.Detail[:maxWorkflowDetailSize] + "\n... detail truncated"
+	}
+	if len(entries) > 0 && entries[len(entries)-1].Text == entry.Text {
+		previous := &entries[len(entries)-1]
+		if entry.Detail != "" {
+			remaining := maxWorkflowDetailSize - len(previous.Detail)
+			if remaining > 0 {
+				if len(entry.Detail) > remaining {
+					entry.Detail = entry.Detail[:remaining]
+				}
+				previous.Detail += entry.Detail
+			}
+		}
+		if len(entry.Artifacts) > 0 {
+			previous.Artifacts = append([]tool.Artifact(nil), entry.Artifacts...)
+		}
+		return entries
+	}
+	if len(entries) >= maxWorkflowEntries {
+		copy(entries, entries[1:])
+		entries[len(entries)-1] = entry
+		return entries
+	}
+	return append(entries, entry)
+}
+
+func (m *appModel) finishWorkflow(err error) modelUpdate {
+	m.working = false
+	m.statusBarCache.Reset()
+	if err != nil {
+		m.saveError = err.Error()
+	}
+
+	index := findWorkflowBoxIndex(m.boxes)
+	if index != -1 {
+		box := m.boxes[index].(workflowBox)
+		if box.Status == string(workflow.StatusCancelled) {
+			m.steeringPrompt = ""
+			return modelUpdate{Render: true}
+		}
+	}
+
+	nextPrompt := m.steeringPrompt
+	m.steeringPrompt = ""
+	update := modelUpdate{Render: true}
+	if nextPrompt != "" {
+		update.Action = submitPromptAction{Prompt: nextPrompt}
+	}
+	return update
 }
 
 func (m *appModel) startCompaction(item menuItem) {
@@ -433,6 +566,7 @@ func (m *appModel) lines(width int, conversation Conversation, now time.Time) ([
 	lines = append(lines, editorPresenter{
 		Text:   m.editor.Text(),
 		Cursor: m.editor.Cursor(),
+		Label:  m.editorLabel(),
 	}.Lines(width, m.theme)...)
 
 	if m.menu.Shown() {
@@ -457,6 +591,22 @@ func (m *appModel) lines(width int, conversation Conversation, now time.Time) ([
 	}.Lines(width, m.theme)...)
 
 	return lines, nil
+}
+
+func (m *appModel) editorLabel() string {
+	if m.workflowInput == nil {
+		return ""
+	}
+	return "Workflow input: " + m.workflowInput.Name
+}
+
+func findWorkflowBoxIndex(blocks []box) int {
+	for i := len(blocks) - 1; i >= 0; i-- {
+		if _, ok := blocks[i].(workflowBox); ok {
+			return i
+		}
+	}
+	return -1
 }
 
 func (m *appModel) queueTextDelta(kind pendingTextDeltaKind, text string) {

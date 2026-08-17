@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/tui/internal/render"
 	"github.com/crowl/ronin/tui/internal/terminal"
+	"github.com/crowl/ronin/workflow"
 )
 
 var errExitRequested = errors.New("exit requested")
@@ -23,11 +25,12 @@ type renderTarget interface {
 }
 
 type appConfig struct {
-	Terminal     terminalIO
-	Conversation Conversation
-	Renderer     renderTarget
-	Commands     []Command
-	Theme        Theme
+	Terminal       terminalIO
+	Conversation   Conversation
+	WorkflowRunner WorkflowRunner
+	Renderer       renderTarget
+	Commands       []Command
+	Theme          Theme
 }
 
 const (
@@ -44,17 +47,19 @@ func newApp(cfg appConfig) (*app, error) {
 	model.populateInitialBoxes(cfg.Conversation)
 
 	return &app{
-		conversation: cfg.Conversation,
-		events:       make(chan event, defaultEventsBufferLen),
-		terminal:     cfg.Terminal,
-		renderer:     cfg.Renderer,
-		model:        model,
+		conversation:   cfg.Conversation,
+		workflowRunner: cfg.WorkflowRunner,
+		events:         make(chan event, defaultEventsBufferLen),
+		terminal:       cfg.Terminal,
+		renderer:       cfg.Renderer,
+		model:          model,
 	}, nil
 }
 
 type app struct {
-	conversation Conversation
-	events       chan event
+	conversation   Conversation
+	workflowRunner WorkflowRunner
+	events         chan event
 
 	terminal terminalIO
 	renderer renderTarget
@@ -178,6 +183,11 @@ func (app *app) handleAppEvent(ctx context.Context, event event) error {
 	case conversationCompactionDone:
 		app.cancelFunc = nil
 		return app.applyUpdate(ctx, app.model.finishCompaction(typedEvent.Err))
+	case workflowEventReceived:
+		return app.applyUpdate(ctx, app.model.handleWorkflowEvent(typedEvent.Event, time.Now()))
+	case workflowDone:
+		app.cancelFunc = nil
+		return app.applyUpdate(ctx, app.model.finishWorkflow(typedEvent.Err))
 	}
 	return nil
 }
@@ -209,6 +219,8 @@ func (app *app) applyUpdate(ctx context.Context, update modelUpdate) error {
 		if err := app.runCommand(ctx, action.Item, action.Command); err != nil {
 			return err
 		}
+	case runWorkflowAction:
+		app.runWorkflow(ctx, action.Workflow, action.Input)
 	}
 
 	if update.Render {
@@ -294,12 +306,45 @@ func (app *app) runCommand(ctx context.Context, item menuItem, command Command) 
 		}
 	case InvokeSkill:
 		_ = typedCommand.Skill
+	case InvokeWorkflow:
+		app.model.enterWorkflowInput(typedCommand.Workflow)
 	case Exit:
 		return errExitRequested
 	}
 
 	app.model.recordCommand(item, err)
 	return nil
+}
+
+func (app *app) runWorkflow(ctx context.Context, item workflow.Workflow, input string) {
+	app.model.startWorkflow(item, input)
+	if app.workflowRunner == nil {
+		app.model.handleWorkflowEvent(workflow.Finished{Result: workflow.Result{Name: item.Name, Input: input, Status: workflow.StatusFailed, Summary: "workflow runner is not configured"}}, time.Now())
+		_ = app.applyUpdate(ctx, app.model.finishWorkflow(nil))
+		return
+	}
+
+	workflowCtx, cancel := context.WithCancel(ctx)
+	app.cancelFunc = cancel
+	app.requestRender()
+	go func() {
+		defer cancel()
+		result := app.workflowRunner.Run(workflowCtx, item, input, func(event workflow.Event) {
+			select {
+			case app.events <- workflowEventReceived{Event: event}:
+			case <-ctx.Done():
+			}
+		})
+		message := llm.WorkflowResultMessage{
+			Timestamp: time.Now(), Name: result.Name, Input: result.Input,
+			Status: llm.WorkflowStatus(result.Status), Summary: result.Summary,
+		}
+		err := app.conversation.RecordWorkflowResult(message)
+		select {
+		case app.events <- workflowDone{Err: err}:
+		case <-ctx.Done():
+		}
+	}()
 }
 
 func (app *app) compactConversation(ctx context.Context, item menuItem) {

@@ -3,6 +3,7 @@ package tui
 import (
 	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/runtime"
+	"github.com/crowl/ronin/workflow"
 )
 
 type StartNewConversation struct{}
@@ -20,6 +21,8 @@ type SwitchTheme struct {
 
 type InvokeSkill struct{ Skill runtime.Skill }
 
+type InvokeWorkflow struct{ Workflow workflow.Workflow }
+
 type Exit struct{}
 
 // Command is a sealed interface to mark all application commands
@@ -31,4 +34,5 @@ func (SwitchModel) command()          {}
 func (SwitchReasoningLevel) command() {}
 func (SwitchTheme) command()          {}
 func (InvokeSkill) command()          {}
+func (InvokeWorkflow) command()       {}
 func (Exit) command()                 {}
