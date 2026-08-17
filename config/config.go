@@ -11,8 +11,9 @@ import (
 const (
 	appName = "ronin"
 
-	configFileName = "config.json"
-	skillsDirName  = "skills"
+	configFileName   = "config.json"
+	skillsDirName    = "skills"
+	workflowsDirName = "workflows"
 
 	defaultModelProvider  = "openai"
 	defaultModelName      = "gpt-5.5"
@@ -114,6 +115,14 @@ func SkillsDir() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, skillsDirName), nil
+}
+
+func WorkflowsDir() (string, error) {
+	dir, err := Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, workflowsDirName), nil
 }
 
 func ConfigFilePath() (string, error) {

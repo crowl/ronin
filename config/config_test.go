@@ -60,6 +60,18 @@ func TestSkillsDir(t *testing.T) {
 	}
 }
 
+func TestWorkflowsDir(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "/custom/xdg")
+
+	dir, err := config.WorkflowsDir()
+	if err != nil {
+		t.Fatalf("WorkflowsDir() error = %v", err)
+	}
+	if want := filepath.Join("/custom/xdg", "ronin", "workflows"); dir != want {
+		t.Fatalf("WorkflowsDir() = %q, want %q", dir, want)
+	}
+}
+
 func TestLoad(t *testing.T) {
 	t.Run("first run writes default and returns it", func(t *testing.T) {
 		base := t.TempDir()
