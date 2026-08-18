@@ -71,6 +71,20 @@ export OPENAI_BASE_URL=https://proxy.example.com/v1
 
 This is an API root, not a complete endpoint. Ronin appends `/responses`, so this example sends requests to `https://proxy.example.com/v1/responses`; trailing slashes are normalized. Setting `OPENAI_BASE_URL` requires `OPENAI_API_KEY` and bypasses local ChatGPT/Codex OAuth credentials.
 
+### Gemini and Anthropic API root overrides
+
+Set the provider-specific API root alongside its API key to route requests through a compatible proxy or alternate host:
+
+```sh
+export GEMINI_API_KEY=...
+export GEMINI_BASE_URL=https://proxy.example.com/v1beta
+
+export ANTHROPIC_API_KEY=...
+export ANTHROPIC_BASE_URL=https://proxy.example.com/v1
+```
+
+These variables are API roots, not complete operation endpoints. Ronin appends `/interactions` for Gemini requests, so the Gemini example targets `https://proxy.example.com/v1beta/interactions`. It appends `/messages` for Anthropic requests, so the Anthropic example targets `https://proxy.example.com/v1/messages`. Trailing slashes are normalized.
+
 To set up your local OAuth credentials, run the official login flow:
 ```sh
 npx @openai/codex login

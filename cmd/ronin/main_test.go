@@ -17,6 +17,7 @@ import (
 	"github.com/crowl/ronin/config"
 	"github.com/crowl/ronin/jsonschema"
 	"github.com/crowl/ronin/llm"
+	"github.com/crowl/ronin/llm/anthropic"
 	"github.com/crowl/ronin/llm/openai"
 	"github.com/crowl/ronin/runtime"
 	"github.com/crowl/ronin/session"
@@ -54,7 +55,12 @@ func TestSetupProvidersDefaultOpenAIConfiguration(t *testing.T) {
 		if err := os.Unsetenv("OPENAI_BASE_URL"); err != nil {
 			t.Fatalf("unset OPENAI_BASE_URL: %v", err)
 		}
-		t.Setenv("HOME", t.TempDir())
+		if err := os.Unsetenv("GEMINI_BASE_URL"); err != nil {
+			t.Fatalf("unset GEMINI_BASE_URL: %v", err)
+		}
+		if err := os.Unsetenv("ANTHROPIC_BASE_URL"); err != nil {
+			t.Fatalf("unset ANTHROPIC_BASE_URL: %v", err)
+		}
 
 		switch scenario {
 		case "no-credentials":
@@ -111,7 +117,11 @@ func TestSetupProvidersCustomOpenAIConfiguration(t *testing.T) {
 	for _, name := range []string{"GEMINI_API_KEY", "ANTHROPIC_API_KEY", "CHATGPT_LOCAL_HOME", "CODEX_HOME"} {
 		t.Setenv(name, "")
 	}
-	t.Setenv("HOME", t.TempDir())
+	for _, name := range []string{"GEMINI_BASE_URL", "ANTHROPIC_BASE_URL"} {
+		if err := os.Unsetenv(name); err != nil {
+			t.Fatalf("unset %s: %v", name, err)
+		}
+	}
 
 	t.Run("missing API key", func(t *testing.T) {
 		t.Setenv("OPENAI_BASE_URL", "https://proxy.example.com/v1")
@@ -176,6 +186,100 @@ func TestSetupProvidersCustomOpenAIConfiguration(t *testing.T) {
 	})
 }
 
+func TestSetupProvidersCustomProviderConfiguration(t *testing.T) {
+	if scenario := os.Getenv("RONIN_SETUP_PROVIDERS_PROVIDER_SCENARIO"); scenario != "" {
+		for _, name := range []string{
+			"OPENAI_API_KEY", "OPENAI_BASE_URL",
+			"GEMINI_API_KEY", "GEMINI_BASE_URL",
+			"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL",
+			"CHATGPT_LOCAL_HOME", "CODEX_HOME",
+		} {
+			if err := os.Unsetenv(name); err != nil {
+				t.Fatalf("unset %s: %v", name, err)
+			}
+		}
+		t.Setenv("HOME", t.TempDir())
+
+		switch scenario {
+		case "gemini-missing-key":
+			t.Setenv("GEMINI_BASE_URL", "https://proxy.example.com/v1beta")
+		case "anthropic-missing-key":
+			t.Setenv("ANTHROPIC_BASE_URL", "https://proxy.example.com/v1")
+		case "gemini-empty-url":
+			t.Setenv("GEMINI_API_KEY", "key")
+			t.Setenv("GEMINI_BASE_URL", "")
+		case "anthropic-empty-url":
+			t.Setenv("ANTHROPIC_API_KEY", "key")
+			t.Setenv("ANTHROPIC_BASE_URL", "")
+		case "gemini-invalid-url":
+			t.Setenv("GEMINI_API_KEY", "key")
+			t.Setenv("GEMINI_BASE_URL", "ftp://proxy.example.com/v1beta")
+		case "anthropic-invalid-url":
+			t.Setenv("ANTHROPIC_API_KEY", "key")
+			t.Setenv("ANTHROPIC_BASE_URL", "ftp://proxy.example.com/v1")
+		case "gemini-custom":
+			t.Setenv("GEMINI_API_KEY", "key")
+			t.Setenv("GEMINI_BASE_URL", "https://proxy.example.com/v1beta///")
+		case "anthropic-custom":
+			t.Setenv("ANTHROPIC_API_KEY", "key")
+			t.Setenv("ANTHROPIC_BASE_URL", "https://proxy.example.com/v1///")
+		default:
+			t.Fatalf("unknown scenario %q", scenario)
+		}
+
+		err := setupProviders()
+		switch scenario {
+		case "gemini-missing-key", "anthropic-missing-key", "gemini-empty-url", "anthropic-empty-url", "gemini-invalid-url", "anthropic-invalid-url":
+			if err == nil {
+				t.Fatalf("setupProviders() error = nil, want failure")
+			}
+			if !strings.Contains(err.Error(), "BASE_URL") {
+				t.Fatalf("setupProviders() error = %v, want base URL context", err)
+			}
+			if strings.Contains(err.Error(), "key") {
+				t.Fatalf("setupProviders() error exposes API key: %v", err)
+			}
+		case "gemini-custom":
+			if err != nil {
+				t.Fatalf("setupProviders() error = %v", err)
+			}
+			client, err := llm.LoadModelClient(llm.Model{Provider: "google", Name: "gemini-3.1-pro-preview", ContextWindow: 1048576}, llm.ReasoningLevelOff)
+			if err != nil {
+				t.Fatalf("load Gemini model: %v", err)
+			}
+			if got := reflect.ValueOf(client).Elem().FieldByName("baseURL").String(); got != "https://proxy.example.com/v1beta" {
+				t.Fatalf("Gemini base URL = %q", got)
+			}
+		case "anthropic-custom":
+			if err != nil {
+				t.Fatalf("setupProviders() error = %v", err)
+			}
+			client, err := llm.LoadModelClient(anthropic.ClaudeHaiku45, llm.ReasoningLevelOff)
+			if err != nil {
+				t.Fatalf("load Anthropic model: %v", err)
+			}
+			if got := reflect.ValueOf(client).Elem().FieldByName("baseURL").String(); got != "https://proxy.example.com/v1/messages" {
+				t.Fatalf("Anthropic base URL = %q", got)
+			}
+		}
+		return
+	}
+
+	for _, scenario := range []string{
+		"gemini-missing-key", "anthropic-missing-key",
+		"gemini-empty-url", "anthropic-empty-url",
+		"gemini-invalid-url", "anthropic-invalid-url",
+		"gemini-custom", "anthropic-custom",
+	} {
+		t.Run(scenario, func(t *testing.T) {
+			cmd := exec.Command(os.Args[0], "-test.run=^TestSetupProvidersCustomProviderConfiguration$")
+			cmd.Env = append(os.Environ(), "RONIN_SETUP_PROVIDERS_PROVIDER_SCENARIO="+scenario)
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("setupProviders subprocess failed: %v\n%s", err, output)
+			}
+		})
+	}
+}
 func TestParseWorkflowCommand(t *testing.T) {
 	t.Run("not a workflow command", func(t *testing.T) {
 		got, workflowMode, err := parseWorkflowCommand([]string{"other"}, strings.NewReader("unused"))

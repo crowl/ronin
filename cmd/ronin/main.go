@@ -381,12 +381,28 @@ func setupProviders() error {
 			return fmt.Errorf("openai LLM provider setup failed: %w", err)
 		}
 	}
-	if apiKey := os.Getenv("GEMINI_API_KEY"); apiKey != "" {
+	if baseURL, ok := os.LookupEnv("GEMINI_BASE_URL"); ok {
+		apiKey := os.Getenv("GEMINI_API_KEY")
+		if apiKey == "" {
+			return fmt.Errorf("GEMINI_API_KEY is required when GEMINI_BASE_URL is set")
+		}
+		if err := google.SetupWithBaseURL(apiKey, baseURL); err != nil {
+			return fmt.Errorf("google LLM provider setup failed: %w", err)
+		}
+	} else if apiKey := os.Getenv("GEMINI_API_KEY"); apiKey != "" {
 		if err := google.Setup(apiKey); err != nil {
 			return fmt.Errorf("google LLM provider setup failed: %w", err)
 		}
 	}
-	if apiKey := os.Getenv("ANTHROPIC_API_KEY"); apiKey != "" {
+	if baseURL, ok := os.LookupEnv("ANTHROPIC_BASE_URL"); ok {
+		apiKey := os.Getenv("ANTHROPIC_API_KEY")
+		if apiKey == "" {
+			return fmt.Errorf("ANTHROPIC_API_KEY is required when ANTHROPIC_BASE_URL is set")
+		}
+		if err := anthropic.SetupWithBaseURL(apiKey, baseURL); err != nil {
+			return fmt.Errorf("anthropic LLM provider setup failed: %w", err)
+		}
+	} else if apiKey := os.Getenv("ANTHROPIC_API_KEY"); apiKey != "" {
 		if err := anthropic.Setup(apiKey); err != nil {
 			return fmt.Errorf("anthropic LLM provider setup failed: %w", err)
 		}
