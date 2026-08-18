@@ -32,7 +32,15 @@ import (
 	"github.com/crowl/ronin/workflow"
 )
 
+var version = "dev"
+
+func writeVersion(output io.Writer) error {
+	_, err := fmt.Fprintf(output, "ronin %s\n", version)
+	return err
+}
+
 func main() {
+	var versionFlag bool
 	var acpMode bool
 	var resume bool
 	var prompt string
@@ -42,6 +50,7 @@ func main() {
 	var contextFileFlags repeatedFlag
 	var skillFlags repeatedFlag
 
+	flag.BoolVar(&versionFlag, "version", false, "Print the Ronin version.")
 	flag.BoolVar(&acpMode, "acp", false, "Run an ACP server over stdin/stdout.")
 	flag.BoolVar(&resume, "resume", false, "Load the active session for the working directory instead of starting a fresh session.")
 	flag.StringVar(&prompt, "prompt", "", "Prompt to run without launching the TUI.")
@@ -52,6 +61,14 @@ func main() {
 	flag.Var(&skillFlags, "skill", "Skill name, skill directory, or SKILL.md path to include in prompt mode. May be repeated.")
 
 	flag.Parse()
+
+	if versionFlag {
+		if err := writeVersion(os.Stdout); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "failed to write version: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	workflowCmd, workflowMode, err := parseWorkflowCommand(flag.Args(), os.Stdin)
 	if err != nil {

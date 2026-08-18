@@ -1,0 +1,96 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out tagged commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Validate release tag
+        env:
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "invalid stable release tag: $TAG" >&2
+            exit 1
+          fi
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build and package release archives
+        env:
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf dist build
+          mkdir -p dist build
+
+          targets=(
+            "linux amd64 tar.gz"
+            "linux arm64 tar.gz"
+            "darwin amd64 tar.gz"
+            "darwin arm64 tar.gz"
+            "windows amd64 zip"
+            "windows arm64 zip"
+          )
+
+          for target in "${targets[@]}"; do
+            read -r goos goarch archive_type <<< "$target"
+            archive="ronin_${TAG}_${goos}_${goarch}.${archive_type}"
+            package_dir="build/${goos}_${goarch}"
+            rm -rf "$package_dir"
+            mkdir -p "$package_dir"
+
+            if [[ "$goos" == "windows" ]]; then
+              binary="$package_dir/ronin.exe"
+              archive_member="ronin.exe"
+            else
+              binary="$package_dir/ronin"
+              archive_member="ronin"
+            fi
+
+            GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 \
+              go build -trimpath -ldflags "-s -w -X main.version=${TAG}" \
+              -o "$binary" ./cmd/ronin
+
+            if [[ "$archive_type" == "tar.gz" ]]; then
+              tar -C "$package_dir" -czf "dist/$archive" "$archive_member"
+            else
+              (cd "$package_dir" && zip -q -j "../../dist/$archive" ronin.exe)
+            fi
+          done
+
+          (cd dist && sha256sum *.tar.gz *.zip > checksums.txt)
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" dist/*.tar.gz dist/*.zip dist/checksums.txt \
+            --title "$TAG" \
+            --generate-notes

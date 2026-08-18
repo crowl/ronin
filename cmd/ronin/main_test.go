@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -21,6 +22,30 @@ import (
 	"github.com/crowl/ronin/session"
 )
 
+func TestVersion(t *testing.T) {
+	original := version
+	t.Cleanup(func() { version = original })
+
+	for _, test := range []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{name: "development", value: "dev", want: "ronin dev\n"},
+		{name: "release", value: "v0.1.0", want: "ronin v0.1.0\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			version = test.value
+			var output bytes.Buffer
+			if err := writeVersion(&output); err != nil {
+				t.Fatalf("writeVersion() error = %v", err)
+			}
+			if got := output.String(); got != test.want {
+				t.Errorf("writeVersion() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
 func TestSetupProvidersDefaultOpenAIConfiguration(t *testing.T) {
 	if scenario := os.Getenv("RONIN_SETUP_PROVIDERS_DEFAULT_SCENARIO"); scenario != "" {
 		for _, name := range []string{"OPENAI_API_KEY", "GEMINI_API_KEY", "ANTHROPIC_API_KEY", "CHATGPT_LOCAL_HOME", "CODEX_HOME"} {

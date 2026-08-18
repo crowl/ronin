@@ -16,7 +16,22 @@ It is also a learning project: a way to understand coding harnesses by building 
 - Lean on the Go standard library and strive to keep external dependencies to a minimum.
 - Be a useful playground for people who want to experiment with conversation tools and harness design in Go.
 
-## Try it locally
+## Releases and installation
+
+Downloadable release archives are published on the [GitHub Releases page](https://github.com/crowl/ronin/releases). Each archive name follows `ronin_<tag>_<os>_<arch>`: `linux` and `darwin` identify the operating system, while `amd64` and `arm64` identify the CPU architecture. Linux and macOS releases are `.tar.gz` archives; Windows releases are `.zip` archives and contain `ronin.exe` at the archive root.
+
+After downloading an archive and `checksums.txt`, verify the archive from the directory containing both files:
+
+```sh
+sha256sum -c checksums.txt --ignore-missing
+```
+
+The source build reports `ronin dev`; release binaries report the tag they were built from, for example `ronin v0.1.0`:
+
+```sh
+ronin --version
+```
+
 
 The easiest way to try it is to clone the repository and run it from source.
 
