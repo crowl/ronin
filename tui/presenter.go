@@ -97,41 +97,7 @@ func renderBoxLinesAt(block box, width int, theme Theme, toolsExpanded bool, now
 		lines = append(lines, boxStyle.ApplyMeta(text.Fill(fmt.Sprintf("%s %.1fs", label, duration.Seconds()), width)))
 		lines = append(lines, boxStyle.ApplyBody(text.Fill("", width)))
 	case workflowBox:
-		boxStyle := theme.Box.ToolCall
-		lines = append(lines, boxStyle.ApplyBody(text.Fill("", width)))
-		title := "Workflow: " + typedBlock.Name
-		if typedBlock.Status != "" {
-			title += " (" + typedBlock.Status + ")"
-		}
-		lines = append(lines, boxStyle.ApplyTitle(text.Fill(title, width)))
-		lines = append(lines, boxStyle.ApplyMuted(text.Fill(" Input: "+typedBlock.Input, width)))
-		for _, entry := range typedBlock.Entries {
-			lines = append(lines, boxStyle.ApplyBody(text.Fill(" "+entry.Text, width)))
-			if toolsExpanded {
-				if entry.Detail != "" {
-					for _, detail := range text.Wrap("   ", entry.Detail, width) {
-						lines = append(lines, boxStyle.ApplyMuted(text.Fill(detail, width)))
-					}
-				}
-				for _, artifact := range entry.Artifacts {
-					lines = append(lines, toolArtifactLines(artifact, boxStyle, width)...)
-				}
-			}
-		}
-		if typedBlock.Summary != "" {
-			for _, summary := range text.Wrap(" Summary: ", typedBlock.Summary, width) {
-				lines = append(lines, boxStyle.ApplyBody(text.Fill(summary, width)))
-			}
-		}
-		endedAt := typedBlock.EndedAt
-		label := " Elapsed"
-		if endedAt.IsZero() {
-			endedAt = now
-		} else {
-			label = " Took"
-		}
-		lines = append(lines, boxStyle.ApplyMeta(text.Fill(fmt.Sprintf("%s %.1fs", label, max(0, endedAt.Sub(typedBlock.StartedAt).Seconds())), width)))
-		lines = append(lines, boxStyle.ApplyBody(text.Fill("", width)))
+		return renderWorkflowBoxLines(typedBlock, width, theme, toolsExpanded, now)
 	case systemMessageBox:
 		boxStyle := theme.Box.System
 		lines = append(lines, boxStyle.ApplyBody(text.Fill("", width)))

@@ -1,9 +1,13 @@
 package tui
 
 import (
+	"crypto/sha256"
 	"fmt"
+	"io"
 	"strings"
 	"time"
+
+	"github.com/crowl/ronin/tool"
 )
 
 type boxLineCache struct {
@@ -16,16 +20,17 @@ type boxLineCacheEntry struct {
 }
 
 type boxLineSignature struct {
-	Theme         Theme
-	Kind          string
-	Width         int
-	ToolsExpanded bool
-	ToolCallID    string
-	Title         string
-	Text          string
-	StartedAt     int64
-	EndedAt       int64
-	ElapsedBucket int64
+	Theme          Theme
+	Kind           string
+	Width          int
+	ToolsExpanded  bool
+	ToolCallID     string
+	Title          string
+	Text           string
+	WorkflowDigest [32]byte
+	StartedAt      int64
+	EndedAt        int64
+	ElapsedBucket  int64
 }
 
 func toolCallSignatureText(box toolCallBox) string {
@@ -75,6 +80,25 @@ func (c *boxLineCache) Reset() {
 	c.entries = nil
 }
 
+func writeWorkflowArtifactSignature(w io.Writer, artifact tool.Artifact) {
+	switch artifact := artifact.(type) {
+	case tool.TextArtifact:
+		_, _ = fmt.Fprintf(w, "text:%q;", artifact.Text)
+	case tool.ShellStreamArtifact:
+		_, _ = fmt.Fprintf(w, "shell:%q:%q;", artifact.Stream, artifact.Content)
+	case tool.FileArtifact:
+		_, _ = fmt.Fprintf(w, "file:%q:%q;", artifact.Path, artifact.Content)
+	case tool.FileRangeArtifact:
+		_, _ = fmt.Fprintf(w, "range:%q:%d:%d:%q;", artifact.Path, artifact.StartLine, artifact.EndLine, artifact.Content)
+	case tool.FileMetadataArtifact:
+		_, _ = fmt.Fprintf(w, "metadata:%q:%q;", artifact.Path, artifact.FileID)
+	case tool.UnifiedDiffArtifact:
+		_, _ = fmt.Fprintf(w, "diff:%q:%q;", artifact.Path, artifact.Diff)
+	default:
+		_, _ = fmt.Fprintf(w, "%T:%#v;", artifact, artifact)
+	}
+}
+
 func boxSignature(block box, width int, theme Theme, toolsExpanded bool, now time.Time) boxLineSignature {
 	signature := boxLineSignature{
 		Theme:         theme,
@@ -106,6 +130,28 @@ func boxSignature(block box, width int, theme Theme, toolsExpanded bool, now tim
 			}
 			signature.ElapsedBucket = int64((duration + 50*time.Millisecond) / (100 * time.Millisecond))
 		}
+	case workflowBox:
+		signature.Kind = "workflow"
+		signature.StartedAt = typedBlock.StartedAt.UnixNano()
+		signature.EndedAt = typedBlock.EndedAt.UnixNano()
+		if typedBlock.EndedAt.IsZero() {
+			duration := now.Sub(typedBlock.StartedAt)
+			if duration < 0 {
+				duration = 0
+			}
+			signature.ElapsedBucket = int64((duration + 50*time.Millisecond) / (100 * time.Millisecond))
+		}
+		signature.Text = fmt.Sprintf("%s:%s:%s:%s:%d:%d:%t", typedBlock.Name, typedBlock.Input, typedBlock.Status, typedBlock.Summary, typedBlock.TimelineBytes, len(typedBlock.Entries), typedBlock.TimelineTruncated)
+		digest := sha256.New()
+		_, _ = digest.Write([]byte(typedBlock.LatestActivity))
+		for _, entry := range typedBlock.Entries {
+			_, _ = digest.Write([]byte(entry.Text))
+			_, _ = digest.Write([]byte(entry.Detail))
+			for _, artifact := range entry.Artifacts {
+				writeWorkflowArtifactSignature(digest, artifact)
+			}
+		}
+		copy(signature.WorkflowDigest[:], digest.Sum(nil))
 	case systemMessageBox:
 		signature.Kind = "system"
 		signature.Text = typedBlock.Text

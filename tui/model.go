@@ -550,8 +550,25 @@ func (m *appModel) recordCommand(item menuItem, err error) {
 	}
 }
 
+func (m *appModel) boundWorkflowVisualTimeline(width int, now time.Time) {
+	if width < 1 {
+		width = 1
+	}
+	for index, block := range m.boxes {
+		workflow, ok := block.(workflowBox)
+		if !ok || workflow.TimelineTruncated {
+			continue
+		}
+		_, truncated := renderWorkflowBoxLinesState(workflow, width, m.theme, m.toolsExpanded, now)
+		if truncated {
+			workflow.TimelineTruncated = true
+			m.boxes[index] = workflow
+		}
+	}
+}
 func (m *appModel) lines(width int, conversation Conversation, now time.Time) ([]string, error) {
 	m.flushPendingTextDelta()
+	m.boundWorkflowVisualTimeline(width, now)
 
 	lines := []string{""}
 	lines = append(lines, m.boxLineCache.Lines(m.boxes, width, m.theme, m.toolsExpanded, now)...)

@@ -148,6 +148,44 @@ func TestToolArtifactLines(t *testing.T) {
 	})
 }
 
+func TestToolArtifactLinesBounded(t *testing.T) {
+	t.Run("expands tabs before wrapping text", func(t *testing.T) {
+		artifact := tool.TextArtifact{Text: "a\tb"}
+		boxStyle := DefaultTheme().Box.ToolCall
+
+		lines, more := toolArtifactLinesBounded(artifact, boxStyle, 5, 10)
+
+		if more {
+			t.Fatal("bounded rendering unexpectedly reported more content")
+		}
+		plain := plainLines(lines)
+		if len(plain) != 2 || strings.Contains(strings.Join(plain, ""), "…") {
+			t.Fatalf("tab wrapping = %#v, want two lines without truncation", plain)
+		}
+		if strings.TrimSpace(plain[0]) != "a" || strings.TrimSpace(plain[1]) != "b" {
+			t.Fatalf("tab wrapping = %#v, want a and b on separate lines", plain)
+		}
+	})
+
+	t.Run("expands tabs before wrapping numbered content", func(t *testing.T) {
+		artifact := tool.FileArtifact{Path: "main.go", Content: "a\tb"}
+		boxStyle := DefaultTheme().Box.ToolCall
+
+		lines, more := toolArtifactLinesBounded(artifact, boxStyle, 10, 10)
+
+		if more {
+			t.Fatal("bounded rendering unexpectedly reported more content")
+		}
+		plain := plainLines(lines)
+		if len(plain) != 2 || strings.Contains(strings.Join(plain, ""), "…") {
+			t.Fatalf("numbered tab wrapping = %#v, want two lines without truncation", plain)
+		}
+		if !strings.Contains(plain[0], "1") || !strings.Contains(plain[0], "a") || strings.TrimSpace(plain[1]) != "b" {
+			t.Fatalf("numbered tab wrapping = %#v", plain)
+		}
+	})
+}
+
 func plainLines(lines []string) []string {
 	out := make([]string, len(lines))
 	for i, line := range lines {

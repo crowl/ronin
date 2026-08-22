@@ -89,6 +89,24 @@ func TestBoxLineCache(t *testing.T) {
 		}
 	})
 
+	t.Run("running workflow elapsed time invalidates cached lines", func(t *testing.T) {
+		var cache boxLineCache
+		theme := DefaultTheme()
+		startedAt := time.Unix(100, 0)
+		boxes := []box{workflowBox{Name: "review", StartedAt: startedAt}}
+
+		first := cache.Lines(boxes, 80, theme, false, startedAt.Add(time.Second))
+		cachedLines := cache.entries[0].lines
+		second := cache.Lines(boxes, 80, theme, false, startedAt.Add(2*time.Second))
+
+		if strings.Join(first, "\n") == strings.Join(second, "\n") {
+			t.Fatalf("elapsed time did not change rendered output")
+		}
+		if &cache.entries[0].lines[0] == &cachedLines[0] {
+			t.Fatalf("running workflow did not render again as time elapsed")
+		}
+	})
+
 	t.Run("theme changes invalidate cached lines", func(t *testing.T) {
 		var cache boxLineCache
 		theme := DefaultTheme()
