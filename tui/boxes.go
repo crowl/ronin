@@ -25,16 +25,20 @@ type workflowEntry struct {
 	Text      string
 	Detail    string
 	Artifacts []tool.Artifact
+	Lifecycle bool
 }
 
 type workflowBox struct {
-	Name      string
-	Input     string
-	Status    string
-	Summary   string
-	Entries   []workflowEntry
-	StartedAt time.Time
-	EndedAt   time.Time
+	Name              string
+	Input             string
+	Status            string
+	Summary           string
+	Entries           []workflowEntry
+	TimelineBytes     int
+	TimelineTruncated bool
+	LatestActivity    string
+	StartedAt         time.Time
+	EndedAt           time.Time
 }
 
 type systemMessageBox struct{ Text string }

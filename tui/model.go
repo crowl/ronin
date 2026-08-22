@@ -23,8 +23,18 @@ const (
 	pendingTextDeltaAssistant
 
 	maxWorkflowEntries    = 1024
+	maxWorkflowNameSize   = 256
+	maxWorkflowStatusSize = 32
 	maxWorkflowTextSize   = 16 * 1024
 	maxWorkflowDetailSize = 128 * 1024
+
+	maxWorkflowDisplayBytes       = 1 * 1024 * 1024
+	maxWorkflowTimelineBytes      = 960 * 1024
+	maxWorkflowSummaryBytes       = 64 * 1024
+	maxWorkflowVisualLines        = 1000
+	maxWorkflowTimelineLines      = 900
+	maxWorkflowSummaryLines       = 100
+	maxWorkflowLatestActivitySize = 256
 )
 
 type appModel struct {
@@ -109,7 +119,7 @@ func (m *appModel) populateInitialBoxes(conversation Conversation) {
 		case llm.ErrorMessage:
 			m.boxes = append(m.boxes, errorMessageBox{Text: msg.Error.Error()})
 		case llm.WorkflowResultMessage:
-			m.boxes = append(m.boxes, workflowBox{Name: msg.Name, Input: msg.Input, Status: string(msg.Status), Summary: msg.Summary, StartedAt: msg.Timestamp, EndedAt: msg.Timestamp})
+			m.boxes = append(m.boxes, workflowBox{Name: boundWorkflowText(msg.Name, maxWorkflowNameSize), Input: boundWorkflowText(msg.Input, maxWorkflowDetailSize), Status: boundWorkflowText(string(msg.Status), maxWorkflowStatusSize), Summary: boundWorkflowSummary(msg.Summary), StartedAt: msg.Timestamp, EndedAt: msg.Timestamp})
 		case llm.AssistantMessage:
 			for _, b := range msg.Blocks {
 				switch block := b.(type) {
@@ -252,7 +262,7 @@ func (m *appModel) enterWorkflowInput(item workflow.Workflow) {
 }
 
 func (m *appModel) startWorkflow(item workflow.Workflow, input string) {
-	m.boxes = append(m.boxes, workflowBox{Name: item.Name, Input: input, StartedAt: time.Now()})
+	m.boxes = append(m.boxes, workflowBox{Name: boundWorkflowText(item.Name, maxWorkflowNameSize), Input: boundWorkflowText(input, maxWorkflowDetailSize), StartedAt: time.Now()})
 	m.working = true
 	m.workingLabel = "Running workflow " + item.Name
 	m.indicatorFrame = 0
@@ -267,66 +277,62 @@ func (m *appModel) handleWorkflowEvent(event workflow.Event, now time.Time) mode
 	box := m.boxes[index].(workflowBox)
 	switch event := event.(type) {
 	case workflow.Log:
-		box.Entries = appendWorkflowEntry(box.Entries, workflowEntry{Text: event.Text})
+		appendWorkflowBoxEntry(&box, workflowEntry{Text: event.Text})
 	case workflow.AgentStarted:
-		box.Entries = appendWorkflowEntry(box.Entries, workflowEntry{Text: fmt.Sprintf("Agent %d started", event.Invocation), Detail: event.Request.Prompt})
+		appendWorkflowBoxEntry(&box, workflowEntry{Text: fmt.Sprintf("Agent %d started", event.Invocation), Detail: event.Request.Prompt, Lifecycle: true})
 	case workflow.AgentEventReceived:
 		switch progress := event.Event.(type) {
 		case workflow.AgentThinkingDelta:
-			box.Entries = appendWorkflowEntry(box.Entries, workflowEntry{Text: fmt.Sprintf("Agent %d thinking", event.Invocation), Detail: progress.Text})
+			appendWorkflowBoxEntry(&box, workflowEntry{Text: fmt.Sprintf("Agent %d thinking", event.Invocation), Detail: progress.Text})
 		case workflow.AgentTextDelta:
-			box.Entries = appendWorkflowEntry(box.Entries, workflowEntry{Text: fmt.Sprintf("Agent %d response", event.Invocation), Detail: progress.Text})
+			appendWorkflowBoxEntry(&box, workflowEntry{Text: fmt.Sprintf("Agent %d response", event.Invocation), Detail: progress.Text})
 		case workflow.AgentToolStarted:
-			box.Entries = appendWorkflowEntry(box.Entries, workflowEntry{Text: fmt.Sprintf("Agent %d: %s", event.Invocation, progress.Title)})
+			title := boundWorkflowText(progress.Title, maxWorkflowTextSize)
+			appendWorkflowBoxEntry(&box, workflowEntry{Text: fmt.Sprintf("Agent %d: %s", event.Invocation, title), Lifecycle: true})
 		case workflow.AgentToolOutput:
-			box.Entries = appendWorkflowEntry(box.Entries, workflowEntry{Text: fmt.Sprintf("Agent %d tool output", event.Invocation), Artifacts: []tool.Artifact{progress.Artifact}})
+			appendWorkflowBoxEntry(&box, workflowEntry{Text: fmt.Sprintf("Agent %d tool output", event.Invocation), Artifacts: []tool.Artifact{progress.Artifact}})
 		case workflow.AgentToolFailed:
-			box.Entries = appendWorkflowEntry(box.Entries, workflowEntry{Text: fmt.Sprintf("Agent %d tool failed", event.Invocation), Detail: progress.Error})
+			appendWorkflowBoxEntry(&box, workflowEntry{Text: fmt.Sprintf("Agent %d tool failed", event.Invocation), Detail: progress.Error, Lifecycle: true})
 		}
 	case workflow.AgentFinished:
 		text := fmt.Sprintf("Agent %d finished", event.Invocation)
 		if event.Error != "" {
 			text = fmt.Sprintf("Agent %d failed", event.Invocation)
 		}
-		box.Entries = appendWorkflowEntry(box.Entries, workflowEntry{Text: text, Detail: event.Text + event.Error})
+		detail, _ := appendWorkflowText(boundWorkflowText(event.Text, maxWorkflowDetailSize), boundWorkflowText(event.Error, maxWorkflowDetailSize), maxWorkflowDetailSize)
+		appendWorkflowBoxEntry(&box, workflowEntry{Text: text, Detail: detail, Lifecycle: true})
 	case workflow.Finished:
-		box.Status = string(event.Result.Status)
-		box.Summary = event.Result.Summary
+		box.Status = boundWorkflowText(string(event.Result.Status), maxWorkflowStatusSize)
+		box.Summary = boundWorkflowSummary(event.Result.Summary)
 		box.EndedAt = now
 	}
 	m.boxes[index] = box
 	return modelUpdate{Render: true}
 }
 
-func appendWorkflowEntry(entries []workflowEntry, entry workflowEntry) []workflowEntry {
-	if len(entry.Text) > maxWorkflowTextSize {
-		entry.Text = entry.Text[:maxWorkflowTextSize] + "..."
-	}
-	if len(entry.Detail) > maxWorkflowDetailSize {
-		entry.Detail = entry.Detail[:maxWorkflowDetailSize] + "\n... detail truncated"
-	}
-	if len(entries) > 0 && entries[len(entries)-1].Text == entry.Text {
-		previous := &entries[len(entries)-1]
-		if entry.Detail != "" {
-			remaining := maxWorkflowDetailSize - len(previous.Detail)
-			if remaining > 0 {
-				if len(entry.Detail) > remaining {
-					entry.Detail = entry.Detail[:remaining]
-				}
-				previous.Detail += entry.Detail
-			}
+func workflowTimelineCapacity(box workflowBox) int {
+	fixed := len(box.Name) + len(box.Input) + maxWorkflowStatusSize + maxWorkflowLatestActivitySize + maxWorkflowSummaryBytes
+	return min(maxWorkflowTimelineBytes, max(0, maxWorkflowDisplayBytes-fixed))
+}
+
+func appendWorkflowBoxEntry(box *workflowBox, entry workflowEntry) {
+	if box.TimelineTruncated {
+		if entry.Lifecycle {
+			box.LatestActivity = truncateWorkflowText(entry.Text, maxWorkflowLatestActivitySize)
 		}
-		if len(entry.Artifacts) > 0 {
-			previous.Artifacts = append([]tool.Artifact(nil), entry.Artifacts...)
+		return
+	}
+
+	remaining := workflowTimelineCapacity(*box) - box.TimelineBytes
+	updated, used, truncated := appendWorkflowEntryBounded(box.Entries, entry, remaining)
+	box.Entries = updated
+	box.TimelineBytes += used
+	if truncated {
+		box.TimelineTruncated = true
+		if entry.Lifecycle {
+			box.LatestActivity = truncateWorkflowText(entry.Text, maxWorkflowLatestActivitySize)
 		}
-		return entries
 	}
-	if len(entries) >= maxWorkflowEntries {
-		copy(entries, entries[1:])
-		entries[len(entries)-1] = entry
-		return entries
-	}
-	return append(entries, entry)
 }
 
 func (m *appModel) finishWorkflow(err error) modelUpdate {

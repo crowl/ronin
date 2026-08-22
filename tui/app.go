@@ -337,7 +337,7 @@ func (app *app) runWorkflow(ctx context.Context, item workflow.Workflow, input s
 		})
 		message := llm.WorkflowResultMessage{
 			Timestamp: time.Now(), Name: result.Name, Input: result.Input,
-			Status: llm.WorkflowStatus(result.Status), Summary: result.Summary,
+			Status: llm.WorkflowStatus(result.Status), Summary: boundWorkflowSummary(result.Summary),
 		}
 		err := app.conversation.RecordWorkflowResult(message)
 		select {
