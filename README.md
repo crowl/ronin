@@ -48,32 +48,18 @@ export GEMINI_API_KEY=...
 export ANTHROPIC_API_KEY=...
 ```
 
-### OpenAI OAuth Integration (with API Key Fallback)
+### Provider API root overrides
 
-*ronin* has built-in, zero-overhead support for connecting to OpenAI's ChatGPT/Codex Responses API (`chatgpt.com/backend-api/codex/responses`) using your local ChatGPT/Codex OAuth credentials.
-
-By default, *ronin* **prioritizes** the OAuth flow and automatically searches for your local ChatGPT/Codex OAuth cache file (`auth.json`) in the standard locations:
-- `~/.chatgpt-local/auth.json`
-- `~/.codex/auth.json`
-
-If found, *ronin* configures the transparent OAuth proxy, enabling you to use your subscription.
-
-If no local `auth.json` is found, *ronin* falls back to using the standard `OPENAI_API_KEY` environment variable if configured.
-
-### OpenAI API root override
-
-Set `OPENAI_BASE_URL` to use an OpenAI-compatible API root with an API key:
+Set a provider-specific API root alongside its API key to route requests through a compatible proxy such as [Limes](https://github.com/crowl/limes):
 
 ```sh
 export OPENAI_API_KEY=...
 export OPENAI_BASE_URL=https://proxy.example.com/v1
 ```
 
-This is an API root, not a complete endpoint. Ronin appends `/responses`, so this example sends requests to `https://proxy.example.com/v1/responses`; trailing slashes are normalized. Setting `OPENAI_BASE_URL` requires `OPENAI_API_KEY` and bypasses local ChatGPT/Codex OAuth credentials.
+This is an API root, not a complete endpoint. Ronin appends `/responses`, so this example sends requests to `https://proxy.example.com/v1/responses`; trailing slashes are normalized.
 
-### Gemini and Anthropic API root overrides
-
-Set the provider-specific API root alongside its API key to route requests through a compatible proxy or alternate host:
+Gemini and Anthropic support equivalent overrides:
 
 ```sh
 export GEMINI_API_KEY=...
@@ -84,12 +70,6 @@ export ANTHROPIC_BASE_URL=https://proxy.example.com/v1
 ```
 
 These variables are API roots, not complete operation endpoints. Ronin appends `/interactions` for Gemini requests, so the Gemini example targets `https://proxy.example.com/v1beta/interactions`. It appends `/messages` for Anthropic requests, so the Anthropic example targets `https://proxy.example.com/v1/messages`. Trailing slashes are normalized.
-
-To set up your local OAuth credentials, run the official login flow:
-```sh
-npx @openai/codex login
-```
-Or set `CHATGPT_LOCAL_HOME` / `CODEX_HOME` environment variables if your `auth.json` is located in a custom directory.
 
 Then start the app:
 

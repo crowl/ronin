@@ -49,7 +49,7 @@ func TestVersion(t *testing.T) {
 }
 func TestSetupProvidersDefaultOpenAIConfiguration(t *testing.T) {
 	if scenario := os.Getenv("RONIN_SETUP_PROVIDERS_DEFAULT_SCENARIO"); scenario != "" {
-		for _, name := range []string{"OPENAI_API_KEY", "GEMINI_API_KEY", "ANTHROPIC_API_KEY", "CHATGPT_LOCAL_HOME", "CODEX_HOME"} {
+		for _, name := range []string{"OPENAI_API_KEY", "GEMINI_API_KEY", "ANTHROPIC_API_KEY"} {
 			t.Setenv(name, "")
 		}
 		if err := os.Unsetenv("OPENAI_BASE_URL"); err != nil {
@@ -71,15 +71,8 @@ func TestSetupProvidersDefaultOpenAIConfiguration(t *testing.T) {
 				t.Fatalf("registered models = %v, want none", llm.Models())
 			}
 			return
-		case "api-key-fallback":
+		case "api-key":
 			t.Setenv("OPENAI_API_KEY", "api-key")
-		case "oauth-precedence":
-			t.Setenv("OPENAI_API_KEY", "api-key")
-			oauthHome := t.TempDir()
-			if err := os.WriteFile(filepath.Join(oauthHome, "auth.json"), []byte(`{"tokens":{"access_token":"oauth-token"}}`), 0o600); err != nil {
-				t.Fatalf("write auth.json: %v", err)
-			}
-			t.Setenv("CHATGPT_LOCAL_HOME", oauthHome)
 		default:
 			t.Fatalf("unknown scenario %q", scenario)
 		}
@@ -92,17 +85,13 @@ func TestSetupProvidersDefaultOpenAIConfiguration(t *testing.T) {
 			t.Fatalf("LoadModelClient() error = %v", err)
 		}
 		apiKey := reflect.ValueOf(client).Elem().FieldByName("apiKey").String()
-		wantAPIKey := "api-key"
-		if scenario == "oauth-precedence" {
-			wantAPIKey = "oauth-placeholder"
-		}
-		if apiKey != wantAPIKey {
-			t.Errorf("configured API key = %q, want %q", apiKey, wantAPIKey)
+		if apiKey != "api-key" {
+			t.Errorf("configured API key = %q, want api-key", apiKey)
 		}
 		return
 	}
 
-	for _, scenario := range []string{"no-credentials", "api-key-fallback", "oauth-precedence"} {
+	for _, scenario := range []string{"no-credentials", "api-key"} {
 		t.Run(scenario, func(t *testing.T) {
 			cmd := exec.Command(os.Args[0], "-test.run=^TestSetupProvidersDefaultOpenAIConfiguration$")
 			cmd.Env = append(os.Environ(), "RONIN_SETUP_PROVIDERS_DEFAULT_SCENARIO="+scenario)
@@ -114,7 +103,7 @@ func TestSetupProvidersDefaultOpenAIConfiguration(t *testing.T) {
 }
 
 func TestSetupProvidersCustomOpenAIConfiguration(t *testing.T) {
-	for _, name := range []string{"GEMINI_API_KEY", "ANTHROPIC_API_KEY", "CHATGPT_LOCAL_HOME", "CODEX_HOME"} {
+	for _, name := range []string{"GEMINI_API_KEY", "ANTHROPIC_API_KEY"} {
 		t.Setenv(name, "")
 	}
 	for _, name := range []string{"GEMINI_BASE_URL", "ANTHROPIC_BASE_URL"} {
@@ -150,7 +139,7 @@ func TestSetupProvidersCustomOpenAIConfiguration(t *testing.T) {
 		}
 	})
 
-	t.Run("custom URL bypasses local OAuth", func(t *testing.T) {
+	t.Run("custom URL", func(t *testing.T) {
 		var gotPath string
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			gotPath = r.URL.Path
@@ -159,11 +148,6 @@ func TestSetupProvidersCustomOpenAIConfiguration(t *testing.T) {
 		}))
 		defer server.Close()
 
-		oauthHome := t.TempDir()
-		if err := os.WriteFile(filepath.Join(oauthHome, "auth.json"), []byte(`{"tokens":{"access_token":"oauth-token"}}`), 0o600); err != nil {
-			t.Fatalf("write auth.json: %v", err)
-		}
-		t.Setenv("CHATGPT_LOCAL_HOME", oauthHome)
 		t.Setenv("OPENAI_BASE_URL", server.URL+"/v1/")
 		t.Setenv("OPENAI_API_KEY", "test-key")
 		if err := setupProviders(); err != nil {
@@ -192,7 +176,6 @@ func TestSetupProvidersCustomProviderConfiguration(t *testing.T) {
 			"OPENAI_API_KEY", "OPENAI_BASE_URL",
 			"GEMINI_API_KEY", "GEMINI_BASE_URL",
 			"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL",
-			"CHATGPT_LOCAL_HOME", "CODEX_HOME",
 		} {
 			if err := os.Unsetenv(name); err != nil {
 				t.Fatalf("unset %s: %v", name, err)

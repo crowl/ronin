@@ -2,12 +2,10 @@ package openai
 
 import (
 	"fmt"
-	"net/http"
 	"net/url"
 	"strings"
 
 	"github.com/crowl/ronin/llm"
-	"github.com/crowl/ronin/llm/openai/internal"
 )
 
 const provider = "openai"
@@ -102,27 +100,4 @@ func registerModels(newClient func(llm.Model, llm.ReasoningLevel) (llm.ModelClie
 		}
 	}
 	return nil
-}
-
-// HasLocalOAuth checks if a valid auth.json is discoverable on the system.
-func HasLocalOAuth() bool {
-	am := internal.NewAuthManager(nil)
-	path, _, err := am.FindAndLoadAuthFile()
-	return err == nil && path != ""
-}
-
-// SetupOAuth registers the OpenAI models configured with the transparent OAuth proxy.
-func SetupOAuth() error {
-	return registerModels(func(model llm.Model, level llm.ReasoningLevel) (llm.ModelClient, error) {
-		newLLM, err := NewLLM(LLMConfig{
-			APIKey:         "oauth-placeholder",
-			Model:          model,
-			ReasoningLevel: level,
-			Client:         &http.Client{Transport: internal.NewOAuthTransport(nil)},
-		})
-		if err != nil {
-			return nil, fmt.Errorf("create openai oauth llm: %w", err)
-		}
-		return newLLM, nil
-	})
 }

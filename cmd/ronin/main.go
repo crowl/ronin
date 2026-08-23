@@ -93,7 +93,7 @@ func main() {
 	}
 
 	if len(llm.Models()) == 0 {
-		_, _ = fmt.Fprintf(os.Stderr, "no models available, please define at least one of OPENAI_API_KEY, GEMINI_API_KEY or ANTHROPIC_API_KEY env vars, or configure local ChatGPT/Codex OAuth credentials\n")
+		_, _ = fmt.Fprintf(os.Stderr, "no models available, please define at least one of OPENAI_API_KEY, GEMINI_API_KEY or ANTHROPIC_API_KEY\n")
 		os.Exit(1)
 	}
 
@@ -372,10 +372,6 @@ func setupProviders() error {
 		if err := openai.SetupWithBaseURL(apiKey, baseURL); err != nil {
 			return fmt.Errorf("openai LLM provider setup failed: %w", err)
 		}
-	} else if openai.HasLocalOAuth() {
-		if err := openai.SetupOAuth(); err != nil {
-			return fmt.Errorf("openai oauth setup failed: %w", err)
-		}
 	} else if apiKey := os.Getenv("OPENAI_API_KEY"); apiKey != "" {
 		if err := openai.Setup(apiKey); err != nil {
 			return fmt.Errorf("openai LLM provider setup failed: %w", err)
@@ -424,7 +420,7 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string) work
 
 	init := func() {
 		if len(llm.Models()) == 0 {
-			initErr = fmt.Errorf("no models available, please define at least one of OPENAI_API_KEY, GEMINI_API_KEY or ANTHROPIC_API_KEY env vars, or configure local ChatGPT/Codex OAuth credentials")
+			initErr = fmt.Errorf("no models available, please define at least one of OPENAI_API_KEY, GEMINI_API_KEY or ANTHROPIC_API_KEY")
 			return
 		}
 
