@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/printer"
 	"go/token"
+	"path/filepath"
 	"strings"
 	"unicode"
 
@@ -203,6 +204,9 @@ func declRange(fset *token.FileSet, node ast.Node, doc *ast.CommentGroup) (int, 
 
 func displayFile(cwd string, fset *token.FileSet, pos token.Pos) string {
 	abs := fset.Position(pos).Filename
+	if absCWD, err := filepath.Abs(cwd); err == nil {
+		cwd = absCWD
+	}
 	return fsutil.DisplayPath(cwd, abs)
 }
 

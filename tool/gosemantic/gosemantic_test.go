@@ -22,6 +22,76 @@ func fixtureRoot(t *testing.T) string {
 	return root
 }
 
+func TestFindSymbolDescriptionGuidesUse(t *testing.T) {
+	description := gosemantic.NewFindSymbol(fixtureRoot(t)).Description()
+	for _, expected := range []string{"Prefer this over text search", "read_file", "does not find references", "struct/interface fields"} {
+		if !strings.Contains(description, expected) {
+			t.Errorf("description %q does not contain %q", description, expected)
+		}
+	}
+}
+
+func TestOutlinePackageDescriptionGuidesUse(t *testing.T) {
+	description := gosemantic.NewOutlinePackage(fixtureRoot(t)).Description()
+	for _, expected := range []string{"unfamiliar Go package", "find_symbol", "read_file", "references or call sites"} {
+		if !strings.Contains(description, expected) {
+			t.Errorf("description %q does not contain %q", description, expected)
+		}
+	}
+}
+
+func TestFindSymbolArtifactsSummarizeMatchesAndWarnings(t *testing.T) {
+	res := findSymbol(t, fixtureRoot(t), `{"name":"shapes.Circle"}`)
+	text := artifactText(t, res.Artifacts())
+
+	for _, expected := range []string{
+		"Package: example.com/fixture/shapes",
+		"type Circle struct{ ... }",
+		"shapes/shapes.go:10-13",
+		"Circle is a round shape defined by its radius.",
+		"Warnings:",
+		"brokenpkg",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Errorf("artifact text does not contain %q:\n%s", expected, text)
+		}
+	}
+}
+
+func TestOutlinePackageArtifactsSummarizeEveryDeclarationGroup(t *testing.T) {
+	res := outlinePackage(t, fixtureRoot(t), `{"package":"shapes"}`)
+	text := artifactText(t, res.Artifacts())
+
+	for _, expected := range []string{
+		"Package: example.com/fixture/shapes",
+		"Types:",
+		"Methods:",
+		"func (c Circle) Area() float64",
+		"Functions:",
+		"func Describe(name string) string",
+		"Constants:",
+		"const Pi",
+		"Variables:",
+		"var DefaultName",
+		"Warnings:",
+		"brokenpkg",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Errorf("artifact text does not contain %q:\n%s", expected, text)
+		}
+	}
+}
+
+func TestFindSymbolRelativeWorkingDirectoryUsesRelativePaths(t *testing.T) {
+	t.Chdir(fixtureRoot(t))
+
+	res := findSymbol(t, ".", `{"name":"shapes.Circle"}`)
+
+	if got := res.Matches[0].File; got != "shapes/shapes.go" {
+		t.Errorf("file = %q, want relative path", got)
+	}
+}
+
 func TestFindSymbolAmbiguous(t *testing.T) {
 	res := findSymbol(t, fixtureRoot(t), `{"name":"Circle"}`)
 
@@ -208,6 +278,21 @@ func outlinePackage(t *testing.T, cwd, args string) gosemantic.OutlinePackageRes
 		t.Fatalf("outline_package returned %T", out)
 	}
 	return res
+}
+
+func artifactText(t *testing.T, artifacts []tool.Artifact) string {
+	t.Helper()
+	if len(artifacts) != 1 {
+		t.Fatalf("artifact count = %d, want 1: %#v", len(artifacts), artifacts)
+	}
+	artifact, ok := artifacts[0].(tool.TextArtifact)
+	if !ok {
+		t.Fatalf("artifact type = %T, want tool.TextArtifact", artifacts[0])
+	}
+	if strings.TrimSpace(artifact.Text) == "" {
+		t.Fatal("artifact text is empty")
+	}
+	return artifact.Text
 }
 
 func assertToolError(t *testing.T, err error, code string) {

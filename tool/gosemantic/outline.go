@@ -46,20 +46,7 @@ type OutlinePackageResult struct {
 }
 
 func (r OutlinePackageResult) Artifacts() []tool.Artifact {
-	var artifacts []tool.Artifact
-	for _, pkg := range r.Packages {
-		for _, t := range pkg.Types {
-			artifacts = append(artifacts, rangeArtifact(t.Symbol))
-		}
-		for _, f := range pkg.Functions {
-			artifacts = append(artifacts, rangeArtifact(f))
-		}
-	}
-	return artifacts
-}
-
-func rangeArtifact(s Symbol) tool.Artifact {
-	return tool.FileRangeArtifact{Path: s.File, StartLine: s.StartLine, EndLine: s.EndLine}
+	return []tool.Artifact{tool.TextArtifact{Text: outlinePackageSummary(r)}}
 }
 
 func NewOutlinePackage(cwd string) *OutlinePackage {
@@ -75,7 +62,7 @@ func (t *OutlinePackage) Name() string {
 }
 
 func (t *OutlinePackage) Description() string {
-	return "List the symbols a Go package in the local module declares: types with their methods, functions, constants, and variables, each with its signature, file, line range, and doc comment. Exported only by default."
+	return "Inspect an unfamiliar Go package in the local module before reading whole files. Lists its types with methods, functions, constants, and variables, including signatures, file ranges, and doc comments; exported API only by default. Use find_symbol when you already know a declaration name, read_file for implementation bodies, and text search for references or call sites."
 }
 
 func (t *OutlinePackage) Parameters() *jsonschema.Schema {

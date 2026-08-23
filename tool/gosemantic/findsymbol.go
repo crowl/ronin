@@ -12,8 +12,8 @@ import (
 const maxMatches = 50
 
 type FindSymbolArgs struct {
-	Name    string `json:"name" jsonschema:"Symbol to locate. Accepts a bare name (Tool), a package-qualified name (readfile.Tool), or a method or field (Args.Validate)."`
-	Package string `json:"package,omitempty" jsonschema:"Optional package import path or name to restrict the search."`
+	Name    string `json:"name" jsonschema:"Declaration to locate. Use a bare name (Tool), package-qualified name (readfile.Tool), receiver method (Args.Validate), or package and receiver method (readfile.Args.Validate). Struct and interface fields are not indexed."`
+	Package string `json:"package,omitempty" jsonschema:"Optional package import path or name to restrict the search; useful when a bare symbol name is ambiguous."`
 }
 
 func (a FindSymbolArgs) Validate() error {
@@ -36,15 +36,7 @@ type FindSymbolResult struct {
 }
 
 func (r FindSymbolResult) Artifacts() []tool.Artifact {
-	artifacts := make([]tool.Artifact, 0, len(r.Matches))
-	for _, m := range r.Matches {
-		artifacts = append(artifacts, tool.FileRangeArtifact{
-			Path:      m.File,
-			StartLine: m.StartLine,
-			EndLine:   m.EndLine,
-		})
-	}
-	return artifacts
+	return []tool.Artifact{tool.TextArtifact{Text: findSymbolSummary(r)}}
 }
 
 func NewFindSymbol(cwd string) *FindSymbol {
@@ -60,7 +52,7 @@ func (t *FindSymbol) Name() string {
 }
 
 func (t *FindSymbol) Description() string {
-	return "Locate where a Go symbol is defined in the local module. Returns each matching declaration's package, file, line range, signature, and doc comment. Accepts bare, package-qualified, or method/field names; returns all matches when ambiguous."
+	return "Find a Go declaration in the local module when you know its name. Prefer this over text search for locating types, functions, methods, constants, and variables; use the returned file range with read_file when you need the implementation. Accepts bare, package-qualified, receiver-method, or package-and-receiver-method names and returns all matches when ambiguous. It does not find references, call sites, local declarations, or struct/interface fields."
 }
 
 func (t *FindSymbol) Parameters() *jsonschema.Schema {
