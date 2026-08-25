@@ -16,6 +16,7 @@ import (
 const (
 	maxToolOutputLinesNotExpanded = 10
 	conversationBoxPadding        = " "
+	toolMarker                    = "• "
 )
 
 type boxesPresenter struct {
@@ -56,7 +57,7 @@ func renderBoxContentLinesAt(block box, width int, toolsExpanded bool, now time.
 	case assistantThinkingBox:
 		return markdownLines(typedBlock.Text, width, thinkingTextStyles())
 	case toolCallBox:
-		lines := markedLines("• ", typedBlock.Title, width, strongStyle)
+		lines := markedLines(toolMarker, typedBlock.Title, width, strongStyle)
 		var artifactLines []string
 		for _, artifact := range typedBlock.Artifacts {
 			artifactLines = append(artifactLines, toolArtifactLines(artifact, width)...)
@@ -84,7 +85,7 @@ func renderBoxContentLinesAt(block box, width int, toolsExpanded bool, now time.
 	case workflowBox:
 		return renderWorkflowBoxLines(typedBlock, width, toolsExpanded, now)
 	case systemMessageBox:
-		return markedLines("- ", typedBlock.Text, width, style{})
+		return markedLines(toolMarker, typedBlock.Text, width, style{})
 	case errorMessageBox:
 		return markedLines("! ", typedBlock.Text, width, errorStyle)
 	default:
@@ -132,7 +133,7 @@ type pendingSteeringPresenter struct {
 }
 
 func (p pendingSteeringPresenter) Lines(width int) []string {
-	return markedLines("- ", p.Text, width, style{})
+	return markedLines(toolMarker+"(queued) ", p.Text, width, style{})
 }
 
 // editorPresenter

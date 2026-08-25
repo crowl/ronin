@@ -18,7 +18,7 @@ func TestMinimalConversationRendering(t *testing.T) {
 
 	plain := plainLines(lines)
 	if got := strings.Join(plain, "\n"); !strings.Contains(got, " > Explain this function.") ||
-		!strings.Contains(got, " - New session started") || !strings.Contains(got, " ! Operation canceled") {
+		!strings.Contains(got, " • New session started") || !strings.Contains(got, " ! Operation canceled") {
 		t.Fatalf("markers missing from render:\n%s", got)
 	}
 	if !strings.Contains(lines[4], emphasisStyle.start()) {
@@ -38,6 +38,13 @@ func TestRenderToolCallUsesToolMarker(t *testing.T) {
 	}
 	if plain[len(plain)-1] != "   Elapsed 0.0s" {
 		t.Fatalf("tool duration = %q", plain[len(plain)-1])
+	}
+}
+
+func TestPendingSteeringPresenterUsesQueuedToolMarker(t *testing.T) {
+	lines := pendingSteeringPresenter{Text: "Refine the tests"}.Lines(80)
+	if got := plainLines(lines)[0]; got != "• (queued) Refine the tests" {
+		t.Fatalf("queued steering message = %q", got)
 	}
 }
 
