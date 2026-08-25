@@ -46,7 +46,7 @@ func TestTUIRendering(t *testing.T) {
 		if !renderedVisibleLinesContain(multilineLines, " "+"a") {
 			t.Fatalf("first editor line missing from render: %#v", multilineLines)
 		}
-		reverseCursor := Style{FG: DarkTheme().Text.Normal.FG, Reverse: true}.Apply(" ")
+		reverseCursor := cursorStyle.apply(" ")
 		if !renderedLinesContain(multilineLines, " "+reverseCursor) {
 			t.Fatalf("blank second editor line with cursor missing from render: %#v", multilineLines)
 		}
@@ -198,50 +198,6 @@ func TestTUIRendering(t *testing.T) {
 		}
 	})
 
-	t.Run("status bar context usage colors percentage by threshold", func(t *testing.T) {
-		theme := Theme{
-			Text: TextTheme{
-				Normal: Style{FG: "green"},
-			},
-			UI: UITheme{
-				StatusBar: Style{FG: "blue"},
-			},
-			Box: BoxTheme{
-				Error: BoxStyle{Container: Style{FG: "red"}},
-			},
-		}
-
-		assertPercentStyle := func(t *testing.T, usage llm.Usage, tokenText string, percentText string, style Style) {
-			t.Helper()
-
-			lines := statusBar{
-				CWD:            ".",
-				Model:          llm.Model{Provider: "test", Name: "model", ContextWindow: 1000},
-				ReasoningLevel: llm.ReasoningLevelOff,
-				ContextUsage:   usage,
-			}.Lines(120, theme)
-
-			if len(lines) != 2 {
-				t.Fatalf("line count\ngot:  %d\nwant: 2", len(lines))
-			}
-			usageLine := lines[1]
-			styledPercent := style.Apply(percentText)
-			if !strings.Contains(usageLine, styledPercent) {
-				t.Fatalf("status usage line missing percentage with expected style\nline: %q\nwant segment: %q", usageLine, styledPercent)
-			}
-			if !strings.Contains(usageLine, tokenText) {
-				t.Fatalf("status usage line missing token counts\nline: %q\nwant: %q", usageLine, tokenText)
-			}
-			if !strings.Contains(usageLine, "test:model off") {
-				t.Fatalf("status usage line missing model details: %q", usageLine)
-			}
-		}
-
-		assertPercentStyle(t, llm.Usage{InputTokens: 100, OutputTokens: 50, CachedTokens: 25}, "↑100 ↓50 R25", "15.0%/1.0K", theme.UI.StatusBar)
-		assertPercentStyle(t, llm.Usage{InputTokens: 500}, "↑500 ↓0 R0", "50.0%/1.0K", theme.UI.StatusBar.Merge(theme.Text.Normal))
-		assertPercentStyle(t, llm.Usage{InputTokens: 800}, "↑800 ↓0 R0", "80.0%/1.0K", theme.UI.StatusBar.Merge(theme.Box.Error.Container))
-	})
-
 	t.Run("status bar abbreviates thousands in token counts and context window", func(t *testing.T) {
 		cases := []struct {
 			name   string
@@ -272,12 +228,12 @@ func TestTUIRendering(t *testing.T) {
 				OutputTokens: 2900,
 				CachedTokens: 1000,
 			},
-		}.Lines(120, Theme{})
+		}.Lines(120)
 
-		if len(lines) != 2 {
-			t.Fatalf("line count\ngot:  %d\nwant: 2", len(lines))
+		if len(lines) != 1 {
+			t.Fatalf("line count\ngot:  %d\nwant: 1", len(lines))
 		}
-		usageLine := lines[1]
+		usageLine := lines[0]
 		for _, want := range []string{"↑2.3K ↓2.9K R1.0K", "35.8%/14.6K"} {
 			if !strings.Contains(usageLine, want) {
 				t.Fatalf("status usage line missing %q: %q", want, usageLine)
@@ -679,48 +635,6 @@ func TestTUIKeyHandling(t *testing.T) {
 	})
 }
 
-func TestSwitchThemeCommand(t *testing.T) {
-	t.Run("applies theme and records command", func(t *testing.T) {
-		app := newTestApp(t, testAppConfig{})
-
-		item := menuItem{Value: "/theme light", Command: SwitchTheme{Name: "light", Theme: LightTheme()}}
-		if err := app.runCommand(t.Context(), item, SwitchTheme{Name: "light", Theme: LightTheme()}); err != nil {
-			t.Fatalf("runCommand: %v", err)
-		}
-
-		if app.model.theme != LightTheme() {
-			t.Fatalf("theme not switched to light theme")
-		}
-		if len(app.model.boxes) != 1 {
-			t.Fatalf("box count\ngot:  %d\nwant: 1", len(app.model.boxes))
-		}
-		if _, ok := app.model.boxes[0].(systemMessageBox); !ok {
-			t.Fatalf("box type\ngot:  %T\nwant: %T", app.model.boxes[0], systemMessageBox{})
-		}
-	})
-
-	t.Run("empty theme is ignored and records error box", func(t *testing.T) {
-		app := newTestApp(t, testAppConfig{})
-		before := app.model.theme
-
-		item := menuItem{Value: "/theme broken", Command: SwitchTheme{Name: "broken"}}
-		if err := app.runCommand(t.Context(), item, SwitchTheme{Name: "broken"}); err != nil {
-			t.Fatalf("runCommand: %v", err)
-		}
-
-		if app.model.theme != before {
-			t.Fatalf("theme changed despite empty theme")
-		}
-		if len(app.model.boxes) != 2 {
-			t.Fatalf("box count\ngot:  %d\nwant: 2", len(app.model.boxes))
-		}
-		errorBox, ok := app.model.boxes[1].(errorMessageBox)
-		if !ok || !strings.Contains(errorBox.Text, `theme "broken" is unavailable`) {
-			t.Fatalf("error box\ngot:  %#v\nwant: theme unavailable error", app.model.boxes[1])
-		}
-	})
-}
-
 func TestCompactConversationCommand(t *testing.T) {
 	t.Run("runs asynchronously and finishes via event", func(t *testing.T) {
 		app := newTestApp(t, testAppConfig{})
@@ -915,7 +829,6 @@ func newTestApp(t *testing.T, cfg testAppConfig) *app {
 		Conversation: conv,
 		Renderer:     renderer,
 		Commands:     []Command{StartNewConversation{}, CompactConversation{}, Exit{}},
-		Theme:        DefaultTheme(),
 	})
 	if err != nil {
 		t.Fatalf("create app: %v", err)

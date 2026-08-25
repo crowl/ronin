@@ -9,23 +9,23 @@ import (
 	"github.com/crowl/ronin/tui/internal/text"
 )
 
-func toolArtifactLinesBounded(artifact tool.Artifact, boxStyle BoxStyle, width, limit int) ([]string, bool) {
+func toolArtifactLinesBounded(artifact tool.Artifact, width, limit int) ([]string, bool) {
 	if limit <= 0 {
 		return nil, artifactHasContent(artifact)
 	}
 	if typed, ok := artifact.(tool.FileMetadataArtifact); ok {
 		metadata := "Already in context (" + typed.FileID + ")"
-		return wrappedToolArtifactTextBounded(metadata, boxStyle, width, limit)
+		return wrappedToolArtifactTextBounded(metadata, width, limit)
 	}
 	content := text.ExpandTabs(workflowArtifactContent(artifact))
 	if _, ok := artifact.(tool.TextArtifact); ok {
-		return wrappedToolArtifactTextBounded(content, boxStyle, width, limit)
+		return wrappedToolArtifactTextBounded(content, width, limit)
 	}
 	if _, ok := artifact.(tool.ShellStreamArtifact); ok {
-		return wrappedToolArtifactTextBounded(content, boxStyle, width, limit)
+		return wrappedToolArtifactTextBounded(content, width, limit)
 	}
 	if content == "" {
-		return toolArtifactLinesBoundedValue(artifact, boxStyle, width, limit)
+		return toolArtifactLinesBoundedValue(artifact, width, limit)
 	}
 
 	diff := false
@@ -87,7 +87,7 @@ func toolArtifactLinesBounded(artifact tool.Artifact, boxStyle BoxStyle, width, 
 			lineNumber++
 			new = startLine + lineNumber - 1
 		}
-		complete := appendBoundedArtifactLine(&rendered, toolArtifactLine{OldLine: old, NewLine: new, Text: line, Kind: kind}, boxStyle, width, limit)
+		complete := appendBoundedArtifactLine(&rendered, toolArtifactLine{OldLine: old, NewLine: new, Text: line, Kind: kind}, width, limit)
 		if !complete {
 			more = true
 		}
@@ -100,8 +100,8 @@ func artifactHasContent(artifact tool.Artifact) bool {
 	return workflowArtifactContent(artifact) != ""
 }
 
-func toolArtifactLinesBoundedValue(artifact tool.Artifact, boxStyle BoxStyle, width, limit int) ([]string, bool) {
-	return wrappedToolArtifactTextBounded(fmt.Sprintf("%#v", artifact), boxStyle, width, limit)
+func toolArtifactLinesBoundedValue(artifact tool.Artifact, width, limit int) ([]string, bool) {
+	return wrappedToolArtifactTextBounded(fmt.Sprintf("%#v", artifact), width, limit)
 }
 
 func forEachArtifactLine(content string, visit func(string) bool) {
@@ -124,7 +124,7 @@ func forEachArtifactLine(content string, visit func(string) bool) {
 	}
 }
 
-func appendBoundedArtifactLine(rendered *[]string, line toolArtifactLine, boxStyle BoxStyle, width, limit int) bool {
+func appendBoundedArtifactLine(rendered *[]string, line toolArtifactLine, width, limit int) bool {
 	prefix := toolArtifactLinePrefix(line, line.OldLine > 0 && line.NewLine == 0 || line.Kind == toolArtifactLineDiffAdded || line.Kind == toolArtifactLineDiffRemoved || line.Kind == toolArtifactLineMuted && line.OldLine == 0 && line.NewLine == 0)
 	available := width - text.VisibleLen(prefix)
 	if available < 1 {
@@ -135,18 +135,18 @@ func appendBoundedArtifactLine(rendered *[]string, line toolArtifactLine, boxSty
 		if index > 0 {
 			linePrefix = strings.Repeat(" ", text.VisibleLen(prefix))
 		}
-		*rendered = append(*rendered, styleToolArtifactLine(linePrefix, value, line.Kind, boxStyle, width))
+		*rendered = append(*rendered, styleToolArtifactLine(linePrefix, value, line.Kind, width))
 		return true
 	})
 }
 
-func wrappedToolArtifactTextBounded(value string, boxStyle BoxStyle, width, limit int) ([]string, bool) {
+func wrappedToolArtifactTextBounded(value string, width, limit int) ([]string, bool) {
 	value = text.ExpandTabs(value)
 	var rendered []string
 	more := false
 	forEachArtifactLine(value, func(line string) bool {
-		complete := forEachBoundedWrappedLine(" ", line, width, limit-len(rendered), func(value string, _ int) bool {
-			rendered = append(rendered, boxStyle.ApplyBody(text.Fill(text.StripANSI(value), width)))
+		complete := forEachBoundedWrappedLine("  ", line, width, limit-len(rendered), func(value string, _ int) bool {
+			rendered = append(rendered, text.StripANSI(value))
 			return true
 		})
 		if !complete {

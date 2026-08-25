@@ -25,7 +25,6 @@ func TestMenu(t *testing.T) {
 			CompactConversation{},
 			SwitchModel{Model: llm.Model{Provider: "test", Name: "model"}},
 			SwitchReasoningLevel{Level: llm.ReasoningLevelHigh},
-			SwitchTheme{Name: "light", Theme: LightTheme()},
 			InvokeSkill{Skill: runtime.Skill{Name: "go", Description: "Go help"}},
 			InvokeWorkflow{Workflow: workflow.Workflow{Name: "implement", Path: "/workflows/implement.lua"}},
 			Exit{},
@@ -35,7 +34,7 @@ func TestMenu(t *testing.T) {
 		}
 
 		got := menu.Items()
-		wantValues := []string{"/new", "/compact", "/model test:model", "/reasoning high", "/theme light", "/skill:go", "/workflow:implement", "/exit"}
+		wantValues := []string{"/new", "/compact", "/model test:model", "/reasoning high", "/skill:go", "/workflow:implement", "/exit"}
 		if len(got) != len(wantValues) {
 			t.Fatalf("item count\ngot:  %d %#v\nwant: %d", len(got), got, len(wantValues))
 		}
@@ -45,8 +44,8 @@ func TestMenu(t *testing.T) {
 			}
 		}
 
-		wantNames := []string{"/new", "/compact", "/model", "/reasoning", "/theme", "/skill:go", "/workflow:implement", "/exit"}
-		wantArguments := []string{"", "", "test:model", "high", "light", "", "", ""}
+		wantNames := []string{"/new", "/compact", "/model", "/reasoning", "/skill:go", "/workflow:implement", "/exit"}
+		wantArguments := []string{"", "", "test:model", "high", "", "", ""}
 		for i := range got {
 			if got[i].Name != wantNames[i] {
 				t.Fatalf("item %d name\ngot:  %q\nwant: %q", i, got[i].Name, wantNames[i])
@@ -54,26 +53,6 @@ func TestMenu(t *testing.T) {
 			if got[i].Argument != wantArguments[i] {
 				t.Fatalf("item %d argument\ngot:  %q\nwant: %q", i, got[i].Argument, wantArguments[i])
 			}
-		}
-	})
-
-	t.Run("theme command item value and description", func(t *testing.T) {
-		menu, err := newMenu([]Command{
-			SwitchTheme{Name: "dark", Theme: DarkTheme()},
-		})
-		if err != nil {
-			t.Fatalf("create menu: %v", err)
-		}
-
-		got := menu.Items()
-		if len(got) != 1 {
-			t.Fatalf("item count\ngot:  %d\nwant: 1", len(got))
-		}
-		if got[0].Value != "/theme dark" {
-			t.Fatalf("item value\ngot:  %q\nwant: %q", got[0].Value, "/theme dark")
-		}
-		if got[0].Description != "switch theme to dark" {
-			t.Fatalf("item description\ngot:  %q\nwant: %q", got[0].Description, "switch theme to dark")
 		}
 	})
 

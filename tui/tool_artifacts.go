@@ -26,33 +26,33 @@ type toolArtifactLine struct {
 	Kind    toolArtifactLineKind
 }
 
-func toolArtifactLines(artifact tool.Artifact, boxStyle BoxStyle, width int) []string {
+func toolArtifactLines(artifact tool.Artifact, width int) []string {
 	switch typedArtifact := artifact.(type) {
 	case tool.TextArtifact:
-		return wrappedToolArtifactText(typedArtifact.Text, boxStyle, width)
+		return wrappedToolArtifactText(typedArtifact.Text, width)
 	case tool.ShellStreamArtifact:
-		return wrappedToolArtifactText(typedArtifact.Content, boxStyle, width)
+		return wrappedToolArtifactText(typedArtifact.Content, width)
 	case tool.FileArtifact:
-		return renderToolArtifactLines(numberedToolArtifactLines(typedArtifact.Content, 1), boxStyle, width, false)
+		return renderToolArtifactLines(numberedToolArtifactLines(typedArtifact.Content, 1), width, false)
 	case tool.FileRangeArtifact:
 		startLine := typedArtifact.StartLine
 		if startLine < 1 {
 			startLine = 1
 		}
-		return renderToolArtifactLines(numberedToolArtifactLines(typedArtifact.Content, startLine), boxStyle, width, false)
+		return renderToolArtifactLines(numberedToolArtifactLines(typedArtifact.Content, startLine), width, false)
 	case tool.FileMetadataArtifact:
-		return wrappedToolArtifactText(fmt.Sprintf("Already in context (%s)", typedArtifact.FileID), boxStyle, width)
+		return wrappedToolArtifactText(fmt.Sprintf("Already in context (%s)", typedArtifact.FileID), width)
 	case tool.UnifiedDiffArtifact:
-		return renderToolArtifactLines(diffToolArtifactLines(typedArtifact.Diff), boxStyle, width, true)
+		return renderToolArtifactLines(diffToolArtifactLines(typedArtifact.Diff), width, true)
 	default:
-		return wrappedToolArtifactText(fmt.Sprintf("%#v", artifact), boxStyle, width)
+		return wrappedToolArtifactText(fmt.Sprintf("%#v", artifact), width)
 	}
 }
 
-func wrappedToolArtifactText(value string, boxStyle BoxStyle, width int) []string {
+func wrappedToolArtifactText(value string, width int) []string {
 	var lines []string
-	for _, line := range text.Wrap(" ", text.ExpandTabs(value), width) {
-		lines = append(lines, boxStyle.ApplyBody(text.Fill(text.StripANSI(line), width)))
+	for _, line := range text.Wrap("  ", text.ExpandTabs(value), width) {
+		lines = append(lines, text.StripANSI(line))
 	}
 	return lines
 }
@@ -145,7 +145,7 @@ func parseUnifiedDiffHunkHeader(line string) (int, int, bool) {
 	return oldLine, newLine, true
 }
 
-func renderToolArtifactLines(lines []toolArtifactLine, boxStyle BoxStyle, width int, diff bool) []string {
+func renderToolArtifactLines(lines []toolArtifactLine, width int, diff bool) []string {
 	var rendered []string
 	for _, line := range lines {
 		prefix := toolArtifactLinePrefix(line, diff)
@@ -164,7 +164,7 @@ func renderToolArtifactLines(lines []toolArtifactLine, boxStyle BoxStyle, width 
 			if i > 0 {
 				linePrefix = strings.Repeat(" ", text.VisibleLen(prefix))
 			}
-			rendered = append(rendered, styleToolArtifactLine(linePrefix, wrappedLine, line.Kind, boxStyle, width))
+			rendered = append(rendered, styleToolArtifactLine(linePrefix, wrappedLine, line.Kind, width))
 		}
 	}
 	return rendered
@@ -181,30 +181,22 @@ func toolArtifactLinePrefix(line toolArtifactLine, diff bool) string {
 	}
 
 	if diff || line.OldLine > 0 {
-		return " " + oldLine + " " + newLine + " "
+		return "  " + oldLine + " " + newLine + " "
 	}
 	if line.NewLine > 0 {
-		return " " + newLine + " "
+		return "  " + newLine + " "
 	}
-	return " "
+	return "  "
 }
 
-func styleToolArtifactLine(prefix string, value string, kind toolArtifactLineKind, boxStyle BoxStyle, width int) string {
-	padding := width - text.VisibleLen(prefix) - text.VisibleLen(value)
-	if padding > 0 {
-		value += strings.Repeat(" ", padding)
-	}
-
-	line := boxStyle.ApplyMuted(prefix)
+func styleToolArtifactLine(prefix string, value string, kind toolArtifactLineKind, _ int) string {
+	line := prefix + value
 	switch kind {
-	case toolArtifactLineMuted:
-		line += boxStyle.ApplyMuted(value)
 	case toolArtifactLineDiffAdded:
-		line += boxStyle.ApplyDiffAdded(value)
+		return addedStyle.apply(line)
 	case toolArtifactLineDiffRemoved:
-		line += boxStyle.ApplyDiffRemoved(value)
+		return removedStyle.apply(line)
 	default:
-		line += boxStyle.ApplyBody(value)
+		return line
 	}
-	return line
 }

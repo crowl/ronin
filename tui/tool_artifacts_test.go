@@ -5,13 +5,12 @@ import (
 	"testing"
 
 	"github.com/crowl/ronin/tool"
-	"github.com/crowl/ronin/tui/internal/terminal"
 	"github.com/crowl/ronin/tui/internal/text"
 )
 
 func TestToolArtifactLines(t *testing.T) {
 	t.Run("file artifact starts at line one", func(t *testing.T) {
-		lines := toolArtifactLines(tool.FileArtifact{Path: "main.go", Content: "package main\nfunc main() {}"}, DefaultTheme().Box.ToolCall, 80)
+		lines := toolArtifactLines(tool.FileArtifact{Path: "main.go", Content: "package main\nfunc main() {}"}, 80)
 
 		plain := plainLines(lines)
 		if len(plain) != 2 {
@@ -26,7 +25,7 @@ func TestToolArtifactLines(t *testing.T) {
 	})
 
 	t.Run("file range uses start line", func(t *testing.T) {
-		lines := toolArtifactLines(tool.FileRangeArtifact{Path: "main.go", Content: "one\ntwo", StartLine: 12, EndLine: 13}, DefaultTheme().Box.ToolCall, 80)
+		lines := toolArtifactLines(tool.FileRangeArtifact{Path: "main.go", Content: "one\ntwo", StartLine: 12, EndLine: 13}, 80)
 
 		plain := plainLines(lines)
 		if !strings.Contains(plain[0], "12") || !strings.Contains(plain[0], "one") {
@@ -38,7 +37,7 @@ func TestToolArtifactLines(t *testing.T) {
 	})
 
 	t.Run("file range falls back to line one", func(t *testing.T) {
-		lines := toolArtifactLines(tool.FileRangeArtifact{Path: "main.go", Content: "one", StartLine: 0}, DefaultTheme().Box.ToolCall, 80)
+		lines := toolArtifactLines(tool.FileRangeArtifact{Path: "main.go", Content: "one", StartLine: 0}, 80)
 
 		plain := plainLines(lines)
 		if !strings.Contains(plain[0], "1") || !strings.Contains(plain[0], "one") {
@@ -47,7 +46,7 @@ func TestToolArtifactLines(t *testing.T) {
 	})
 
 	t.Run("unified diff omits separator pipe", func(t *testing.T) {
-		lines := toolArtifactLines(tool.UnifiedDiffArtifact{Path: "main.go", Diff: "@@ -1,2 +1,2 @@\n old\n-removed\n+added\n"}, DefaultTheme().Box.ToolCall, 80)
+		lines := toolArtifactLines(tool.UnifiedDiffArtifact{Path: "main.go", Diff: "@@ -1,2 +1,2 @@\n old\n-removed\n+added\n"}, 80)
 
 		plain := plainLines(lines)
 		joined := strings.Join(plain, "\n")
@@ -63,7 +62,7 @@ func TestToolArtifactLines(t *testing.T) {
 	})
 
 	t.Run("unified diff aligns content column", func(t *testing.T) {
-		lines := toolArtifactLines(tool.UnifiedDiffArtifact{Path: "main.go", Diff: "--- a/main.go\n+++ b/main.go\n@@ -9,2 +9,2 @@\n old\n-removed\n+added"}, DefaultTheme().Box.ToolCall, 80)
+		lines := toolArtifactLines(tool.UnifiedDiffArtifact{Path: "main.go", Diff: "--- a/main.go\n+++ b/main.go\n@@ -9,2 +9,2 @@\n old\n-removed\n+added"}, 80)
 
 		plain := plainLines(lines)
 		contents := []string{"---", "+++", "@@", " old", "-removed", "+added"}
@@ -94,7 +93,7 @@ func TestToolArtifactLines(t *testing.T) {
 			"-removed",
 			"+added",
 			`\ No newline at end of file`,
-		}, "\n")}, DefaultTheme().Box.ToolCall, 80)
+		}, "\n")}, 80)
 
 		plain := plainLines(lines)
 		if len(plain) != 9 {
@@ -116,44 +115,12 @@ func TestToolArtifactLines(t *testing.T) {
 		}
 	})
 
-	t.Run("file artifact background spans full width", func(t *testing.T) {
-		boxStyle := DefaultTheme().Box.ToolCall
-		lines := toolArtifactLines(tool.FileArtifact{Path: "main.go", Content: "one"}, boxStyle, 20)
-
-		if len(lines) != 1 {
-			t.Fatalf("line count\ngot:  %d\nwant: 1", len(lines))
-		}
-		if text.VisibleLen(lines[0]) != 20 {
-			t.Fatalf("visible width\ngot:  %d\nwant: 20\nline: %q", text.VisibleLen(lines[0]), lines[0])
-		}
-		if !strings.HasSuffix(lines[0], strings.Repeat(" ", 11)+terminal.SGRReset) {
-			t.Fatalf("line padding is not inside final styled segment: %q", lines[0])
-		}
-		if strings.HasSuffix(lines[0], terminal.SGRReset+strings.Repeat(" ", 11)) {
-			t.Fatalf("line has raw unstyled padding after reset: %q", lines[0])
-		}
-	})
-
-	t.Run("line number prefix is muted", func(t *testing.T) {
-		boxStyle := DefaultTheme().Box.ToolCall
-		lines := toolArtifactLines(tool.FileArtifact{Path: "main.go", Content: "one"}, boxStyle, 80)
-
-		mutedStart := boxStyle.Container.Merge(boxStyle.Muted).Start()
-		if mutedStart == "" {
-			t.Fatalf("test requires muted style start")
-		}
-		if !strings.HasPrefix(lines[0], mutedStart) {
-			t.Fatalf("line number prefix is not muted\ngot:  %q\nwant prefix: %q", lines[0], mutedStart)
-		}
-	})
 }
 
 func TestToolArtifactLinesBounded(t *testing.T) {
 	t.Run("expands tabs before wrapping text", func(t *testing.T) {
 		artifact := tool.TextArtifact{Text: "a\tb"}
-		boxStyle := DefaultTheme().Box.ToolCall
-
-		lines, more := toolArtifactLinesBounded(artifact, boxStyle, 5, 10)
+		lines, more := toolArtifactLinesBounded(artifact, 5, 10)
 
 		if more {
 			t.Fatal("bounded rendering unexpectedly reported more content")
@@ -169,9 +136,7 @@ func TestToolArtifactLinesBounded(t *testing.T) {
 
 	t.Run("expands tabs before wrapping numbered content", func(t *testing.T) {
 		artifact := tool.FileArtifact{Path: "main.go", Content: "a\tb"}
-		boxStyle := DefaultTheme().Box.ToolCall
-
-		lines, more := toolArtifactLinesBounded(artifact, boxStyle, 10, 10)
+		lines, more := toolArtifactLinesBounded(artifact, 10, 10)
 
 		if more {
 			t.Fatal("bounded rendering unexpectedly reported more content")

@@ -20,7 +20,6 @@ type boxLineCacheEntry struct {
 }
 
 type boxLineSignature struct {
-	Theme          Theme
 	Kind           string
 	Width          int
 	ToolsExpanded  bool
@@ -44,7 +43,7 @@ func toolCallSignatureText(box toolCallBox) string {
 	return b.String()
 }
 
-func (c *boxLineCache) Lines(boxes []box, width int, theme Theme, toolsExpanded bool, now time.Time) []string {
+func (c *boxLineCache) Lines(boxes []box, width int, toolsExpanded bool, now time.Time) []string {
 	if len(c.entries) > len(boxes) {
 		c.entries = c.entries[:len(boxes)]
 	}
@@ -54,18 +53,18 @@ func (c *boxLineCache) Lines(boxes []box, width int, theme Theme, toolsExpanded 
 
 	var lines []string
 	for i, box := range boxes {
-		if i > 0 && needsBlankLineBeforeBox(boxes[i-1], box) {
+		if i > 0 {
 			lines = append(lines, "")
 		}
 
-		signature := boxSignature(box, width, theme, toolsExpanded, now)
+		signature := boxSignature(box, width, toolsExpanded, now)
 		entry := c.entries[i]
 		if entry.signature == signature && entry.lines != nil {
 			lines = append(lines, entry.lines...)
 			continue
 		}
 
-		rendered := renderBoxLinesAt(box, width, theme, toolsExpanded, now)
+		rendered := renderBoxLinesAt(box, width, toolsExpanded, now)
 		c.entries[i] = boxLineCacheEntry{
 			signature: signature,
 			lines:     append([]string(nil), rendered...),
@@ -99,9 +98,8 @@ func writeWorkflowArtifactSignature(w io.Writer, artifact tool.Artifact) {
 	}
 }
 
-func boxSignature(block box, width int, theme Theme, toolsExpanded bool, now time.Time) boxLineSignature {
+func boxSignature(block box, width int, toolsExpanded bool, now time.Time) boxLineSignature {
 	signature := boxLineSignature{
-		Theme:         theme,
 		Width:         width,
 		ToolsExpanded: toolsExpanded,
 	}

@@ -7,16 +7,15 @@ import (
 	"github.com/crowl/ronin/tui/internal/text"
 )
 
-func renderWorkflowBoxLines(workflow workflowBox, width int, theme Theme, toolsExpanded bool, now time.Time) []string {
-	lines, _ := renderWorkflowBoxLinesState(workflow, width, theme, toolsExpanded, now)
+func renderWorkflowBoxLines(workflow workflowBox, width int, toolsExpanded bool, now time.Time) []string {
+	lines, _ := renderWorkflowBoxLinesState(workflow, width, toolsExpanded, now)
 	return lines
 }
 
-func renderWorkflowBoxLinesState(workflow workflowBox, width int, theme Theme, toolsExpanded bool, now time.Time) ([]string, bool) {
+func renderWorkflowBoxLinesState(workflow workflowBox, width int, toolsExpanded bool, now time.Time) ([]string, bool) {
 	if width < 1 {
 		width = 1
 	}
-	boxStyle := theme.Box.ToolCall
 	lines := make([]string, 0, maxWorkflowVisualLines)
 	appendLine := func(line string) bool {
 		if len(lines) >= maxWorkflowVisualLines {
@@ -26,56 +25,53 @@ func renderWorkflowBoxLinesState(workflow workflowBox, width int, theme Theme, t
 		return true
 	}
 
-	appendLine(boxStyle.ApplyBody(text.Fill("", width)))
-	title := "Workflow: " + workflow.Name
+	title := "% " + workflow.Name
 	if workflow.Status != "" {
 		title += " (" + workflow.Status + ")"
 	}
-	appendLine(boxStyle.ApplyTitle(text.Fill(title, width)))
-	appendLine(boxStyle.ApplyMuted(text.Fill(" Input: "+workflow.Input, width)))
+	appendLine(strongStyle.apply(text.Truncate(title, width)))
+	if workflow.Input != "" {
+		appendWorkflowWrappedLine(&lines, "  Input: ", workflow.Input, width, maxWorkflowSummaryLines, func(value string) string { return value })
+	}
 
-	summaryLines := boundedWorkflowWrap(" Summary: ", workflow.Summary, width, maxWorkflowSummaryLines)
-	footerLines := 2
-	timelineLimit := min(maxWorkflowTimelineLines, maxWorkflowVisualLines-3-footerLines-len(summaryLines))
+	summaryLines := boundedWorkflowWrap("  Summary: ", workflow.Summary, width, maxWorkflowSummaryLines)
+	footerLines := 1
+	timelineLimit := min(maxWorkflowTimelineLines, maxWorkflowVisualLines-len(lines)-footerLines-len(summaryLines))
 	if timelineLimit < 1 {
 		timelineLimit = 1
 	}
-	timelineLines := 0
+	timelineStart := len(lines)
 	truncatedNotice := workflow.TimelineTruncated
 	for _, entry := range workflow.Entries {
+		timelineLines := len(lines) - timelineStart
 		if timelineLines >= timelineLimit {
 			truncatedNotice = true
 			break
 		}
-		if !appendWorkflowWrappedLine(&lines, " ", entry.Text, width, timelineLimit-timelineLines, func(value string) string {
-			return boxStyle.ApplyBody(text.Fill(value, width))
-		}) {
+		if !appendWorkflowWrappedLine(&lines, "  ", entry.Text, width, timelineLimit-timelineLines, func(value string) string { return value }) {
 			truncatedNotice = true
 			break
 		}
-		timelineLines = len(lines) - 3
 		if toolsExpanded && entry.Detail != "" {
-			if !appendWorkflowWrappedLine(&lines, "   ", entry.Detail, width, timelineLimit-timelineLines, func(value string) string {
-				return boxStyle.ApplyMuted(text.Fill(value, width))
-			}) {
+			timelineLines = len(lines) - timelineStart
+			if !appendWorkflowWrappedLine(&lines, "    ", entry.Detail, width, timelineLimit-timelineLines, func(value string) string { return value }) {
 				truncatedNotice = true
 			}
-			timelineLines = len(lines) - 3
 		}
 		if truncatedNotice {
 			break
 		}
 		if toolsExpanded {
 			for _, artifact := range entry.Artifacts {
-				artifactLines, artifactMore := toolArtifactLinesBounded(artifact, boxStyle, width, timelineLimit-timelineLines)
-				for _, artifactLine := range artifactLines {
-					if !appendLine(artifactLine) {
-						artifactMore = true
+				timelineLines = len(lines) - timelineStart
+				artifactLines, more := toolArtifactLinesBounded(artifact, width, timelineLimit-timelineLines)
+				for _, line := range artifactLines {
+					if !appendLine(line) {
+						more = true
 						break
 					}
-					timelineLines++
 				}
-				if artifactMore {
+				if more {
 					truncatedNotice = true
 					break
 				}
@@ -86,49 +82,40 @@ func renderWorkflowBoxLinesState(workflow workflowBox, width int, theme Theme, t
 		}
 	}
 
-	// Keep the latest lifecycle event visible, but combine it with the one
-	// notice rather than adding a second timeline row after the budget.
 	if truncatedNotice {
-		activity := " ... workflow output truncated"
+		activity := "  ... workflow output truncated"
 		if workflow.LatestActivity != "" {
-			activity = " " + workflow.LatestActivity + " (workflow output truncated)"
+			activity = "  " + workflow.LatestActivity + " (workflow output truncated)"
 		}
-		if timelineLines >= timelineLimit && timelineLines > 0 {
+		if len(lines)-timelineStart >= timelineLimit && len(lines) > timelineStart {
 			lines = lines[:len(lines)-1]
-			timelineLines--
 		}
-		if appendLine(boxStyle.ApplyMuted(text.Fill(activity, width))) {
-			timelineLines++
-		}
+		appendLine(text.Truncate(activity, width))
 	} else if workflow.LatestActivity != "" {
-		if timelineLines >= timelineLimit && timelineLines > 0 {
+		if len(lines)-timelineStart >= timelineLimit && len(lines) > timelineStart {
 			lines = lines[:len(lines)-1]
-			timelineLines--
 		}
-		if appendLine(boxStyle.ApplyMuted(text.Fill(" "+workflow.LatestActivity, width))) {
-			timelineLines++
-		}
+		appendLine(text.Truncate("  "+workflow.LatestActivity, width))
 	}
 
 	for _, summary := range summaryLines {
 		if len(lines) >= maxWorkflowVisualLines-footerLines {
 			break
 		}
-		appendLine(boxStyle.ApplyBody(text.Fill(summary, width)))
+		appendLine(summary)
 	}
 	endedAt := workflow.EndedAt
-	label := " Elapsed"
+	label := "Elapsed"
 	if endedAt.IsZero() {
 		endedAt = now
 	} else {
-		label = " Took"
+		label = "Took"
 	}
-	appendLine(boxStyle.ApplyMeta(text.Fill(fmt.Sprintf("%s %.1fs", label, max(0, endedAt.Sub(workflow.StartedAt).Seconds())), width)))
-	appendLine(boxStyle.ApplyBody(text.Fill("", width)))
+	appendLine(text.Truncate(fmt.Sprintf("  %s %.1fs", label, max(0, endedAt.Sub(workflow.StartedAt).Seconds())), width))
 	return lines, truncatedNotice
 }
 
-func appendWorkflowWrappedLine(lines *[]string, prefix, value string, width, limit int, style func(string) string) bool {
+func appendWorkflowWrappedLine(lines *[]string, prefix, value string, width, limit int, render func(string) string) bool {
 	if limit <= 0 {
 		return false
 	}
@@ -137,7 +124,7 @@ func appendWorkflowWrappedLine(lines *[]string, prefix, value string, width, lim
 		if len(*lines)-initial >= limit || len(*lines) >= maxWorkflowVisualLines {
 			return false
 		}
-		*lines = append(*lines, style(line))
+		*lines = append(*lines, render(line))
 		return true
 	})
 }
@@ -160,5 +147,5 @@ func boundedWorkflowWrap(prefix, value string, width, limit int) []string {
 	if len(lines) >= limit {
 		lines = lines[:limit-1]
 	}
-	return append(lines, " ... summary truncated")
+	return append(lines, "  ... summary truncated")
 }

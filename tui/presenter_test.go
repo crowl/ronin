@@ -1,114 +1,52 @@
 package tui
 
 import (
-	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/crowl/ronin/tui/internal/text"
 )
 
-func TestRenderAssistantThinkingBoxBoldUsesThinkingTextColor(t *testing.T) {
-	theme := Theme{
-		Text: TextTheme{
-			Normal: Style{FG: "white"},
-			Strong: Style{FG: "red", Bold: true},
+func TestMinimalConversationRendering(t *testing.T) {
+	lines := boxesPresenter{
+		Boxes: []box{
+			userMessageBox{Text: "Explain this function."},
+			assistantMessageBox{Text: "It validates **input**."},
+			assistantThinkingBox{Text: "Checking edge cases."},
+			systemMessageBox{Text: "New session started"},
+			errorMessageBox{Text: "Operation canceled"},
 		},
-		Box: BoxTheme{
-			AssistantThinking: BoxStyle{
-				Container: Style{FG: "color-8"},
-				Body:      Style{FG: "color-8", Italic: true},
-				Strong:    Style{FG: "color-8", Bold: true},
-			},
-		},
-	}
+	}.Lines(80)
 
-	got := renderBoxLines(assistantThinkingBox{Text: "think **bold** now"}, 80, theme, false)
-	want := []string{
-		"\x1b[3;38;5;8m                                                                                \x1b[0m",
-		"\x1b[3;38;5;8m think \x1b[1;3;38;5;8mbold\x1b[3;38;5;8m now\x1b[0m",
-		"\x1b[3;38;5;8m                                                                                \x1b[0m",
+	plain := plainLines(lines)
+	if got := strings.Join(plain, "\n"); !strings.Contains(got, " > Explain this function.") ||
+		!strings.Contains(got, " - New session started") || !strings.Contains(got, " ! Operation canceled") {
+		t.Fatalf("markers missing from render:\n%s", got)
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("thinking box bold style\ngot:  %#v\nwant: %#v", got, want)
+	if !strings.Contains(lines[4], emphasisStyle.start()) {
+		t.Fatalf("thinking text is not italic: %q", lines[4])
+	}
+	if !strings.Contains(lines[len(lines)-1], errorStyle.start()) {
+		t.Fatalf("error text is not red: %q", lines[len(lines)-1])
 	}
 }
 
-func TestRenderToolCallBoxWrapsLongTitleWithTitleStyle(t *testing.T) {
-	theme := Theme{
-		Box: BoxTheme{
-			ToolCall: BoxStyle{
-				Container: Style{FG: "white"},
-				Title:     Style{FG: "red", Bold: true},
-				Meta:      Style{FG: "blue"},
-			},
-		},
+func TestRenderToolCallUsesToolMarker(t *testing.T) {
+	box := toolCallBox{Title: "go test ./..."}
+	lines := renderBoxLinesAt(box, 24, false, box.StartedAt)
+	plain := plainLines(lines)
+	if plain[0] != " • go test ./..." {
+		t.Fatalf("tool title = %q", plain[0])
 	}
-	box := toolCallBox{Title: "$ go test ./tui -run TestRenderToolCallBox Wraps Long Title"}
-
-	got := renderBoxLinesAt(box, 24, theme, false, box.StartedAt)
-	wantTitleLines := []string{
-		" $ go test ./tui -run",
-		" TestRenderToolCallBox",
-		" Wraps Long Title",
-	}
-	if len(got) < 1+len(wantTitleLines) {
-		t.Fatalf("tool call lines too short\ngot: %#v", got)
-	}
-
-	var gotTitle string
-	for i, want := range wantTitleLines {
-		line := got[i+1]
-		plain := strings.TrimRight(text.StripANSI(line), " ")
-		if plain != want {
-			t.Fatalf("wrapped title line %d\ngot:  %q\nwant: %q", i, plain, want)
-		}
-		if !strings.HasPrefix(line, "\x1b[1;31") {
-			t.Fatalf("wrapped title line %d does not use title style\ngot: %q", i, line)
-		}
-		gotTitle += strings.ReplaceAll(strings.TrimSpace(plain), " ", "")
-	}
-
-	wantTitle := strings.ReplaceAll(box.Title, " ", "")
-	if gotTitle != wantTitle {
-		t.Fatalf("wrapped title content\ngot:  %q\nwant: %q", gotTitle, wantTitle)
+	if plain[len(plain)-1] != "   Elapsed 0.0s" {
+		t.Fatalf("tool duration = %q", plain[len(plain)-1])
 	}
 }
 
-func TestRenderEditorPresenterSegmentStylesText(t *testing.T) {
-	theme := Theme{
-		Text: TextTheme{
-			Normal: Style{FG: "white"},
-		},
-		UI: UITheme{
-			EditorCursor: Style{Reverse: true},
-		},
+func TestEditorPresenterUsesPromptMarkerAndReverseCursor(t *testing.T) {
+	lines := editorPresenter{Text: []rune("abc"), Cursor: 1}.Lines(80)
+	if got := plainLines(lines)[0]; got != "> abc" {
+		t.Fatalf("editor line = %q", got)
 	}
-
-	segment := editorSegment{text: []rune("abc"), startColumn: 0, endColumn: 3}
-
-	got := rendereditorPresenterSegment(" ", segment, 0, false, theme)
-	want := " " + "\x1b[37mabc\x1b[0m"
-	if got != want {
-		t.Fatalf("editor text style\ngot:  %q\nwant: %q", got, want)
-	}
-}
-
-func TestRenderEditorPresenterSegmentStylesCursorWithTextColor(t *testing.T) {
-	theme := Theme{
-		Text: TextTheme{
-			Normal: Style{FG: "white"},
-		},
-		UI: UITheme{
-			EditorCursor: Style{Reverse: true},
-		},
-	}
-
-	segment := editorSegment{text: []rune("abc"), startColumn: 0, endColumn: 3}
-
-	got := rendereditorPresenterSegment(" ", segment, 1, true, theme)
-	want := " " + "\x1b[37ma\x1b[0m" + "\x1b[7;37mb\x1b[0m" + "\x1b[37mc\x1b[0m"
-	if got != want {
-		t.Fatalf("editor cursor style\ngot:  %q\nwant: %q", got, want)
+	if !strings.Contains(lines[0], cursorStyle.start()) {
+		t.Fatalf("editor cursor is not reversed: %q", lines[0])
 	}
 }

@@ -1024,10 +1024,6 @@ func runTUI(conv *runtime.Conversation, catalog *workflow.Catalog, agent workflo
 
 	cmds = append(cmds, switchModelCmds...)
 	cmds = append(cmds, switchReasoningLevelCmds...)
-	cmds = append(cmds,
-		tui.SwitchTheme{Name: "light", Theme: tui.LightTheme()},
-		tui.SwitchTheme{Name: "dark", Theme: tui.DarkTheme()},
-	)
 	cmds = append(cmds, tui.Exit{})
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)

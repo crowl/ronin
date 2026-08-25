@@ -8,7 +8,7 @@ import (
 	"github.com/crowl/ronin/tui/internal/text"
 )
 
-func markdownLines(input string, width int, style TextTheme) []string {
+func markdownLines(input string, width int, styles textStyles) []string {
 	inputLines := text.SplitLines(input)
 
 	var lines []string
@@ -23,13 +23,13 @@ func markdownLines(input string, width int, style TextTheme) []string {
 		}
 
 		if isCodeFence(trimmed) {
-			lines = append(lines, styledWrap(" ", raw, width, style.Muted, style.Normal)...)
+			lines = append(lines, styledWrap("", raw, width, styles.muted, styles.normal)...)
 			inCodeBlock = !inCodeBlock
 			continue
 		}
 
 		if inCodeBlock {
-			lines = append(lines, styledWrap(" ", raw, width, style.Code, style.Normal)...)
+			lines = append(lines, styledWrap("", raw, width, styles.code, styles.normal)...)
 			continue
 		}
 
@@ -39,25 +39,25 @@ func markdownLines(input string, width int, style TextTheme) []string {
 		}
 
 		if isHeading(raw) {
-			line := styleInline(raw, style)
-			lines = append(lines, styledWrap(" ", line, width, style.Strong, style.Normal)...)
+			line := styleInline(raw, styles)
+			lines = append(lines, styledWrap("", line, width, styles.strong, styles.normal)...)
 			continue
 		}
 
 		if quote, ok := blockquoteText(raw); ok {
-			line := styleInline(quote, style)
-			lines = append(lines, styledWrap(" │ ", line, width, style.Emphasis, style.Normal)...)
+			line := styleInline(quote, styles)
+			lines = append(lines, styledWrap("│ ", line, width, styles.emphasis, styles.normal)...)
 			continue
 		}
 
 		if marker, body, ok := listItem(raw); ok {
-			line := marker + styleInline(body, style)
-			lines = append(lines, styledWrap(" ", line, width, style.Normal, Style{})...)
+			line := marker + styleInline(body, styles)
+			lines = append(lines, styledWrap("", line, width, styles.normal, style{})...)
 			continue
 		}
 
-		line := styleInline(raw, style)
-		lines = append(lines, styledWrap(" ", line, width, style.Normal, Style{})...)
+		line := styleInline(raw, styles)
+		lines = append(lines, styledWrap("", line, width, styles.normal, style{})...)
 	}
 
 	start := 0
@@ -69,7 +69,7 @@ func markdownLines(input string, width int, style TextTheme) []string {
 		end--
 	}
 	if start == end {
-		return []string{style.Normal.Apply(" ")}
+		return []string{styles.normal.apply("")}
 	}
 
 	return lines[start:end]
@@ -145,18 +145,18 @@ func listItem(line string) (string, string, bool) {
 	return trimmed[:index+2], trimmed[index+2:], true
 }
 
-func styleInline(input string, style TextTheme) string {
+func styleInline(input string, styles textStyles) string {
 	if strings.Contains(input, "](") {
 		input = styleLinks(input)
 	}
 	if strings.Contains(input, "`") {
-		input = styleDelimited(input, "`", style.Code, style.Normal)
+		input = styleDelimited(input, "`", styles.code, styles.normal)
 	}
 	if strings.Contains(input, "**") {
-		input = styleDelimited(input, "**", style.Strong, style.Normal)
+		input = styleDelimited(input, "**", styles.strong, styles.normal)
 	}
 	if strings.Contains(input, "*") {
-		input = styleDelimited(input, "*", style.Emphasis, style.Normal)
+		input = styleDelimited(input, "*", styles.emphasis, styles.normal)
 	}
 	return input
 }
@@ -202,8 +202,8 @@ func styleLinks(input string) string {
 	return b.String()
 }
 
-func styleDelimited(input string, marker string, style Style, resume Style) string {
-	if marker == "" || style.Empty() {
+func styleDelimited(input string, marker string, valueStyle style, resume style) string {
+	if marker == "" || valueStyle.empty() {
 		return input
 	}
 	start := strings.Index(input, marker)
@@ -211,8 +211,8 @@ func styleDelimited(input string, marker string, style Style, resume Style) stri
 		return input
 	}
 
-	styleStart := style.Start()
-	resumeStart := resume.Start()
+	styleStart := valueStyle.start()
+	resumeStart := resume.start()
 	var b strings.Builder
 	b.Grow(len(input) + len(styleStart) + len(terminal.SGRReset))
 	for start != -1 {
@@ -231,24 +231,24 @@ func styleDelimited(input string, marker string, style Style, resume Style) stri
 	return b.String()
 }
 
-func styledWrap(prefix string, value string, width int, style Style, resume Style) []string {
-	if style.Empty() {
+func styledWrap(prefix string, value string, width int, valueStyle style, resume style) []string {
+	if valueStyle.empty() {
 		return text.Wrap(prefix, value, width)
 	}
 	lines := text.Wrap(prefix, value, width)
-	styleStart := style.Start()
-	resumeStart := resume.Start()
+	styleStart := valueStyle.start()
+	resumeStart := resume.start()
 	for i := range lines {
 		lines[i] = applyInlineStyleStart(lines[i], styleStart, resumeStart)
 	}
 	return lines
 }
 
-func applyInlineStyle(v string, style Style, resume Style) string {
-	if style.Empty() {
+func applyInlineStyle(v string, valueStyle style, resume style) string {
+	if valueStyle.empty() {
 		return v
 	}
-	return applyInlineStyleStart(v, style.Start(), resume.Start())
+	return applyInlineStyleStart(v, valueStyle.start(), resume.start())
 }
 
 func applyInlineStyleStart(v string, styleStart string, resumeStart string) string {

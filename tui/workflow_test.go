@@ -15,12 +15,12 @@ import (
 )
 
 func TestWorkflowInputMode(t *testing.T) {
-	model, err := newAppModel([]Command{InvokeWorkflow{Workflow: workflow.Workflow{Name: "implement"}}}, DefaultTheme())
+	model, err := newAppModel([]Command{InvokeWorkflow{Workflow: workflow.Workflow{Name: "implement"}}})
 	if err != nil {
 		t.Fatalf("newAppModel() error = %v", err)
 	}
 	model.enterWorkflowInput(workflow.Workflow{Name: "implement", Path: "/workflow.lua"})
-	if got := model.editorLabel(); got != "Workflow input: implement" {
+	if got := model.editorLabel(); got != "workflow implement input" {
 		t.Fatalf("editorLabel() = %q", got)
 	}
 
@@ -49,7 +49,7 @@ func TestWorkflowInputMode(t *testing.T) {
 }
 
 func TestWorkflowTimeline(t *testing.T) {
-	model, err := newAppModel([]Command{Exit{}}, DefaultTheme())
+	model, err := newAppModel([]Command{Exit{}})
 	if err != nil {
 		t.Fatalf("newAppModel() error = %v", err)
 	}
@@ -60,11 +60,11 @@ func TestWorkflowTimeline(t *testing.T) {
 	model.handleWorkflowEvent(workflow.Finished{Result: workflow.Result{Name: "implement", Status: workflow.StatusCompleted, Summary: "done"}}, time.Now())
 
 	box := model.boxes[len(model.boxes)-1].(workflowBox)
-	collapsed := strings.Join(renderBoxLinesAt(box, 80, DefaultTheme(), false, time.Now()), "\n")
+	collapsed := strings.Join(renderBoxLinesAt(box, 80, false, time.Now()), "\n")
 	if !strings.Contains(collapsed, "Planning") || !strings.Contains(collapsed, "done") || strings.Contains(collapsed, "secret detail") {
 		t.Fatalf("collapsed timeline = %q", collapsed)
 	}
-	expanded := strings.Join(renderBoxLinesAt(box, 80, DefaultTheme(), true, time.Now()), "\n")
+	expanded := strings.Join(renderBoxLinesAt(box, 80, true, time.Now()), "\n")
 	if !strings.Contains(expanded, "secret detail") {
 		t.Fatalf("expanded timeline = %q", expanded)
 	}
@@ -91,7 +91,7 @@ func TestWorkflowTimelineCoalescesDeltas(t *testing.T) {
 
 func TestBoundedArtifactRenderingStopsWithinWrappedLineBudget(t *testing.T) {
 	artifact := tool.TextArtifact{Text: strings.Repeat("界", 100000)}
-	lines, more := toolArtifactLinesBounded(artifact, DefaultTheme().Box.ToolCall, 10, 7)
+	lines, more := toolArtifactLinesBounded(artifact, 10, 7)
 	if len(lines) != 7 || !more {
 		t.Fatalf("rendered %d lines, more=%t; want 7 bounded lines", len(lines), more)
 	}
@@ -99,7 +99,7 @@ func TestBoundedArtifactRenderingStopsWithinWrappedLineBudget(t *testing.T) {
 
 func TestBoundedArtifactRenderingPreservesFileMetadata(t *testing.T) {
 	artifact := tool.FileMetadataArtifact{Path: "file.txt", FileID: "abc123"}
-	lines, more := toolArtifactLinesBounded(artifact, DefaultTheme().Box.ToolCall, 80, 10)
+	lines, more := toolArtifactLinesBounded(artifact, 80, 10)
 	if more || !strings.Contains(textWithoutANSI(lines), "Already in context (abc123)") {
 		t.Fatalf("metadata rendering = %q, more=%t", textWithoutANSI(lines), more)
 	}
@@ -112,7 +112,7 @@ func TestWorkflowTimelineReservationsAndWidthCap(t *testing.T) {
 		LatestActivity: "Agent 1 finished", StartedAt: time.Now(),
 	}
 	for _, width := range []int{1, 7, 80, 200} {
-		lines := renderWorkflowBoxLines(box, width, DefaultTheme(), true, time.Now())
+		lines := renderWorkflowBoxLines(box, width, true, time.Now())
 		if len(lines) > maxWorkflowVisualLines {
 			t.Fatalf("width %d rendered %d lines", width, len(lines))
 		}
@@ -124,7 +124,7 @@ func TestWorkflowTimelineReservationsAndWidthCap(t *testing.T) {
 
 func TestWorkflowTimelineHasOneTruncationNotice(t *testing.T) {
 	box := workflowBox{Name: "large", TimelineTruncated: true, LatestActivity: "Agent 1 finished", StartedAt: time.Now()}
-	lines := renderWorkflowBoxLines(box, 80, DefaultTheme(), true, time.Now())
+	lines := renderWorkflowBoxLines(box, 80, true, time.Now())
 	plain := textWithoutANSI(lines)
 	if strings.Count(plain, "workflow output truncated") != 1 {
 		t.Fatalf("truncation notices = %d in %q", strings.Count(plain, "workflow output truncated"), plain)
@@ -133,10 +133,9 @@ func TestWorkflowTimelineHasOneTruncationNotice(t *testing.T) {
 
 func BenchmarkBoundedArtifactRendering(b *testing.B) {
 	artifact := tool.TextArtifact{Text: strings.Repeat("long line ", 100000)}
-	style := DefaultTheme().Box.ToolCall
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		lines, _ := toolArtifactLinesBounded(artifact, style, 80, 20)
+		lines, _ := toolArtifactLinesBounded(artifact, 80, 20)
 		if len(lines) > 20 {
 			b.Fatal("bounded artifact rendering exceeded limit")
 		}
@@ -265,7 +264,7 @@ func TestWorkflowTimelineBoundsLifecycleAndRendering(t *testing.T) {
 	if box.Status != string(workflow.StatusFailed) || len(box.Summary) > maxWorkflowSummaryBytes || !utf8.ValidString(box.Summary) {
 		t.Fatalf("final workflow state: status=%q summary bytes=%d", box.Status, len(box.Summary))
 	}
-	lines := renderWorkflowBoxLines(box, 80, DefaultTheme(), true, time.Now())
+	lines := renderWorkflowBoxLines(box, 80, true, time.Now())
 	if len(lines) > maxWorkflowVisualLines {
 		t.Fatalf("rendered %d lines", len(lines))
 	}
@@ -322,7 +321,7 @@ func TestCancelledWorkflowDropsQueuedPrompt(t *testing.T) {
 
 func mustWorkflowModel(t *testing.T) *appModel {
 	t.Helper()
-	model, err := newAppModel([]Command{Exit{}}, DefaultTheme())
+	model, err := newAppModel([]Command{Exit{}})
 	if err != nil {
 		t.Fatalf("newAppModel() error = %v", err)
 	}

@@ -30,7 +30,6 @@ type appConfig struct {
 	WorkflowRunner WorkflowRunner
 	Renderer       renderTarget
 	Commands       []Command
-	Theme          Theme
 }
 
 const (
@@ -40,7 +39,7 @@ const (
 )
 
 func newApp(cfg appConfig) (*app, error) {
-	model, err := newAppModel(cfg.Commands, cfg.Theme)
+	model, err := newAppModel(cfg.Commands)
 	if err != nil {
 		return nil, err
 	}
@@ -299,10 +298,6 @@ func (app *app) runCommand(ctx context.Context, item menuItem, command Command) 
 		err = app.conversation.SwitchReasoningLevel(typedCommand.Level)
 		if err != nil {
 			err = fmt.Errorf("failed to switch reasoning level: %w", err)
-		}
-	case SwitchTheme:
-		if !app.model.setTheme(typedCommand.Theme) {
-			err = fmt.Errorf("theme %q is unavailable", typedCommand.Name)
 		}
 	case InvokeSkill:
 		_ = typedCommand.Skill

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/runtime"
@@ -39,7 +38,6 @@ type Config struct {
 	Commands       []Command
 	Input          *os.File
 	Output         *os.File
-	Theme          Theme
 }
 
 func Run(ctx context.Context, cfg Config) error {
@@ -61,8 +59,6 @@ func Run(ctx context.Context, cfg Config) error {
 		return fmt.Errorf("create terminal: %w", err)
 	}
 
-	theme := resolveTheme(cfg.Theme, term)
-
 	renderer, err := render.New(term)
 	if err != nil {
 		return fmt.Errorf("create renderer: %w", err)
@@ -74,7 +70,6 @@ func Run(ctx context.Context, cfg Config) error {
 		WorkflowRunner: cfg.WorkflowRunner,
 		Renderer:       renderer,
 		Commands:       cfg.Commands,
-		Theme:          theme,
 	})
 	if err != nil {
 		return fmt.Errorf("create app: %w", err)
@@ -101,33 +96,4 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 
 	return nil
-}
-
-const backgroundColorTimeout = 100 * time.Millisecond
-
-type backgroundColorReader interface {
-	BackgroundColor(time.Duration) (terminal.RGB, bool, error)
-}
-
-func resolveTheme(configured Theme, term backgroundColorReader) Theme {
-	if !configured.Empty() {
-		return configured
-	}
-
-	if term != nil {
-		color, ok, err := term.BackgroundColor(backgroundColorTimeout)
-		if err == nil && ok {
-			if terminalColorIsLight(color) {
-				return LightTheme()
-			}
-			return DarkTheme()
-		}
-	}
-
-	return DefaultTheme()
-}
-
-func terminalColorIsLight(color terminal.RGB) bool {
-	luminance := 0.299*float64(color.R) + 0.587*float64(color.G) + 0.114*float64(color.B)
-	return luminance >= 128
 }

@@ -51,15 +51,6 @@ func newMenu(commands []Command) (*menuState, error) {
 				Description: "switch reasoning level to " + argument,
 				Command:     typedCommand,
 			})
-		case SwitchTheme:
-			items = append(items, menuItem{
-				Index:       i,
-				Name:        "/theme",
-				Argument:    typedCommand.Name,
-				Value:       "/theme " + typedCommand.Name,
-				Description: "switch theme to " + typedCommand.Name,
-				Command:     typedCommand,
-			})
 		case InvokeSkill:
 			items = append(items, menuItem{
 				Index:       i,

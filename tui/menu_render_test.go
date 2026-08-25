@@ -14,11 +14,9 @@ func TestMenuPresenterLines(t *testing.T) {
 		{Name: "/reasoning", Argument: "low", Value: "/reasoning low", Description: "set reasoning level"},
 		{Name: "/exit", Value: "/exit", Description: "exit from ronin"},
 	}
-	theme := DefaultTheme()
-
 	t.Run("arguments and descriptions align to dynamic columns", func(t *testing.T) {
 		p := menuPresenter{SelectedIndex: 0, Items: items}
-		lines := p.Lines(120, theme)
+		lines := p.Lines(120)
 		if len(lines) != len(items) {
 			t.Fatalf("line count\ngot:  %d\nwant: %d", len(lines), len(items))
 		}
@@ -51,14 +49,14 @@ func TestMenuPresenterLines(t *testing.T) {
 			{Name: "/widest-command", Argument: "widest-argument-value", Value: "/widest-command widest-argument-value", Description: "widest command"},
 			{Name: "/new", Value: "/new", Description: "start a fresh conversation"},
 			{Name: "/model", Argument: "openai:gpt", Value: "/model openai:gpt", Description: "switch model"},
-			{Name: "/theme", Argument: "dark", Value: "/theme dark", Description: "switch theme"},
 			{Name: "/exit", Value: "/exit", Description: "exit from ronin"},
 			{Name: "/compact", Value: "/compact", Description: "compact conversation"},
+			{Name: "/new", Value: "/new", Description: "start a fresh conversation"},
 			{Name: "/short", Value: "/short", Description: "short command"},
 		}
 
 		p := menuPresenter{SelectedIndex: menuMaxVisibleItems, Items: items}
-		lines := p.Lines(120, theme)
+		lines := p.Lines(120)
 		if len(lines) != menuMaxVisibleItems {
 			t.Fatalf("line count\ngot:  %d\nwant: %d", len(lines), menuMaxVisibleItems)
 		}
@@ -81,16 +79,13 @@ func TestMenuPresenterLines(t *testing.T) {
 		}
 	})
 
-	t.Run("selected row uses a background highlight, not reverse", func(t *testing.T) {
+	t.Run("selected row uses reverse video", func(t *testing.T) {
 		p := menuPresenter{SelectedIndex: 1, Items: items}
-		lines := p.Lines(120, theme)
+		lines := p.Lines(120)
 
 		selected := lines[1]
-		if !strings.Contains(selected, theme.UI.MenuItemSelected.Start()) {
-			t.Fatalf("selected row missing highlight style\nline: %q", selected)
-		}
-		if strings.Contains(selected, ";7;") || strings.Contains(selected, "[7m") {
-			t.Fatalf("selected row should not use reverse video\nline: %q", selected)
+		if !strings.Contains(selected, selectedStyle.start()) {
+			t.Fatalf("selected row missing reverse style\nline: %q", selected)
 		}
 		if got := text.VisibleLen(text.StripANSI(selected)); got != 120 {
 			t.Fatalf("selected row width\ngot:  %d\nwant: 120", got)
@@ -99,7 +94,7 @@ func TestMenuPresenterLines(t *testing.T) {
 
 	t.Run("selected row shows the pointer prefix", func(t *testing.T) {
 		p := menuPresenter{SelectedIndex: 2, Items: items}
-		lines := p.Lines(120, theme)
+		lines := p.Lines(120)
 		if !strings.HasPrefix(text.StripANSI(lines[2]), menuItemPrefixSelected) {
 			t.Fatalf("selected row missing pointer prefix\nline: %q", text.StripANSI(lines[2]))
 		}

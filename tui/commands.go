@@ -14,11 +14,6 @@ type SwitchModel struct{ Model llm.Model }
 
 type SwitchReasoningLevel struct{ Level llm.ReasoningLevel }
 
-type SwitchTheme struct {
-	Name  string
-	Theme Theme
-}
-
 type InvokeSkill struct{ Skill runtime.Skill }
 
 type InvokeWorkflow struct{ Workflow workflow.Workflow }
@@ -32,7 +27,6 @@ func (StartNewConversation) command() {}
 func (CompactConversation) command()  {}
 func (SwitchModel) command()          {}
 func (SwitchReasoningLevel) command() {}
-func (SwitchTheme) command()          {}
 func (InvokeSkill) command()          {}
 func (InvokeWorkflow) command()       {}
 func (Exit) command()                 {}

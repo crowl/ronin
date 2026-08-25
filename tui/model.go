@@ -40,7 +40,6 @@ const (
 type appModel struct {
 	editor *editor.Readline
 	menu   *menuState
-	theme  Theme
 
 	boxes          []box
 	boxLineCache   boxLineCache
@@ -93,7 +92,7 @@ func (submitPromptAction) modelAction() {}
 func (runCommandAction) modelAction()   {}
 func (runWorkflowAction) modelAction()  {}
 
-func newAppModel(commands []Command, theme Theme) (*appModel, error) {
+func newAppModel(commands []Command) (*appModel, error) {
 	appMenu, err := newMenu(commands)
 	if err != nil {
 		return nil, fmt.Errorf("create menu: %w", err)
@@ -102,7 +101,6 @@ func newAppModel(commands []Command, theme Theme) (*appModel, error) {
 	return &appModel{
 		editor: editor.New(),
 		menu:   appMenu,
-		theme:  theme,
 		boxes:  make([]box, 0, defaultInitialBoxesCapacity),
 	}, nil
 }
@@ -531,14 +529,6 @@ func (m *appModel) tickWorking() modelUpdate {
 	return modelUpdate{Render: true}
 }
 
-func (m *appModel) setTheme(theme Theme) bool {
-	if theme.Empty() {
-		return false
-	}
-	m.theme = theme
-	return true
-}
-
 func (m *appModel) recordCommand(item menuItem, err error) {
 	m.boxes = append(m.boxes, systemMessageBox{
 		Text: item.Value,
@@ -559,7 +549,7 @@ func (m *appModel) boundWorkflowVisualTimeline(width int, now time.Time) {
 		if !ok || workflow.TimelineTruncated {
 			continue
 		}
-		_, truncated := renderWorkflowBoxLinesState(workflow, width, m.theme, m.toolsExpanded, now)
+		_, truncated := renderWorkflowBoxLinesState(workflow, width, m.toolsExpanded, now)
 		if truncated {
 			workflow.TimelineTruncated = true
 			m.boxes[index] = workflow
@@ -571,37 +561,45 @@ func (m *appModel) lines(width int, conversation Conversation, now time.Time) ([
 	m.boundWorkflowVisualTimeline(width, now)
 
 	lines := []string{""}
-	lines = append(lines, m.boxLineCache.Lines(m.boxes, width, m.theme, m.toolsExpanded, now)...)
+	appendBlankLine := func() {
+		if len(lines) == 0 || lines[len(lines)-1] != "" {
+			lines = append(lines, "")
+		}
+	}
+	lines = append(lines, m.boxLineCache.Lines(m.boxes, width, m.toolsExpanded, now)...)
 
 	if m.steeringPrompt != "" {
+		appendBlankLine()
 		lines = append(lines, pendingSteeringPresenter{
 			Text: m.steeringPrompt,
-		}.Lines(width, m.theme)...)
+		}.Lines(width)...)
 	}
 
 	if m.working {
+		appendBlankLine()
 		lines = append(lines, workingIndicator{
 			Frame: m.indicatorFrame,
 			Label: m.workingLabel,
-		}.Lines(width, m.theme)...)
+		}.Lines(width)...)
 	}
 
+	appendBlankLine()
 	lines = append(lines, editorPresenter{
 		Text:   m.editor.Text(),
 		Cursor: m.editor.Cursor(),
 		Label:  m.editorLabel(),
-	}.Lines(width, m.theme)...)
+	}.Lines(width)...)
 
 	if m.menu.Shown() {
 		lines = append(lines, menuPresenter{
 			SelectedIndex: m.menu.SelectedIndex(),
 			Items:         m.menu.Items(),
-		}.Lines(width, m.theme)...)
+		}.Lines(width)...)
 	}
 
 	cwdStatus := m.statusBarCache.CWDStatus(conversation.CWD())
 	if m.saveError != "" {
-		cwdStatus = fmt.Sprintf("%s (Save Error: %s)", cwdStatus, m.saveError)
+		cwdStatus = fmt.Sprintf("Save Error: %s | %s", m.saveError, cwdStatus)
 	}
 
 	lines = append(lines, statusBar{
@@ -611,7 +609,7 @@ func (m *appModel) lines(width int, conversation Conversation, now time.Time) ([
 		Model:          conversation.Model(),
 		ReasoningLevel: conversation.ReasoningLevel(),
 		ContextUsage:   conversation.ContextUsage(),
-	}.Lines(width, m.theme)...)
+	}.Lines(width)...)
 
 	return lines, nil
 }
@@ -620,7 +618,7 @@ func (m *appModel) editorLabel() string {
 	if m.workflowInput == nil {
 		return ""
 	}
-	return "Workflow input: " + m.workflowInput.Name
+	return "workflow " + m.workflowInput.Name + " input"
 }
 
 func findWorkflowBoxIndex(blocks []box) int {

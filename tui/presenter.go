@@ -11,121 +11,99 @@ import (
 	"github.com/crowl/ronin/tui/internal/text"
 )
 
-// Boxes
+// Conversation
 
-const maxToolOutputLinesNotExpanded = 10
+const (
+	maxToolOutputLinesNotExpanded = 10
+	conversationBoxPadding        = " "
+)
 
 type boxesPresenter struct {
 	Boxes         []box
 	ToolsExpanded bool
 }
 
-func (p boxesPresenter) Lines(width int, theme Theme) []string {
+func (p boxesPresenter) Lines(width int) []string {
 	var lines []string
 	for i, block := range p.Boxes {
-		if i > 0 && needsBlankLineBeforeBox(p.Boxes[i-1], block) {
+		if i > 0 {
 			lines = append(lines, "")
 		}
-		lines = append(lines, renderBoxLines(block, width, theme, p.ToolsExpanded)...)
+		lines = append(lines, renderBoxLines(block, width, p.ToolsExpanded)...)
 	}
 	return lines
 }
 
-func renderBoxLines(block box, width int, theme Theme, toolsExpanded bool) []string {
-	return renderBoxLinesAt(block, width, theme, toolsExpanded, time.Now())
+func renderBoxLines(block box, width int, toolsExpanded bool) []string {
+	return renderBoxLinesAt(block, width, toolsExpanded, time.Now())
 }
 
-func renderBoxLinesAt(block box, width int, theme Theme, toolsExpanded bool, now time.Time) []string {
-	var lines []string
+func renderBoxLinesAt(block box, width int, toolsExpanded bool, now time.Time) []string {
+	contentWidth := max(1, width-text.VisibleLen(conversationBoxPadding))
+	lines := renderBoxContentLinesAt(block, contentWidth, toolsExpanded, now)
+	for i := range lines {
+		lines[i] = conversationBoxPadding + lines[i]
+	}
+	return lines
+}
 
+func renderBoxContentLinesAt(block box, width int, toolsExpanded bool, now time.Time) []string {
 	switch typedBlock := block.(type) {
 	case userMessageBox:
-		boxStyle := theme.Box.User
-		lines = append(lines, boxStyle.ApplyBody(text.Fill("", width)))
-		for _, line := range text.Wrap(" ", typedBlock.Text, width) {
-			lines = append(lines, boxStyle.ApplyBody(text.Fill(line, width)))
-		}
-		lines = append(lines, boxStyle.ApplyBody(text.Fill("", width)))
+		return markedLines("> ", typedBlock.Text, width, style{})
 	case assistantMessageBox:
-		boxStyle := theme.Box.Assistant
-		lines = append(lines, boxStyle.ApplyBody(text.Fill("", width)))
-		for _, line := range markdownLines(typedBlock.Text, width, boxStyle.TextTheme(theme.Text)) {
-			lines = append(lines, line)
-		}
-		lines = append(lines, boxStyle.ApplyBody(text.Fill("", width)))
+		return markdownLines(typedBlock.Text, width, defaultTextStyles())
 	case assistantThinkingBox:
-		boxStyle := theme.Box.AssistantThinking
-		lines = append(lines, boxStyle.ApplyBody(text.Fill("", width)))
-		textTheme := boxStyle.TextTheme(theme.Text)
-		for _, line := range markdownLines(typedBlock.Text, width, textTheme) {
-			lines = append(lines, line)
-		}
-		lines = append(lines, boxStyle.ApplyBody(text.Fill("", width)))
+		return markdownLines(typedBlock.Text, width, thinkingTextStyles())
 	case toolCallBox:
-		boxStyle := theme.Box.ToolCall
-		lines = append(lines, boxStyle.ApplyBody(text.Fill("", width)))
-		for _, header := range text.Wrap(" ", typedBlock.Title, width) {
-			lines = append(lines, boxStyle.ApplyTitle(text.Fill(header, width)))
-		}
-		lines = append(lines, boxStyle.ApplyBody(text.Fill("", width)))
+		lines := markedLines("• ", typedBlock.Title, width, strongStyle)
 		var artifactLines []string
 		for _, artifact := range typedBlock.Artifacts {
-			artifactLines = append(artifactLines, toolArtifactLines(artifact, boxStyle, width)...)
+			artifactLines = append(artifactLines, toolArtifactLines(artifact, width)...)
 		}
 		if typedBlock.Error != "" {
-			for _, line := range text.Wrap(" ", typedBlock.Error, width) {
-				artifactLines = append(artifactLines, boxStyle.ApplyDiffRemoved(text.Fill(line, width)))
+			for _, line := range text.Wrap("  ", typedBlock.Error, width) {
+				artifactLines = append(artifactLines, errorStyle.apply(line))
 			}
 		}
 		if len(artifactLines) > maxToolOutputLinesNotExpanded && !toolsExpanded {
 			skipped := len(artifactLines) - maxToolOutputLinesNotExpanded
-			notice := fmt.Sprintf(" ... (%d more lines, ctrl+o to expand)", skipped)
-			artifactLines = append(artifactLines[:maxToolOutputLinesNotExpanded], boxStyle.ApplyMuted(text.Fill(notice, width)))
+			notice := fmt.Sprintf("  ... (%d more lines, ctrl+o to expand)", skipped)
+			artifactLines = append(artifactLines[:maxToolOutputLinesNotExpanded], notice)
 		}
 		lines = append(lines, artifactLines...)
+
 		endedAt := typedBlock.EndedAt
-		label := " Took"
+		label := "Took"
 		if endedAt.IsZero() {
 			endedAt = now
-			label = " Elapsed"
+			label = "Elapsed"
 		}
-		duration := endedAt.Sub(typedBlock.StartedAt)
-		if duration < 0 {
-			duration = 0
-		}
-		lines = append(lines, boxStyle.ApplyBody(text.Fill("", width)))
-		lines = append(lines, boxStyle.ApplyMeta(text.Fill(fmt.Sprintf("%s %.1fs", label, duration.Seconds()), width)))
-		lines = append(lines, boxStyle.ApplyBody(text.Fill("", width)))
+		duration := max(0, endedAt.Sub(typedBlock.StartedAt).Seconds())
+		return append(lines, fmt.Sprintf("  %s %.1fs", label, duration))
 	case workflowBox:
-		return renderWorkflowBoxLines(typedBlock, width, theme, toolsExpanded, now)
+		return renderWorkflowBoxLines(typedBlock, width, toolsExpanded, now)
 	case systemMessageBox:
-		boxStyle := theme.Box.System
-		lines = append(lines, boxStyle.ApplyBody(text.Fill("", width)))
-		for _, line := range text.Wrap(" ", typedBlock.Text, width) {
-			lines = append(lines, boxStyle.ApplyBody(text.Fill(line, width)))
-		}
-		lines = append(lines, boxStyle.ApplyBody(text.Fill("", width)))
+		return markedLines("- ", typedBlock.Text, width, style{})
 	case errorMessageBox:
-		boxStyle := theme.Box.Error
-		lines = append(lines, boxStyle.ApplyBody(text.Fill("", width)))
-		for _, line := range text.Wrap(" ", typedBlock.Text, width) {
-			lines = append(lines, boxStyle.ApplyBody(text.Fill(line, width)))
-		}
-		lines = append(lines, boxStyle.ApplyBody(text.Fill("", width)))
+		return markedLines("! ", typedBlock.Text, width, errorStyle)
+	default:
+		return nil
 	}
-
-	return lines
 }
 
-func needsBlankLineBeforeBox(previous box, current box) bool {
-	switch current.(type) {
-	case userMessageBox, toolCallBox, workflowBox:
-		switch previous.(type) {
-		case userMessageBox, toolCallBox, workflowBox, systemMessageBox, errorMessageBox:
-			return true
+func markedLines(marker, value string, width int, lineStyle style) []string {
+	continuation := strings.Repeat(" ", text.VisibleLen(marker))
+	wrapped := text.Wrap("", value, max(1, width-text.VisibleLen(marker)))
+	lines := make([]string, 0, len(wrapped))
+	for i, line := range wrapped {
+		prefix := continuation
+		if i == 0 {
+			prefix = marker
 		}
+		lines = append(lines, lineStyle.apply(prefix+line))
 	}
-	return false
+	return lines
 }
 
 // Working Indicator
@@ -137,18 +115,13 @@ type workingIndicator struct {
 	Label string
 }
 
-func (p workingIndicator) Lines(_ int, theme Theme) []string {
+func (p workingIndicator) Lines(_ int) []string {
 	label := p.Label
 	if label == "" {
 		label = "Working"
 	}
 	indicator := label + workingIndicatorDots[p.Frame%len(workingIndicatorDots)]
-
-	return []string{
-		"",
-		theme.UI.WorkingIndicator.Apply(" " + indicator),
-		"",
-	}
+	return []string{indicator}
 }
 
 // pendingSteeringPresenter renders a queued steering prompt as a muted
@@ -158,19 +131,13 @@ type pendingSteeringPresenter struct {
 	Text string
 }
 
-func (p pendingSteeringPresenter) Lines(width int, theme Theme) []string {
-	boxStyle := theme.Box.System
-	lines := []string{boxStyle.ApplyMuted(text.Fill("", width))}
-	for _, line := range text.Wrap(" ", p.Text, width) {
-		lines = append(lines, boxStyle.ApplyMuted(text.Fill(line, width)))
-	}
-	lines = append(lines, boxStyle.ApplyMuted(text.Fill("", width)))
-	return lines
+func (p pendingSteeringPresenter) Lines(width int) []string {
+	return markedLines("- ", p.Text, width, style{})
 }
 
 // editorPresenter
 
-const editorPrefix = " "
+const editorPrefix = "> "
 
 type editorPresenter struct {
 	Text   []rune
@@ -178,9 +145,7 @@ type editorPresenter struct {
 	Label  string
 }
 
-func (p editorPresenter) Lines(width int, theme Theme) []string {
-	separator := strings.Repeat("─", width)
-
+func (p editorPresenter) Lines(width int) []string {
 	cursor := p.Cursor
 	if cursor < 0 {
 		cursor = 0
@@ -192,27 +157,24 @@ func (p editorPresenter) Lines(width int, theme Theme) []string {
 	logicalLines := spliteditorPresenterLogicalLines(p.Text)
 	cursorLine, cursorColumn := editorCursorLineColumn(p.Text, cursor)
 
-	lines := make([]string, 0, len(logicalLines)+3)
-	lines = append(lines, theme.UI.EditorSeparator.Apply(separator))
+	lines := make([]string, 0, len(logicalLines)+1)
 	if p.Label != "" {
-		lines = append(lines, theme.UI.EditorSeparator.Apply(text.Fill(" "+p.Label, width)))
+		lines = append(lines, "% "+p.Label)
 	}
 
 	firstVisualLine := true
 	for logicalLineIndex, logicalLine := range logicalLines {
 		segments := wrapeditorPresenterLogicalLine(logicalLine, width, firstVisualLine)
 		for _, segment := range segments {
-			prefix := " "
+			prefix := "  "
 			if firstVisualLine {
 				prefix = editorPrefix
 			}
 			containsCursor := logicalLineIndex == cursorLine && segment.startColumn <= cursorColumn && cursorColumn <= segment.endColumn
-			lines = append(lines, rendereditorPresenterSegment(prefix, segment, cursorColumn, containsCursor, theme))
+			lines = append(lines, rendereditorPresenterSegment(prefix, segment, cursorColumn, containsCursor))
 			firstVisualLine = false
 		}
 	}
-
-	lines = append(lines, theme.UI.EditorSeparator.Apply(separator))
 
 	return lines
 }
@@ -254,7 +216,7 @@ func editorCursorLineColumn(input []rune, cursor int) (int, int) {
 }
 
 func wrapeditorPresenterLogicalLine(line []rune, width int, firstVisualLine bool) []editorSegment {
-	prefixWidth := text.VisibleLen(" ")
+	prefixWidth := text.VisibleLen("  ")
 	if firstVisualLine {
 		prefixWidth = text.VisibleLen(editorPrefix)
 	}
@@ -282,10 +244,9 @@ func wrapeditorPresenterLogicalLine(line []rune, width int, firstVisualLine bool
 	return segments
 }
 
-func rendereditorPresenterSegment(prefix string, segment editorSegment, cursorColumn int, containsCursor bool, theme Theme) string {
-	editorText := theme.Text.Normal
+func rendereditorPresenterSegment(prefix string, segment editorSegment, cursorColumn int, containsCursor bool) string {
 	if !containsCursor {
-		return prefix + applyEditorText(editorText, string(segment.text))
+		return prefix + string(segment.text)
 	}
 
 	segmentCursor := cursorColumn - segment.startColumn
@@ -297,21 +258,13 @@ func rendereditorPresenterSegment(prefix string, segment editorSegment, cursorCo
 	}
 
 	beforeCursor := string(segment.text[:segmentCursor])
-	cursorStyle := editorText.Merge(theme.UI.EditorCursor)
 	if segmentCursor < len(segment.text) {
 		cursorCell := string(segment.text[segmentCursor])
 		afterCursor := string(segment.text[segmentCursor+1:])
-		return prefix + applyEditorText(editorText, beforeCursor) + cursorStyle.Apply(cursorCell) + applyEditorText(editorText, afterCursor)
+		return prefix + beforeCursor + cursorStyle.apply(cursorCell) + afterCursor
 	}
 
-	return prefix + applyEditorText(editorText, beforeCursor) + cursorStyle.Apply(" ")
-}
-
-func applyEditorText(style Style, value string) string {
-	if value == "" {
-		return ""
-	}
-	return style.Apply(value)
+	return prefix + beforeCursor + cursorStyle.apply(" ")
 }
 
 // Menu
@@ -329,7 +282,7 @@ const (
 	menuDescriptionGap     = 2
 )
 
-func (p menuPresenter) Lines(width int, theme Theme) []string {
+func (p menuPresenter) Lines(width int) []string {
 	if len(p.Items) == 0 {
 		return nil
 	}
@@ -353,7 +306,7 @@ func (p menuPresenter) Lines(width int, theme Theme) []string {
 
 	out := make([]string, 0, end-start)
 	for i := start; i < end; i++ {
-		out = append(out, p.line(p.Items[i], i == selectedIndex, columns, width, theme))
+		out = append(out, p.line(p.Items[i], i == selectedIndex, columns, width))
 	}
 
 	return out
@@ -379,29 +332,32 @@ func (p menuPresenter) columns() menuColumns {
 	return columns
 }
 
-func (p menuPresenter) line(item menuItem, selected bool, columns menuColumns, width int, theme Theme) string {
+func (p menuPresenter) line(item menuItem, selected bool, columns menuColumns, width int) string {
 	prefix := menuItemPrefix
-	rowStyle := theme.UI.MenuItem
-	descriptionOverlay := theme.UI.MenuItemDescription
 	if selected {
 		prefix = menuItemPrefixSelected
-		rowStyle = theme.UI.MenuItemSelected
-		descriptionOverlay = theme.UI.MenuItemDescriptionSelected
 	}
-	descriptionStyle := rowStyle.Merge(descriptionOverlay)
 
 	name, argument := item.displayParts()
 	value := prefix + text.Fill(name, columns.NameWidth) + strings.Repeat(" ", menuDescriptionGap)
 	value += text.Fill(argument, columns.ArgumentWidth) + strings.Repeat(" ", menuDescriptionGap)
 	if text.VisibleLen(value) >= width {
-		return rowStyle.Apply(text.Truncate(value, width))
+		value = text.Truncate(value, width)
+		if selected {
+			return selectedStyle.apply(value)
+		}
+		return value
 	}
 
 	column := min(text.VisibleLen(value), width)
 	valueColumn := text.Fill(value, column)
 	descriptionColumnText := text.Fill(item.Description, width-column)
 
-	return rowStyle.Apply(valueColumn) + descriptionStyle.Apply(descriptionColumnText)
+	line := text.Fill(valueColumn+descriptionColumnText, width)
+	if selected {
+		return selectedStyle.apply(line)
+	}
+	return line
 }
 
 // statusBar
@@ -417,16 +373,10 @@ type statusBar struct {
 	ContextUsage   llm.Usage
 }
 
-func (p statusBar) Lines(width int, theme Theme) []string {
+func (p statusBar) Lines(width int) []string {
 	cwdStatus := p.CWDStatus
 	if !p.UseCWDStatus {
 		cwdStatus = statusBarCWDStatus(p.CWD)
-	}
-
-	usageParts := []string{
-		fmt.Sprintf("↑%s", statusBarTokenCountText(p.ContextUsage.InputTokens)),
-		fmt.Sprintf("↓%s", statusBarTokenCountText(p.ContextUsage.OutputTokens)),
-		fmt.Sprintf("R%s", statusBarTokenCountText(p.ContextUsage.CachedTokens)),
 	}
 
 	contextUsed := p.ContextUsage.InputTokens + p.ContextUsage.OutputTokens
@@ -434,15 +384,17 @@ func (p statusBar) Lines(width int, theme Theme) []string {
 	if p.Model.ContextWindow > 0 {
 		contextPercent = min(100.0, (float64(contextUsed)*100)/float64(p.Model.ContextWindow))
 	}
-	contextPercentText := fmt.Sprintf("%.1f%%/%s", contextPercent, statusBarTokenCountText(int(p.Model.ContextWindow)))
-	usageStatus := strings.Join(usageParts, " ")
 
-	modelStatus := fmt.Sprintf("%s %s", p.Model, p.ReasoningLevel)
-
-	return []string{
-		theme.UI.StatusBar.Apply(text.Fill(cwdStatus, width)),
-		statusBarUsageLine(usageStatus, contextPercentText, contextPercent, modelStatus, width, theme),
-	}
+	usage := fmt.Sprintf(
+		"↑%s ↓%s R%s %.1f%%/%s",
+		statusBarTokenCountText(p.ContextUsage.InputTokens),
+		statusBarTokenCountText(p.ContextUsage.OutputTokens),
+		statusBarTokenCountText(p.ContextUsage.CachedTokens),
+		contextPercent,
+		statusBarTokenCountText(int(p.Model.ContextWindow)),
+	)
+	details := fmt.Sprintf("%s %s | %s", p.Model, p.ReasoningLevel, usage)
+	return []string{twoColumnsLine(cwdStatus, details, width)}
 }
 
 func statusBarTokenCountText(tokens int) string {
@@ -450,61 +402,6 @@ func statusBarTokenCountText(tokens int) string {
 		return fmt.Sprintf("%d", tokens)
 	}
 	return fmt.Sprintf("%d.%dK", tokens/1000, (tokens%1000)/100)
-}
-
-func statusBarUsageLine(usageStatus string, contextPercentText string, contextPercent float64, modelStatus string, width int, theme Theme) string {
-	if width <= 0 {
-		return ""
-	}
-
-	modelStatus = text.Truncate(modelStatus, width)
-	modelWidth := text.VisibleLen(modelStatus)
-	statusColumnWidth := width - modelWidth
-	statusContentWidth := statusColumnWidth
-	if modelWidth > 0 && statusContentWidth > 0 {
-		statusContentWidth--
-	}
-	if statusContentWidth < 0 {
-		statusContentWidth = 0
-	}
-
-	return statusBarUsageStatus(usageStatus, contextPercentText, contextPercent, statusContentWidth, statusColumnWidth, theme) + theme.UI.StatusBar.Apply(modelStatus)
-}
-
-func statusBarUsageStatus(usageStatus string, contextPercentText string, contextPercent float64, contentWidth int, columnWidth int, theme Theme) string {
-	if columnWidth <= 0 {
-		return ""
-	}
-
-	fullStatus := usageStatus
-	if contextPercentText != "" {
-		fullStatus += " " + contextPercentText
-	}
-	if text.VisibleLen(fullStatus) > contentWidth {
-		return theme.UI.StatusBar.Apply(text.Fill(text.Truncate(fullStatus, contentWidth), columnWidth))
-	}
-
-	var b strings.Builder
-	b.WriteString(theme.UI.StatusBar.Apply(usageStatus))
-	if contextPercentText != "" {
-		b.WriteString(theme.UI.StatusBar.Apply(" "))
-		b.WriteString(statusBarContextPercentStyle(contextPercent, theme).Apply(contextPercentText))
-	}
-	visible := text.VisibleLen(b.String())
-	if visible < columnWidth {
-		b.WriteString(theme.UI.StatusBar.Apply(strings.Repeat(" ", columnWidth-visible)))
-	}
-	return b.String()
-}
-
-func statusBarContextPercentStyle(contextPercent float64, theme Theme) Style {
-	if contextPercent >= 80 {
-		return theme.UI.StatusBar.Merge(theme.Box.Error.Container)
-	}
-	if contextPercent >= 50 {
-		return theme.UI.StatusBar.Merge(theme.Text.Normal)
-	}
-	return theme.UI.StatusBar
 }
 
 func twoColumnsLine(left string, right string, width int) string {

@@ -276,7 +276,7 @@ func newTestModel(t *testing.T) *appModel {
 		StartNewConversation{},
 		CompactConversation{},
 		Exit{},
-	}, DefaultTheme())
+	})
 	if err != nil {
 		t.Fatalf("create model: %v", err)
 	}
