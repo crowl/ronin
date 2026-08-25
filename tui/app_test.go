@@ -569,6 +569,33 @@ func TestTUIKeyHandling(t *testing.T) {
 		}
 	})
 
+	t.Run("escape closes menu without canceling working prompt", func(t *testing.T) {
+		cancelled := false
+		app := newTestApp(t, testAppConfig{})
+		app.model.working = true
+		app.cancelFunc = func() { cancelled = true }
+
+		if err := app.handleKey(t.Context(), terminal.Key{Type: terminal.KeyRune, Rune: '/'}); err != nil {
+			t.Fatalf("open menu: %v", err)
+		}
+		if !app.model.menu.Shown() {
+			t.Fatal("menu did not open")
+		}
+
+		if err := app.handleKey(t.Context(), terminal.Key{Type: terminal.KeyEscape}); err != nil {
+			t.Fatalf("close menu: %v", err)
+		}
+		if app.model.menu.Shown() {
+			t.Fatal("menu stayed open")
+		}
+		if cancelled {
+			t.Fatal("working prompt was canceled")
+		}
+		if len(app.model.boxes) != 0 {
+			t.Fatalf("closing menu appended boxes: %#v", app.model.boxes)
+		}
+	})
+
 	t.Run("submit prompt while working queues steering prompt", func(t *testing.T) {
 		app := newTestApp(t, testAppConfig{})
 		app.model.working = true

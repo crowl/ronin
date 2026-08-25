@@ -171,6 +171,12 @@ func (m *appModel) populateInitialBoxes(conversation Conversation) {
 }
 
 func (m *appModel) handleKey(key terminal.Key) (modelUpdate, error) {
+	if key.Type == terminal.KeyEscape && m.menu.Shown() {
+		m.menu.Hide()
+		m.editor.Clear()
+		return modelUpdate{Render: true}, nil
+	}
+
 	if key.Type == terminal.KeyCtrlC {
 		if m.working {
 			m.boxes = append(m.boxes, errorMessageBox{Text: "Operation cancelled"})
