@@ -41,6 +41,13 @@ func TestRenderToolCallUsesToolMarker(t *testing.T) {
 	}
 }
 
+func TestWorkingIndicatorUsesConversationPadding(t *testing.T) {
+	lines := workingIndicator{Frame: 3}.Lines(80)
+	if got := lines[0]; got != " Working..." {
+		t.Fatalf("working indicator = %q", got)
+	}
+}
+
 func TestPendingSteeringPresenterUsesQueuedToolMarker(t *testing.T) {
 	lines := pendingSteeringPresenter{Text: "Refine the tests"}.Lines(80)
 	if got := plainLines(lines)[0]; got != "• (queued) Refine the tests" {

@@ -121,7 +121,7 @@ func (p workingIndicator) Lines(_ int) []string {
 	if label == "" {
 		label = "Working"
 	}
-	indicator := label + workingIndicatorDots[p.Frame%len(workingIndicatorDots)]
+	indicator := conversationBoxPadding + label + workingIndicatorDots[p.Frame%len(workingIndicatorDots)]
 	return []string{indicator}
 }
 
