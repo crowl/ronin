@@ -2,9 +2,9 @@
 
 *ronin* is an experimental coding harness written in Go. It gives an LLM a focused terminal UI and tools to inspect, edit, and test code.
 
-![Ronin edits and tests a Go CLI](assets/ronin-demo.gif)
-
-[View the interactive recording on asciinema](https://asciinema.org/a/nkcfkc2mSnOYN3s7)
+<p align="center">
+  <img src="assets/ronin-demo.gif" alt="Ronin edits and tests a Go CLI">
+</p>
 
 ## Features
 
