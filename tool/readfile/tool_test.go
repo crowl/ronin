@@ -16,6 +16,15 @@ import (
 	"github.com/crowl/ronin/tool/readfile"
 )
 
+func TestToolDescriptionGuidesGoRangeReads(t *testing.T) {
+	description := readfile.New(t.TempDir(), fsutil.NewReadCache()).Description()
+	for _, expected := range []string{"Go exploration", "ranges returned by outline_package or find_symbol", "whole-file reads"} {
+		if !strings.Contains(description, expected) {
+			t.Errorf("Description() = %q, want %q", description, expected)
+		}
+	}
+}
+
 func TestToolCall(t *testing.T) {
 	t.Run("reads full content and metadata", func(t *testing.T) {
 		dir := t.TempDir()

@@ -183,11 +183,11 @@ func main() {
 
 	tools := []runtime.Tool{
 		readfile.New(workingDir, readCache),
+		gosemantic.NewOutlinePackage(workingDir),
+		gosemantic.NewFindSymbol(workingDir),
 		editfile.New(workingDir, mutationQueue),
 		writefile.New(workingDir, mutationQueue),
 		shell.New(workingDir),
-		gosemantic.NewFindSymbol(workingDir),
-		gosemantic.NewOutlinePackage(workingDir),
 	}
 
 	workflowAgent := newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag)
@@ -455,11 +455,11 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string) work
 		mutationQueue := fsutil.NewMutationQueue()
 		tools = []runtime.Tool{
 			readfile.New(workingDir, readCache),
+			gosemantic.NewOutlinePackage(workingDir),
+			gosemantic.NewFindSymbol(workingDir),
 			editfile.New(workingDir, mutationQueue),
 			writefile.New(workingDir, mutationQueue),
 			shell.New(workingDir),
-			gosemantic.NewFindSymbol(workingDir),
-			gosemantic.NewOutlinePackage(workingDir),
 		}
 
 		systemPrompt, err = runtime.BuildSystemPrompt(runtime.SystemPromptInput{CWD: workingDir})

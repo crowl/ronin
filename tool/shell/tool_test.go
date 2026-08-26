@@ -12,6 +12,15 @@ import (
 	"github.com/crowl/ronin/tool/shell"
 )
 
+func TestToolDescriptionGuidesGoSearch(t *testing.T) {
+	description := shell.New(t.TempDir()).Description()
+	for _, expected := range []string{"outline_package", "find_symbol", "before text search", "references", "call sites", "fields", "local declarations"} {
+		if !strings.Contains(description, expected) {
+			t.Errorf("Description() = %q, want %q", description, expected)
+		}
+	}
+}
+
 func TestToolCall(t *testing.T) {
 	t.Run("captures stdout and stderr by default", func(t *testing.T) {
 		res, err := callShell(t, shell.New(t.TempDir()), shell.Args{Command: "printf out; printf err >&2"})

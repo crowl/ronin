@@ -62,7 +62,7 @@ func (t *OutlinePackage) Name() string {
 }
 
 func (t *OutlinePackage) Description() string {
-	return "Inspect an unfamiliar Go package in the local module before reading whole files. Lists its types with methods, functions, constants, and variables, including signatures, file ranges, and doc comments; exported API only by default. Use find_symbol when you already know a declaration name, read_file for implementation bodies, and text search for references or call sites."
+	return "Map an unfamiliar Go package before reading implementation. Lists its types with methods, functions, constants, and variables, including signatures, exact files, 1-based line ranges, and doc comments; exported API only by default. Choose relevant declarations from the outline, then pass their ranges to read_file instead of reading whole files. Use find_symbol when you already know a declaration name and text search for references, call sites, fields, or local declarations."
 }
 
 func (t *OutlinePackage) Parameters() *jsonschema.Schema {

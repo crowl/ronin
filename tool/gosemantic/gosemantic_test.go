@@ -25,7 +25,7 @@ func fixtureRoot(t *testing.T) string {
 
 func TestFindSymbolDescriptionGuidesUse(t *testing.T) {
 	description := gosemantic.NewFindSymbol(fixtureRoot(t)).Description()
-	for _, expected := range []string{"Prefer this over text search", "read_file", "does not find references", "struct/interface fields"} {
+	for _, expected := range []string{"exact file", "1-based line range", "targeted read_file", "before text search", "does not find references", "struct/interface fields"} {
 		if !strings.Contains(description, expected) {
 			t.Errorf("description %q does not contain %q", description, expected)
 		}
@@ -34,7 +34,7 @@ func TestFindSymbolDescriptionGuidesUse(t *testing.T) {
 
 func TestOutlinePackageDescriptionGuidesUse(t *testing.T) {
 	description := gosemantic.NewOutlinePackage(fixtureRoot(t)).Description()
-	for _, expected := range []string{"unfamiliar Go package", "find_symbol", "read_file", "references or call sites"} {
+	for _, expected := range []string{"unfamiliar Go package", "exact files", "1-based line ranges", "pass their ranges to read_file", "find_symbol", "references", "call sites"} {
 		if !strings.Contains(description, expected) {
 			t.Errorf("description %q does not contain %q", description, expected)
 		}
