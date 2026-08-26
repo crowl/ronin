@@ -70,7 +70,7 @@ func renderBoxContentLinesAt(block box, width int, toolsExpanded bool, now time.
 		if len(artifactLines) > maxToolOutputLinesNotExpanded && !toolsExpanded {
 			skipped := len(artifactLines) - maxToolOutputLinesNotExpanded
 			notice := fmt.Sprintf("  ... (%d more lines, ctrl+o to expand)", skipped)
-			artifactLines = append(artifactLines[:maxToolOutputLinesNotExpanded], notice)
+			artifactLines = append(artifactLines[:maxToolOutputLinesNotExpanded], mutedStyle.apply(notice))
 		}
 		lines = append(lines, artifactLines...)
 
@@ -81,7 +81,7 @@ func renderBoxContentLinesAt(block box, width int, toolsExpanded bool, now time.
 			label = "Elapsed"
 		}
 		duration := max(0, endedAt.Sub(typedBlock.StartedAt).Seconds())
-		return append(lines, fmt.Sprintf("  %s %.1fs", label, duration))
+		return append(lines, mutedStyle.apply(fmt.Sprintf("  %s %.1fs", label, duration)))
 	case workflowBox:
 		return renderWorkflowBoxLines(typedBlock, width, toolsExpanded, now)
 	case systemMessageBox:
@@ -398,7 +398,7 @@ func (p statusBar) Lines(width int) []string {
 		statusBarTokenCountText(int(p.Model.ContextWindow)),
 	)
 	details := fmt.Sprintf("%s %s | %s", p.Model, p.ReasoningLevel, usage)
-	return []string{twoColumnsLine(cwdStatus, details, width)}
+	return []string{mutedStyle.apply(twoColumnsLine(cwdStatus, details, width))}
 }
 
 func statusBarTokenCountText(tokens int) string {

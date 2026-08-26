@@ -234,6 +234,9 @@ func TestTUIRendering(t *testing.T) {
 			t.Fatalf("line count\ngot:  %d\nwant: 1", len(lines))
 		}
 		usageLine := lines[0]
+		if !strings.Contains(usageLine, mutedStyle.start()) {
+			t.Fatalf("status bar is not muted: %q", usageLine)
+		}
 		for _, want := range []string{"↑2.3K ↓2.9K R1.0K", "35.8%/14.6K"} {
 			if !strings.Contains(usageLine, want) {
 				t.Fatalf("status usage line missing %q: %q", want, usageLine)

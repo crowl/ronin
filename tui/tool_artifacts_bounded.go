@@ -146,7 +146,7 @@ func wrappedToolArtifactTextBounded(value string, width, limit int) ([]string, b
 	more := false
 	forEachArtifactLine(value, func(line string) bool {
 		complete := forEachBoundedWrappedLine("  ", line, width, limit-len(rendered), func(value string, _ int) bool {
-			rendered = append(rendered, text.StripANSI(value))
+			rendered = append(rendered, mutedStyle.apply(text.StripANSI(value)))
 			return true
 		})
 		if !complete {

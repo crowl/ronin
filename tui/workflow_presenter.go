@@ -31,7 +31,7 @@ func renderWorkflowBoxLinesState(workflow workflowBox, width int, toolsExpanded 
 	}
 	appendLine(strongStyle.apply(text.Truncate(title, width)))
 	if workflow.Input != "" {
-		appendWorkflowWrappedLine(&lines, "  Input: ", workflow.Input, width, maxWorkflowSummaryLines, func(value string) string { return value })
+		appendWorkflowWrappedLine(&lines, "  Input: ", workflow.Input, width, maxWorkflowSummaryLines, mutedStyle.apply)
 	}
 
 	summaryLines := boundedWorkflowWrap("  Summary: ", workflow.Summary, width, maxWorkflowSummaryLines)
@@ -48,13 +48,13 @@ func renderWorkflowBoxLinesState(workflow workflowBox, width int, toolsExpanded 
 			truncatedNotice = true
 			break
 		}
-		if !appendWorkflowWrappedLine(&lines, "  ", entry.Text, width, timelineLimit-timelineLines, func(value string) string { return value }) {
+		if !appendWorkflowWrappedLine(&lines, "  ", entry.Text, width, timelineLimit-timelineLines, mutedStyle.apply) {
 			truncatedNotice = true
 			break
 		}
 		if toolsExpanded && entry.Detail != "" {
 			timelineLines = len(lines) - timelineStart
-			if !appendWorkflowWrappedLine(&lines, "    ", entry.Detail, width, timelineLimit-timelineLines, func(value string) string { return value }) {
+			if !appendWorkflowWrappedLine(&lines, "    ", entry.Detail, width, timelineLimit-timelineLines, mutedStyle.apply) {
 				truncatedNotice = true
 			}
 		}
@@ -90,19 +90,19 @@ func renderWorkflowBoxLinesState(workflow workflowBox, width int, toolsExpanded 
 		if len(lines)-timelineStart >= timelineLimit && len(lines) > timelineStart {
 			lines = lines[:len(lines)-1]
 		}
-		appendLine(text.Truncate(activity, width))
+		appendLine(mutedStyle.apply(text.Truncate(activity, width)))
 	} else if workflow.LatestActivity != "" {
 		if len(lines)-timelineStart >= timelineLimit && len(lines) > timelineStart {
 			lines = lines[:len(lines)-1]
 		}
-		appendLine(text.Truncate("  "+workflow.LatestActivity, width))
+		appendLine(mutedStyle.apply(text.Truncate("  "+workflow.LatestActivity, width)))
 	}
 
 	for _, summary := range summaryLines {
 		if len(lines) >= maxWorkflowVisualLines-footerLines {
 			break
 		}
-		appendLine(summary)
+		appendLine(mutedStyle.apply(summary))
 	}
 	endedAt := workflow.EndedAt
 	label := "Elapsed"
@@ -111,7 +111,7 @@ func renderWorkflowBoxLinesState(workflow workflowBox, width int, toolsExpanded 
 	} else {
 		label = "Took"
 	}
-	appendLine(text.Truncate(fmt.Sprintf("  %s %.1fs", label, max(0, endedAt.Sub(workflow.StartedAt).Seconds())), width))
+	appendLine(mutedStyle.apply(text.Truncate(fmt.Sprintf("  %s %.1fs", label, max(0, endedAt.Sub(workflow.StartedAt).Seconds())), width)))
 	return lines, truncatedNotice
 }
 

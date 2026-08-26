@@ -22,6 +22,9 @@ func TestToolArtifactLines(t *testing.T) {
 		if !strings.Contains(plain[1], "2") || !strings.Contains(plain[1], "func main() {}") {
 			t.Fatalf("second line\ngot:  %q\nwant: line number 2 and content", plain[1])
 		}
+		if !strings.Contains(lines[0], mutedStyle.start()) || !strings.Contains(lines[1], mutedStyle.start()) {
+			t.Fatalf("file artifact lines are not muted: %#v", lines)
+		}
 	})
 
 	t.Run("file range uses start line", func(t *testing.T) {
@@ -112,6 +115,9 @@ func TestToolArtifactLines(t *testing.T) {
 		}
 		if !strings.Contains(plain[7], "        5 +added") {
 			t.Fatalf("added line has wrong line numbers\ngot:  %q\nwant new line 5 only", plain[7])
+		}
+		if !strings.Contains(lines[6], removedStyle.start()) || !strings.Contains(lines[7], addedStyle.start()) {
+			t.Fatalf("diff semantic colors were not preserved: %#v", lines)
 		}
 	})
 

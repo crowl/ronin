@@ -52,7 +52,7 @@ func toolArtifactLines(artifact tool.Artifact, width int) []string {
 func wrappedToolArtifactText(value string, width int) []string {
 	var lines []string
 	for _, line := range text.Wrap("  ", text.ExpandTabs(value), width) {
-		lines = append(lines, text.StripANSI(line))
+		lines = append(lines, mutedStyle.apply(text.StripANSI(line)))
 	}
 	return lines
 }
@@ -197,6 +197,6 @@ func styleToolArtifactLine(prefix string, value string, kind toolArtifactLineKin
 	case toolArtifactLineDiffRemoved:
 		return removedStyle.apply(line)
 	default:
-		return line
+		return mutedStyle.apply(line)
 	}
 }
