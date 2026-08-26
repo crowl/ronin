@@ -13,7 +13,7 @@ import (
 )
 
 type OutlinePackageArgs struct {
-	Package           string `json:"package" jsonschema:"Package to outline, given as an import path (github.com/you/mod/pkg) or a path relative to the module (tool/readfile). A bare package name is allowed and may match several packages."`
+	Package           string `json:"package" jsonschema:"Package to outline, given as an import path (github.com/you/mod/pkg), directory path (tool/readfile or .), or package name (readfile)."`
 	IncludeUnexported bool   `json:"include_unexported,omitempty" jsonschema:"Include unexported symbols. Defaults to false (exported API only)."`
 }
 
@@ -91,7 +91,7 @@ func (t *OutlinePackage) call(ctx context.Context, args OutlinePackageArgs) (Out
 
 	var outlines []PackageOutline
 	for _, pkg := range mod.packages {
-		if !packageMatches(pkg.PkgPath, pkg.Name, filter) {
+		if !packageMatches(t.cwd, pkg, filter) {
 			continue
 		}
 		outlines = append(outlines, buildOutline(t.cwd, mod, pkg, args.IncludeUnexported))
@@ -133,11 +133,4 @@ func buildOutline(cwd string, mod *module, pkg *packages.Package, includeUnexpor
 	}
 
 	return outline
-}
-
-func normalizePackageSpec(spec string) string {
-	spec = strings.TrimSpace(spec)
-	spec = strings.TrimPrefix(spec, "./")
-	spec = strings.TrimSuffix(spec, "/")
-	return spec
 }

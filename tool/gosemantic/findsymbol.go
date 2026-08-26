@@ -3,7 +3,10 @@ package gosemantic
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
+
+	"golang.org/x/tools/go/packages"
 
 	"github.com/crowl/ronin/jsonschema"
 	"github.com/crowl/ronin/tool"
@@ -13,7 +16,7 @@ const maxMatches = 50
 
 type FindSymbolArgs struct {
 	Name    string `json:"name" jsonschema:"Declaration to locate. Use a bare name (Tool), package-qualified name (readfile.Tool), receiver method (Args.Validate), or package and receiver method (readfile.Args.Validate). Struct and interface fields are not indexed."`
-	Package string `json:"package,omitempty" jsonschema:"Optional package import path or name to restrict the search; useful when a bare symbol name is ambiguous."`
+	Package string `json:"package,omitempty" jsonschema:"Optional package import path, directory path, or name to restrict the search; useful when a bare symbol name is ambiguous."`
 }
 
 func (a FindSymbolArgs) Validate() error {
@@ -24,8 +27,9 @@ func (a FindSymbolArgs) Validate() error {
 	if strings.ContainsRune(a.Name, '\x00') || strings.ContainsRune(a.Package, '\x00') {
 		return tool.Error{Code: "invalid_args", Message: "arguments must not contain NUL bytes"}
 	}
-	if strings.Count(name, ".") > 2 {
-		return tool.Error{Code: "invalid_args", Message: "name has too many qualifiers; use [package.][receiver.]name"}
+	q := parseSymbolQuery(name)
+	if q.name == "" {
+		return tool.Error{Code: "invalid_args", Message: "symbol name must not be empty"}
 	}
 	return nil
 }
@@ -82,11 +86,11 @@ func (t *FindSymbol) call(ctx context.Context, args FindSymbolArgs) (FindSymbolR
 
 	var matches []Symbol
 	for _, pkg := range mod.packages {
-		if pkgFilter != "" && !packageMatches(pkg.PkgPath, pkg.Name, pkgFilter) {
+		if pkgFilter != "" && !packageMatches(t.cwd, pkg, pkgFilter) {
 			continue
 		}
 		for _, sym := range packageSymbols(t.cwd, mod.fset, pkg) {
-			if query.matches(sym, pkg.Name) {
+			if query.matches(t.cwd, sym, pkg) {
 				matches = append(matches, sym)
 				if len(matches) >= maxMatches {
 					return FindSymbolResult{Matches: matches, Warnings: mod.warnings}, nil
@@ -109,18 +113,53 @@ type symbolQuery struct {
 }
 
 func parseSymbolQuery(raw string) symbolQuery {
-	parts := strings.Split(strings.TrimSpace(raw), ".")
-	switch len(parts) {
-	case 1:
-		return symbolQuery{name: parts[0]}
-	case 2:
-		return symbolQuery{pkg: parts[0], recv: parts[0], name: parts[1]}
-	default:
-		return symbolQuery{pkg: parts[0], recv: parts[1], name: parts[2]}
+	raw = strings.TrimSpace(raw)
+	lastDot := strings.LastIndex(raw, ".")
+	if lastDot == -1 {
+		return symbolQuery{name: raw}
 	}
+
+	name := strings.TrimSpace(raw[lastDot+1:])
+	prefix := strings.TrimSpace(raw[:lastDot])
+
+	if strings.Contains(prefix, "*") || strings.Contains(prefix, "(") {
+		prefixDot := strings.LastIndex(prefix, ".")
+		if prefixDot == -1 {
+			recv := cleanReceiver(prefix)
+			return symbolQuery{pkg: recv, recv: recv, name: name}
+		}
+		pkg := strings.TrimSpace(prefix[:prefixDot])
+		recv := cleanReceiver(prefix[prefixDot+1:])
+		return symbolQuery{pkg: pkg, recv: recv, name: name}
+	}
+
+	prefixDot := strings.LastIndex(prefix, ".")
+	if prefixDot == -1 {
+		if strings.Contains(prefix, "/") {
+			return symbolQuery{pkg: prefix, name: name}
+		}
+		return symbolQuery{pkg: prefix, recv: prefix, name: name}
+	}
+
+	pLeft := strings.TrimSpace(prefix[:prefixDot])
+	pRight := strings.TrimSpace(prefix[prefixDot+1:])
+
+	if strings.Contains(pRight, "/") {
+		return symbolQuery{pkg: prefix, name: name}
+	}
+
+	return symbolQuery{pkg: pLeft, recv: pRight, name: name}
 }
 
-func (q symbolQuery) matches(s Symbol, pkgName string) bool {
+func cleanReceiver(r string) string {
+	r = strings.TrimSpace(r)
+	r = strings.TrimPrefix(r, "(")
+	r = strings.TrimSuffix(r, ")")
+	r = strings.TrimPrefix(r, "*")
+	return strings.TrimSpace(r)
+}
+
+func (q symbolQuery) matches(cwd string, s Symbol, pkg *packages.Package) bool {
 	if s.Name != q.name {
 		return false
 	}
@@ -130,13 +169,88 @@ func (q symbolQuery) matches(s Symbol, pkgName string) bool {
 		return true
 	case q.pkg != "" && q.recv != "" && q.pkg == q.recv:
 		// Two-part query: either package-qualified or a method receiver.
-		return pkgName == q.pkg || s.Recv == q.recv
+		return packageMatches(cwd, pkg, q.pkg) || s.Recv == q.recv
 	default:
-		// Three-part query: package and receiver both required.
-		return pkgName == q.pkg && s.Recv == q.recv
+		if q.pkg != "" && !packageMatches(cwd, pkg, q.pkg) {
+			return false
+		}
+		if q.recv != "" && s.Recv != q.recv {
+			return false
+		}
+		return true
 	}
 }
 
-func packageMatches(pkgPath, pkgName, filter string) bool {
-	return pkgPath == filter || pkgName == filter || strings.HasSuffix(pkgPath, "/"+filter)
+func normalizePackageSpec(spec string) string {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return ""
+	}
+	return filepath.ToSlash(filepath.Clean(spec))
+}
+
+func packageMatches(cwd string, pkg *packages.Package, filter string) bool {
+	filter = normalizePackageSpec(filter)
+	if filter == "" {
+		return false
+	}
+
+	if pkg.PkgPath == filter {
+		return true
+	}
+	if pkg.Name == filter {
+		return true
+	}
+	if strings.HasSuffix(pkg.PkgPath, "/"+filter) {
+		return true
+	}
+
+	dir := packageDir(pkg)
+	if dir == "" {
+		return false
+	}
+
+	if filepath.IsAbs(filter) {
+		return filepath.Clean(dir) == filepath.Clean(filter)
+	}
+
+	if cwd != "" {
+		absCWD, err := filepath.Abs(cwd)
+		if err != nil {
+			absCWD = cwd
+		}
+		absFilter := filepath.Join(absCWD, filter)
+		if filepath.Clean(dir) == filepath.Clean(absFilter) {
+			return true
+		}
+
+		if rel, err := filepath.Rel(absCWD, dir); err == nil {
+			relSlash := filepath.ToSlash(filepath.Clean(rel))
+			filterSlash := filepath.ToSlash(filepath.Clean(filter))
+			if filterSlash != "." && strings.HasSuffix(relSlash, "/"+filterSlash) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func packageDir(pkg *packages.Package) string {
+	if len(pkg.GoFiles) > 0 {
+		return filepath.Dir(pkg.GoFiles[0])
+	}
+	if len(pkg.CompiledGoFiles) > 0 {
+		return filepath.Dir(pkg.CompiledGoFiles[0])
+	}
+	if len(pkg.Syntax) > 0 && pkg.Fset != nil {
+		pos := pkg.Syntax[0].Pos()
+		if pos.IsValid() {
+			filename := pkg.Fset.Position(pos).Filename
+			if filename != "" {
+				return filepath.Dir(filename)
+			}
+		}
+	}
+	return ""
 }
