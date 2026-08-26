@@ -57,7 +57,7 @@ func TestPendingSteeringPresenterUsesQueuedToolMarker(t *testing.T) {
 
 func TestEditorPresenterUsesPromptMarkerAndReverseCursor(t *testing.T) {
 	lines := editorPresenter{Text: []rune("abc"), Cursor: 1}.Lines(80)
-	if got := plainLines(lines)[0]; got != "> abc" {
+	if got := plainLines(lines)[0]; got != " > abc" {
 		t.Fatalf("editor line = %q", got)
 	}
 	if !strings.Contains(lines[0], cursorStyle.start()) {

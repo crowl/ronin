@@ -138,7 +138,10 @@ func (p pendingSteeringPresenter) Lines(width int) []string {
 
 // editorPresenter
 
-const editorPrefix = "> "
+const (
+	editorPrefix             = " > "
+	editorContinuationPrefix = "   "
+)
 
 type editorPresenter struct {
 	Text   []rune
@@ -167,7 +170,7 @@ func (p editorPresenter) Lines(width int) []string {
 	for logicalLineIndex, logicalLine := range logicalLines {
 		segments := wrapeditorPresenterLogicalLine(logicalLine, width, firstVisualLine)
 		for _, segment := range segments {
-			prefix := "  "
+			prefix := editorContinuationPrefix
 			if firstVisualLine {
 				prefix = editorPrefix
 			}
@@ -217,7 +220,7 @@ func editorCursorLineColumn(input []rune, cursor int) (int, int) {
 }
 
 func wrapeditorPresenterLogicalLine(line []rune, width int, firstVisualLine bool) []editorSegment {
-	prefixWidth := text.VisibleLen("  ")
+	prefixWidth := text.VisibleLen(editorContinuationPrefix)
 	if firstVisualLine {
 		prefixWidth = text.VisibleLen(editorPrefix)
 	}

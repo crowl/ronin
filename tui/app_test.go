@@ -43,11 +43,11 @@ func TestTUIRendering(t *testing.T) {
 		if len(multilineLines) != len(initialLines)+1 {
 			t.Fatalf("editor did not grow by one rendered line\ninitial lines:   %#v\nmultiline lines: %#v", initialLines, multilineLines)
 		}
-		if !renderedVisibleLinesContain(multilineLines, " "+"a") {
+		if !renderedVisibleLinesContain(multilineLines, " > a") {
 			t.Fatalf("first editor line missing from render: %#v", multilineLines)
 		}
 		reverseCursor := cursorStyle.apply(" ")
-		if !renderedLinesContain(multilineLines, " "+reverseCursor) {
+		if !renderedLinesContain(multilineLines, "   "+reverseCursor) {
 			t.Fatalf("blank second editor line with cursor missing from render: %#v", multilineLines)
 		}
 	})
@@ -75,10 +75,10 @@ func TestTUIRendering(t *testing.T) {
 		if len(multilineLines) != len(initialLines)+1 {
 			t.Fatalf("editor did not grow by one rendered line\ninitial lines:   %#v\nmultiline lines: %#v", initialLines, multilineLines)
 		}
-		if !renderedVisibleLinesContain(multilineLines, " "+"a") {
+		if !renderedVisibleLinesContain(multilineLines, " > a") {
 			t.Fatalf("first editor line missing from render: %#v", multilineLines)
 		}
-		if !renderedVisibleLinesContain(multilineLines, " b") {
+		if !renderedVisibleLinesContain(multilineLines, "   b") {
 			t.Fatalf("second editor line missing from render: %#v", multilineLines)
 		}
 	})
