@@ -38,10 +38,10 @@ type blockJSON struct {
 	ThoughtSignature string          `json:"thought_signature,omitempty"`
 }
 
-// EncodeEvent serializes an event into its journal type tag and payload bytes.
+// encodeEvent serializes an event into its journal type tag and payload bytes.
 // The type tag is stored in the session_events type column: the message kind
 // for message events, or "compaction" for compaction events.
-func EncodeEvent(event Event) (string, []byte, error) {
+func encodeEvent(event Event) (string, []byte, error) {
 	switch event.Type {
 	case EventCompaction:
 		payload, err := marshalMessages(event.Compacted)
@@ -64,8 +64,8 @@ func EncodeEvent(event Event) (string, []byte, error) {
 	}
 }
 
-// DecodeEvent reconstructs an event from its stored type tag and payload.
-func DecodeEvent(eventType string, payload []byte) (Event, error) {
+// decodeEvent reconstructs an event from its stored type tag and payload.
+func decodeEvent(eventType string, payload []byte) (Event, error) {
 	if eventType == string(EventCompaction) {
 		messages, err := unmarshalMessages(payload)
 		if err != nil {
@@ -73,11 +73,30 @@ func DecodeEvent(eventType string, payload []byte) (Event, error) {
 		}
 		return Event{Type: EventCompaction, Compacted: messages}, nil
 	}
+	if !isMessageEventType(eventType) {
+		return Event{}, fmt.Errorf("unsupported event type %q", eventType)
+	}
 	message, err := unmarshalMessage(payload)
 	if err != nil {
 		return Event{}, err
 	}
+	kind, err := messageKind(message)
+	if err != nil {
+		return Event{}, err
+	}
+	if kind != eventType {
+		return Event{}, fmt.Errorf("event type %q does not match payload type %q", eventType, kind)
+	}
 	return Event{Type: EventMessage, Message: message}, nil
+}
+
+func isMessageEventType(eventType string) bool {
+	switch eventType {
+	case "user_message", "assistant_message", "tool_result", "tool_error", "error", "workflow_result":
+		return true
+	default:
+		return false
+	}
 }
 
 // messageKind returns the journal event type column value for a message.

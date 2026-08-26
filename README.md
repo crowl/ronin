@@ -48,7 +48,7 @@ ronin -model anthropic:claude-sonnet-4-6
 
 ## Common usage
 
-Resume the active session for the current project:
+Resume the latest session for the current project:
 
 ```sh
 ronin --resume
@@ -67,6 +67,19 @@ ronin -prompt "summarize this project"
 ```
 
 Use `Ctrl+O` to expand tool output in the TUI. Press Escape to cancel an active operation.
+
+## Session persistence
+
+Ronin stores sessions in a local SQLite database. `--resume` selects the most recently updated session whose working directory matches the current project.
+
+The database is stored at:
+
+- `$XDG_DATA_HOME/ronin/ronin.db` when `XDG_DATA_HOME` is set;
+- `$HOME/.local/share/ronin/ronin.db` otherwise.
+
+Session data is separate from configuration. Existing sessions from versions that used files under the configuration directory are not migrated.
+
+To back up sessions, copy `ronin.db` while Ronin is not running. To reset all persisted sessions, remove `ronin.db` and its `-wal` and `-shm` companion files while Ronin is not running; Ronin recreates the database on its next start.
 
 ## Configuration
 

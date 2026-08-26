@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -13,6 +14,113 @@ import (
 	"github.com/crowl/ronin/session"
 	"github.com/crowl/ronin/session/sqlite"
 )
+
+func TestStorePersistsAcrossReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ronin.db")
+	workingDir := t.TempDir()
+	ctx := context.Background()
+	createdAt := time.Date(2026, 6, 6, 12, 0, 0, 123, time.UTC)
+
+	store, err := sqlite.Open(ctx, sqlite.StoreConfig{Path: path, Now: func() time.Time { return createdAt }})
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	created, err := store.Create(ctx, workingDir, session.Metadata{
+		Title:          "Durable session",
+		Model:          config.Model{Provider: "openai", Name: "gpt"},
+		ReasoningLevel: "high",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	wantMessages := []llm.Message{
+		llm.UserMessage{Timestamp: createdAt, Text: "before restart"},
+		llm.AssistantMessage{
+			Timestamp: createdAt.Add(time.Second),
+			Blocks: []llm.AssistantBlock{
+				llm.TextBlock{Text: "reply"},
+				llm.ToolCallBlock{ID: "call-1", Name: "shell", Arguments: []byte(`{"command":"go test ./..."}`)},
+			},
+			StopReason: llm.StopReasonToolUse,
+			Usage:      llm.Usage{InputTokens: 10, OutputTokens: 5, TotalTokens: 15},
+		},
+		llm.ToolOutputMessage{Timestamp: createdAt.Add(2 * time.Second), ToolName: "shell", ToolCallID: "call-1", ToolOutput: "ok"},
+	}
+	for _, message := range wantMessages {
+		if err := store.Append(ctx, created.ID, session.Event{Type: session.EventMessage, Message: message}); err != nil {
+			t.Fatalf("Append() error = %v", err)
+		}
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	store, err = sqlite.Open(ctx, sqlite.StoreConfig{Path: path})
+	if err != nil {
+		t.Fatalf("Open(reopen) error = %v", err)
+	}
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("Close(reopened) error = %v", err)
+		}
+	}()
+	loaded, gotMessages, ok, err := store.Load(ctx, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("Load() ok = %v, error = %v", ok, err)
+	}
+	if loaded.ID != created.ID || loaded.Title != created.Title || loaded.Model != created.Model || loaded.ReasoningLevel != created.ReasoningLevel || !loaded.CreatedAt.Equal(created.CreatedAt) {
+		t.Fatalf("Load() session = %#v, want %#v", loaded, created)
+	}
+	if !reflect.DeepEqual(gotMessages, wantMessages) {
+		t.Fatalf("Load() messages = %#v, want %#v", gotMessages, wantMessages)
+	}
+}
+
+func TestStoreConcurrentAppendAcrossConnectionsPreservesEveryEvent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ronin.db")
+	ctx := context.Background()
+	first, err := sqlite.Open(ctx, sqlite.StoreConfig{Path: path})
+	if err != nil {
+		t.Fatalf("Open(first) error = %v", err)
+	}
+	defer first.Close()
+	second, err := sqlite.Open(ctx, sqlite.StoreConfig{Path: path})
+	if err != nil {
+		t.Fatalf("Open(second) error = %v", err)
+	}
+	defer second.Close()
+	created, err := first.Create(ctx, t.TempDir(), session.Metadata{})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	const count = 20
+	errs := make(chan error, count)
+	for i := range count {
+		store := first
+		if i%2 != 0 {
+			store = second
+		}
+		go func(i int) {
+			errs <- store.Append(ctx, created.ID, session.Event{
+				Type:    session.EventMessage,
+				Message: llm.UserMessage{Text: fmt.Sprintf("message %d", i)},
+			})
+		}(i)
+	}
+	for range count {
+		if err := <-errs; err != nil {
+			t.Fatalf("Append() error = %v", err)
+		}
+	}
+	_, messages, ok, err := first.Load(ctx, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("Load() ok = %v, error = %v", ok, err)
+	}
+	if len(messages) != count {
+		t.Fatalf("Load() message count = %d, want %d", len(messages), count)
+	}
+}
 
 func TestStoreRoundTripAndCompaction(t *testing.T) {
 	clock := &fakeClock{now: time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)}
