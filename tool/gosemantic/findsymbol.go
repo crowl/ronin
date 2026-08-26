@@ -56,7 +56,7 @@ func (t *FindSymbol) Name() string {
 }
 
 func (t *FindSymbol) Description() string {
-	return "Locate a Go declaration and return its signature plus the exact file and 1-based line range for a targeted read_file call. Use this before text search when you know the name of a type, function, method, constant, or variable. Accepts bare, package-qualified, receiver-method, or package-and-receiver-method names and returns all matches when ambiguous. It does not find references, call sites, local declarations, or struct/interface fields; use text search for those."
+	return "Locate a Go declaration and return its signature plus the exact file and 1-based line range for a targeted read_file call. Use this before text search when you know the name of a type, function, method, constant, or variable. Accepts bare, package-qualified, receiver-method, or package-and-receiver-method names and returns all matches when ambiguous. It does not find references, call sites, local declarations, or struct/interface fields; use go_navigation for supported semantic navigation by symbol or position and text search for remaining queries."
 }
 
 func (t *FindSymbol) Parameters() *jsonschema.Schema {

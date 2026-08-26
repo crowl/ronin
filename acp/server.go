@@ -976,7 +976,7 @@ func artifactText(artifact tool.Artifact) string {
 
 func toolKind(name string) string {
 	switch name {
-	case "read_file", "outline_package", "find_symbol":
+	case "read_file", "outline_package", "find_symbol", "go_navigation":
 		return "read"
 	case "edit_file", "write_file":
 		return "edit"

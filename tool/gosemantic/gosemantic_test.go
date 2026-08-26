@@ -25,7 +25,7 @@ func fixtureRoot(t *testing.T) string {
 
 func TestFindSymbolDescriptionGuidesUse(t *testing.T) {
 	description := gosemantic.NewFindSymbol(fixtureRoot(t)).Description()
-	for _, expected := range []string{"exact file", "1-based line range", "targeted read_file", "before text search", "does not find references", "struct/interface fields"} {
+	for _, expected := range []string{"exact file", "1-based line range", "targeted read_file", "before text search", "does not find references", "struct/interface fields", "go_navigation"} {
 		if !strings.Contains(description, expected) {
 			t.Errorf("description %q does not contain %q", description, expected)
 		}
@@ -34,9 +34,161 @@ func TestFindSymbolDescriptionGuidesUse(t *testing.T) {
 
 func TestOutlinePackageDescriptionGuidesUse(t *testing.T) {
 	description := gosemantic.NewOutlinePackage(fixtureRoot(t)).Description()
-	for _, expected := range []string{"unfamiliar Go package", "exact files", "1-based line ranges", "pass their ranges to read_file", "find_symbol", "references", "call sites"} {
+	for _, expected := range []string{"unfamiliar Go package", "exact files", "1-based line ranges", "pass their ranges to read_file", "find_symbol", "go_navigation", "references", "callers", "callees"} {
 		if !strings.Contains(description, expected) {
 			t.Errorf("description %q does not contain %q", description, expected)
+		}
+	}
+}
+
+func TestNavigationDescriptionGuidesUse(t *testing.T) {
+	description := gosemantic.NewNavigation(fixtureRoot(t)).Description()
+	for _, expected := range []string{"by symbol or 1-based file position", "references", "implementations", "callers", "callees", "dynamic_candidate", "enclosing declaration ranges", "targeted read_file"} {
+		if !strings.Contains(description, expected) {
+			t.Errorf("description %q does not contain %q", description, expected)
+		}
+	}
+}
+
+func TestNavigationReferencesByName(t *testing.T) {
+	res := navigate(t, fixtureRoot(t), `{"operation":"references","name":"shapes.Pi"}`)
+	if res.Target.Name != "Pi" || res.Total != 1 {
+		t.Fatalf("references Pi = %+v", res)
+	}
+	location := res.Locations[0]
+	if location.File != "shapes/shapes.go" || location.Line != 17 {
+		t.Errorf("reference location = %+v", location)
+	}
+	if location.Enclosing == nil || location.Enclosing.Name != "Area" || location.Enclosing.StartLine != 15 || location.Enclosing.EndLine != 18 {
+		t.Errorf("enclosing declaration = %+v", location.Enclosing)
+	}
+}
+
+func TestNavigationReferencesByPosition(t *testing.T) {
+	res := navigate(t, fixtureRoot(t), `{"operation":"references","file":"shapes/shapes.go","line":5,"column":7}`)
+	if res.Target.Name != "Pi" || res.Total != 1 || res.Locations[0].Line != 17 {
+		t.Fatalf("references by position = %+v", res)
+	}
+}
+
+func TestNavigationLocalVariableReferencesByPosition(t *testing.T) {
+	res := navigate(t, fixtureRoot(t), `{"operation":"references","file":"shapes/navigation.go","line":24,"column":16}`)
+	if res.Target.Name != "s" || res.Total != 1 || res.Locations[0].Line != 25 {
+		t.Fatalf("local variable references = %+v", res)
+	}
+}
+
+func TestNavigationPositionSupportsFields(t *testing.T) {
+	res := navigate(t, fixtureRoot(t), `{"operation":"references","file":"shapes/shapes.go","line":12,"column":2}`)
+	if res.Target.Name != "Radius" || res.Total != 4 {
+		t.Fatalf("field references = %+v", res)
+	}
+}
+
+func TestNavigationIncludesTestFiles(t *testing.T) {
+	res := navigate(t, fixtureRoot(t), `{"operation":"references","name":"shapes.CircleArea"}`)
+	var found bool
+	for _, location := range res.Locations {
+		if location.File == "shapes/navigation_test.go" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("CircleArea references do not include test file: %+v", res)
+	}
+}
+
+func TestNavigationImplementationsForInterface(t *testing.T) {
+	res := navigate(t, fixtureRoot(t), `{"operation":"implementations","name":"shapes.Shape"}`)
+	if res.Total != 2 {
+		t.Fatalf("Shape implementations = %+v", res)
+	}
+	if got := relatedNames(res.Locations); !slices.Equal(got, []string{".Circle", ".Rectangle"}) {
+		t.Errorf("implementation types = %v", got)
+	}
+}
+
+func TestNavigationImplementationsForInterfaceMethodPosition(t *testing.T) {
+	res := navigate(t, fixtureRoot(t), `{"operation":"implementations","file":"shapes/navigation.go","line":5,"column":2}`)
+	if res.Target.Name != "Area" || res.Total != 2 {
+		t.Fatalf("Area implementations = %+v", res)
+	}
+	if got := relatedNames(res.Locations); !slices.Equal(got, []string{"Circle.Area", "Rectangle.Area"}) {
+		t.Errorf("implementation methods = %v", got)
+	}
+}
+
+func TestNavigationStaticCallersAndCallees(t *testing.T) {
+	callers := navigate(t, fixtureRoot(t), `{"operation":"callers","name":"shapes.CircleArea"}`)
+	if callers.Total != 2 || !hasRelated(callers.Locations, "CombinedArea") || !hasRelated(callers.Locations, "TestCircleArea") {
+		t.Fatalf("CircleArea callers = %+v", callers)
+	}
+
+	callees := navigate(t, fixtureRoot(t), `{"operation":"callees","name":"shapes.CombinedArea"}`)
+	if callees.Total != 2 {
+		t.Fatalf("CombinedArea callees = %+v", callees)
+	}
+	if got := relatedNames(callees.Locations); !slices.Equal(got, []string{".CircleArea", ".ShapeArea"}) {
+		t.Errorf("callees = %v", got)
+	}
+}
+
+func TestNavigationDynamicCallersAreMarked(t *testing.T) {
+	res := navigate(t, fixtureRoot(t), `{"operation":"callers","name":"shapes.Circle.Area"}`)
+	var foundDynamic bool
+	for _, location := range res.Locations {
+		if location.DynamicCandidate && location.Related != nil && location.Related.Name == "ShapeArea" {
+			foundDynamic = true
+		}
+	}
+	if !foundDynamic {
+		t.Fatalf("Circle.Area callers do not include dynamic ShapeArea call: %+v", res)
+	}
+}
+
+func TestNavigationDynamicCalleesAreMarked(t *testing.T) {
+	res := navigate(t, fixtureRoot(t), `{"operation":"callees","name":"shapes.ShapeArea"}`)
+	if res.Total < 2 {
+		t.Fatalf("ShapeArea callees = %+v, related = %v", res, relatedNames(res.Locations))
+	}
+	for _, location := range res.Locations {
+		if !location.DynamicCandidate {
+			t.Errorf("dynamic callee is not marked: %+v", location)
+		}
+	}
+}
+
+func TestNavigationAmbiguousSymbolReturnsCandidates(t *testing.T) {
+	res := navigate(t, fixtureRoot(t), `{"operation":"references","name":"Circle"}`)
+	if len(res.Candidates) != 2 || len(res.Locations) != 0 {
+		t.Fatalf("ambiguous navigation = %+v", res)
+	}
+}
+
+func TestNavigationPagination(t *testing.T) {
+	res := navigate(t, fixtureRoot(t), `{"operation":"references","name":"shapes.Circle","offset":1,"limit":2}`)
+	if len(res.Locations) != 2 || res.Offset != 1 || !res.HasMore || res.Total <= 3 {
+		t.Fatalf("paginated references = %+v", res)
+	}
+}
+
+func TestNavigationRejectsInvalidSelectors(t *testing.T) {
+	for _, args := range []string{
+		`{"operation":"references","name":"Pi","file":"shapes/shapes.go","line":5,"column":7}`,
+		`{"operation":"references","file":"shapes/shapes.go","line":5}`,
+		`{"operation":"unknown","name":"Pi"}`,
+	} {
+		_, err := gosemantic.NewNavigation(fixtureRoot(t)).Call(t.Context(), json.RawMessage(args))
+		assertToolError(t, err, "invalid_args")
+	}
+}
+
+func TestNavigationArtifactsExposeRanges(t *testing.T) {
+	res := navigate(t, fixtureRoot(t), `{"operation":"references","name":"shapes.Pi"}`)
+	text := artifactText(t, res.Artifacts())
+	for _, expected := range []string{"References for Pi", "shapes/shapes.go:17", "enclosing range: shapes/shapes.go:15-18", "Warnings:", "brokenpkg"} {
+		if !strings.Contains(text, expected) {
+			t.Errorf("artifact text does not contain %q:\n%s", expected, text)
 		}
 	}
 }
@@ -201,7 +353,7 @@ func TestOutlinePackageExported(t *testing.T) {
 	}
 	pkg := res.Packages[0]
 
-	if got := names(pkg.Functions); !equalStrings(got, []string{"Describe"}) {
+	if got := names(pkg.Functions); !equalStrings(got, []string{"CircleArea", "ShapeArea", "CombinedArea", "Describe"}) {
 		t.Errorf("functions: got %v", got)
 	}
 	if got := names(pkg.Constants); !equalStrings(got, []string{"Pi"}) {
@@ -210,10 +362,10 @@ func TestOutlinePackageExported(t *testing.T) {
 	if got := names(pkg.Variables); !equalStrings(got, []string{"DefaultName"}) {
 		t.Errorf("variables: got %v", got)
 	}
-	if len(pkg.Types) != 1 || pkg.Types[0].Name != "Circle" {
+	if len(pkg.Types) != 3 || pkg.Types[2].Name != "Circle" {
 		t.Fatalf("types: got %+v", pkg.Types)
 	}
-	if got := names(pkg.Types[0].Methods); !equalStrings(got, []string{"Area", "Scale"}) {
+	if got := names(pkg.Types[2].Methods); !equalStrings(got, []string{"Area", "Scale"}) {
 		t.Errorf("Circle methods: got %v", got)
 	}
 }
@@ -222,14 +374,14 @@ func TestOutlinePackageIncludeUnexported(t *testing.T) {
 	res := outlinePackage(t, fixtureRoot(t), `{"package":"shapes","include_unexported":true}`)
 	pkg := res.Packages[0]
 
-	if !equalStrings(names(pkg.Functions), []string{"Describe", "helper"}) {
+	if !equalStrings(names(pkg.Functions), []string{"CircleArea", "ShapeArea", "CombinedArea", "Describe", "helper"}) {
 		t.Errorf("functions: got %v", names(pkg.Functions))
 	}
 	typeNames := []string{}
 	for _, ty := range pkg.Types {
 		typeNames = append(typeNames, ty.Name)
 	}
-	if !equalStrings(typeNames, []string{"Circle", "hidden"}) {
+	if !equalStrings(typeNames, []string{"Shape", "Rectangle", "Circle", "hidden"}) {
 		t.Errorf("types: got %v", typeNames)
 	}
 }
@@ -423,6 +575,39 @@ func TestFindSymbolCanceledContext(t *testing.T) {
 
 	_, err := gosemantic.NewFindSymbol(fixtureRoot(t)).Call(ctx, json.RawMessage(`{"name":"Circle"}`))
 	assertToolError(t, err, "package_load_failed")
+}
+
+func navigate(t *testing.T, cwd, args string) gosemantic.NavigationResult {
+	t.Helper()
+	out, err := gosemantic.NewNavigation(cwd).Call(t.Context(), json.RawMessage(args))
+	if err != nil {
+		t.Fatalf("go_navigation(%s): %v", args, err)
+	}
+	res, ok := out.(gosemantic.NavigationResult)
+	if !ok {
+		t.Fatalf("go_navigation returned %T", out)
+	}
+	return res
+}
+
+func hasRelated(locations []gosemantic.NavigationLocation, name string) bool {
+	for _, location := range locations {
+		if location.Related != nil && location.Related.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func relatedNames(locations []gosemantic.NavigationLocation) []string {
+	out := make([]string, 0, len(locations))
+	for _, location := range locations {
+		if location.Related != nil {
+			out = append(out, location.Related.Recv+"."+location.Related.Name)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // findSymbol runs the find_symbol tool and returns its typed result.

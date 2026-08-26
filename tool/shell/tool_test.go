@@ -14,7 +14,7 @@ import (
 
 func TestToolDescriptionGuidesGoSearch(t *testing.T) {
 	description := shell.New(t.TempDir()).Description()
-	for _, expected := range []string{"outline_package", "find_symbol", "before text search", "references", "call sites", "fields", "local declarations"} {
+	for _, expected := range []string{"outline_package", "find_symbol", "go_navigation", "before text search", "references", "implementations", "callers", "callees", "literals", "textual patterns", "generated files"} {
 		if !strings.Contains(description, expected) {
 			t.Errorf("Description() = %q, want %q", description, expected)
 		}

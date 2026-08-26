@@ -129,7 +129,7 @@ func (t *Tool) Name() string {
 }
 
 func (t *Tool) Description() string {
-	return "Read exact text file contents, a 1-based line range, or file metadata plus file_id and SHA-256 metadata. For Go exploration, prefer ranges returned by outline_package or find_symbol over whole-file reads. Use before edit_file when you need exact text. Relative paths resolve from the current working directory; absolute paths are allowed. Auto mode may omit unchanged full-file content already returned."
+	return "Read exact text file contents, a 1-based line range, or file metadata plus file_id and SHA-256 metadata. For Go exploration, prefer ranges returned by outline_package, find_symbol, or go_navigation over whole-file reads. Use before edit_file when you need exact text. Relative paths resolve from the current working directory; absolute paths are allowed. Auto mode may omit unchanged full-file content already returned."
 }
 
 func (t *Tool) Parameters() *jsonschema.Schema {

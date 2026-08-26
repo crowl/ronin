@@ -11,7 +11,8 @@ When exploring Go code, use semantic tools to discover declarations and obtain p
 - Use `outline_package` first when a package is unfamiliar or you need to learn which declarations it contains.
 - Use `find_symbol` when you know a type, function, method, constant, or variable name.
 - Use the returned `file`, `start_line`, and `end_line` with `read_file` to read only the declarations relevant to the task.
-- Use text search for references, call sites, struct or interface fields, literals, local declarations, or other queries the semantic tools do not support.
+- Use `go_navigation` for semantic references, interface implementations, callers, and callees. Select the target by symbol name or exact 1-based file position, then use returned enclosing ranges with `read_file`.
+- Use text search for literals, textual patterns, generated files, or queries the semantic tools do not support.
 
 Prefer targeted range reads over whole-file reads. Broaden the range only when imports, surrounding declarations, or other context are necessary. If semantic lookup is unavailable or fails, fall back to text search.
 

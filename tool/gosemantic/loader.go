@@ -14,28 +14,35 @@ import (
 	"github.com/crowl/ronin/tool"
 )
 
-// module is the result of loading the local Go module(s) in syntax-only mode.
-// It is the single boundary that owns go/packages; the tools consume only the
-// parsed syntax it exposes. References and implementations support will widen
-// the load mode here without changing callers.
+// module is the result of loading the local Go module(s). It is the single
+// boundary that owns go/packages; tools consume only the syntax and type
+// information it exposes.
 type module struct {
 	fset     *token.FileSet
 	packages []*packages.Package
 	warnings []string
 }
 
-// loadMode is syntax-only: enough to locate and describe declarations.
-// References and implementations support will add NeedTypes here.
-const loadMode = packages.NeedName |
+// syntaxLoadMode is enough to locate and describe declarations while tolerating
+// incomplete edits without paying the cost of type-checking dependencies.
+const syntaxLoadMode = packages.NeedName |
 	packages.NeedFiles |
 	packages.NeedCompiledGoFiles |
 	packages.NeedSyntax
 
-// loadModule loads every package in the local Go module(s) for workingDir.
+func loadModule(ctx context.Context, workingDir string) (*module, error) {
+	return loadModuleWithMode(ctx, workingDir, syntaxLoadMode, false)
+}
+
+func loadSemanticModule(ctx context.Context, workingDir string) (*module, error) {
+	return loadModuleWithMode(ctx, workingDir, packages.LoadAllSyntax, true)
+}
+
+// loadModuleWithMode loads every package in the local Go module(s) for workingDir.
 // It searches upwards and downwards to locate all applicable module roots or workspaces.
 // Per-package parse errors are reported as warnings rather than failing the
 // whole load, because an active conversation often edits code that does not compile.
-func loadModule(ctx context.Context, workingDir string) (*module, error) {
+func loadModuleWithMode(ctx context.Context, workingDir string, mode packages.LoadMode, tests bool) (*module, error) {
 	if ctx.Err() != nil {
 		return nil, tool.Error{Code: "package_load_failed", Message: ctx.Err().Error()}
 	}
@@ -54,8 +61,9 @@ func loadModule(ctx context.Context, workingDir string) (*module, error) {
 		cfg := &packages.Config{
 			Context: ctx,
 			Dir:     root,
-			Mode:    loadMode,
+			Mode:    mode,
 			Fset:    fset,
+			Tests:   tests,
 		}
 
 		pkgs, err := packages.Load(cfg, "./...")
@@ -69,6 +77,14 @@ func loadModule(ctx context.Context, workingDir string) (*module, error) {
 
 		for _, pkg := range pkgs {
 			id := pkg.ID
+			if tests && pkg.ForTest == "" {
+				for _, candidate := range pkgs {
+					if candidate.ForTest == pkg.PkgPath && candidate.PkgPath == pkg.PkgPath {
+						id = candidate.ID
+						break
+					}
+				}
+			}
 			if id == "" {
 				id = pkg.PkgPath
 			}
