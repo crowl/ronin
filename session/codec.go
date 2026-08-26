@@ -1,4 +1,4 @@
-package fs
+package session
 
 import (
 	"encoding/json"
@@ -6,23 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/crowl/ronin/config"
 	"github.com/crowl/ronin/llm"
-	"github.com/crowl/ronin/session"
 )
-
-type sessionJSON struct {
-	Version        int           `json:"version"`
-	ID             string        `json:"id"`
-	Title          string        `json:"title"`
-	WorkingDir     string        `json:"working_dir"`
-	ParentID       string        `json:"parent_id,omitempty"`
-	CreatedAt      time.Time     `json:"created_at"`
-	UpdatedAt      time.Time     `json:"updated_at"`
-	Model          config.Model  `json:"model"`
-	ReasoningLevel string        `json:"reasoning_level"`
-	Messages       []messageJSON `json:"messages"`
-}
 
 type messageJSON struct {
 	Type                    string      `json:"type"`
@@ -53,66 +38,114 @@ type blockJSON struct {
 	ThoughtSignature string          `json:"thought_signature,omitempty"`
 }
 
-func encode(s session.Session) ([]byte, error) {
-	encoded := sessionJSON{
-		Version:        session.Version,
-		ID:             s.ID,
-		Title:          s.Title,
-		WorkingDir:     s.WorkingDir,
-		ParentID:       s.ParentID,
-		CreatedAt:      s.CreatedAt,
-		UpdatedAt:      s.UpdatedAt,
-		Model:          s.Model,
-		ReasoningLevel: s.ReasoningLevel,
-		Messages:       make([]messageJSON, 0, len(s.Messages)),
+// EncodeEvent serializes an event into its journal type tag and payload bytes.
+// The type tag is stored in the session_events type column: the message kind
+// for message events, or "compaction" for compaction events.
+func EncodeEvent(event Event) (string, []byte, error) {
+	switch event.Type {
+	case EventCompaction:
+		payload, err := marshalMessages(event.Compacted)
+		if err != nil {
+			return "", nil, err
+		}
+		return string(EventCompaction), payload, nil
+	case EventMessage:
+		kind, err := messageKind(event.Message)
+		if err != nil {
+			return "", nil, err
+		}
+		payload, err := marshalMessage(event.Message)
+		if err != nil {
+			return "", nil, err
+		}
+		return kind, payload, nil
+	default:
+		return "", nil, fmt.Errorf("unsupported event type %q", event.Type)
 	}
+}
 
-	for i, message := range s.Messages {
+// DecodeEvent reconstructs an event from its stored type tag and payload.
+func DecodeEvent(eventType string, payload []byte) (Event, error) {
+	if eventType == string(EventCompaction) {
+		messages, err := unmarshalMessages(payload)
+		if err != nil {
+			return Event{}, err
+		}
+		return Event{Type: EventCompaction, Compacted: messages}, nil
+	}
+	message, err := unmarshalMessage(payload)
+	if err != nil {
+		return Event{}, err
+	}
+	return Event{Type: EventMessage, Message: message}, nil
+}
+
+// messageKind returns the journal event type column value for a message.
+func messageKind(message llm.Message) (string, error) {
+	switch message.(type) {
+	case llm.UserMessage:
+		return "user_message", nil
+	case llm.AssistantMessage:
+		return "assistant_message", nil
+	case llm.ToolOutputMessage:
+		return "tool_result", nil
+	case llm.ToolErrorMessage:
+		return "tool_error", nil
+	case llm.ErrorMessage:
+		return "error", nil
+	case llm.WorkflowResultMessage:
+		return "workflow_result", nil
+	default:
+		return "", fmt.Errorf("unsupported message type %T", message)
+	}
+}
+
+// marshalMessage encodes a single message as an event payload.
+func marshalMessage(message llm.Message) ([]byte, error) {
+	encoded, err := encodeMessage(message)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(encoded)
+}
+
+// unmarshalMessage decodes a single-message event payload.
+func unmarshalMessage(data []byte) (llm.Message, error) {
+	var encoded messageJSON
+	if err := json.Unmarshal(data, &encoded); err != nil {
+		return nil, err
+	}
+	return decodeMessage(encoded)
+}
+
+// marshalMessages encodes a compaction event payload.
+func marshalMessages(messages []llm.Message) ([]byte, error) {
+	encoded := make([]messageJSON, 0, len(messages))
+	for i, message := range messages {
 		encodedMessage, err := encodeMessage(message)
 		if err != nil {
 			return nil, fmt.Errorf("encode message %d: %w", i, err)
 		}
-		encoded.Messages = append(encoded.Messages, encodedMessage)
+		encoded = append(encoded, encodedMessage)
 	}
-
-	data, err := json.MarshalIndent(encoded, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-	return append(data, '\n'), nil
+	return json.Marshal(encoded)
 }
 
-func decode(data []byte) (session.Session, error) {
-	var encoded sessionJSON
+// unmarshalMessages decodes a compaction event payload.
+func unmarshalMessages(data []byte) ([]llm.Message, error) {
+	var encoded []messageJSON
 	if err := json.Unmarshal(data, &encoded); err != nil {
-		return session.Session{}, err
+		return nil, err
 	}
-	if encoded.Version != session.Version {
-		return session.Session{}, fmt.Errorf("unsupported session version %d", encoded.Version)
-	}
-
-	s := session.Session{
-		Version:        encoded.Version,
-		ID:             encoded.ID,
-		Title:          encoded.Title,
-		WorkingDir:     encoded.WorkingDir,
-		ParentID:       encoded.ParentID,
-		CreatedAt:      encoded.CreatedAt,
-		UpdatedAt:      encoded.UpdatedAt,
-		Model:          encoded.Model,
-		ReasoningLevel: encoded.ReasoningLevel,
-		Messages:       make([]llm.Message, 0, len(encoded.Messages)),
-	}
-
-	for i, message := range encoded.Messages {
-		decodedMessage, err := decodeMessage(message)
+	messages := make([]llm.Message, 0, len(encoded))
+	for i, message := range encoded {
+		decoded, err := decodeMessage(message)
 		if err != nil {
-			return session.Session{}, fmt.Errorf("decode message %d: %w", i, err)
+			return nil, fmt.Errorf("decode message %d: %w", i, err)
 		}
-		s.Messages = append(s.Messages, decodedMessage)
+		messages = append(messages, decoded)
 	}
-
-	return s, nil
+	return messages, nil
 }
 
 func encodeMessage(message llm.Message) (messageJSON, error) {

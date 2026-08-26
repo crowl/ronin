@@ -31,12 +31,12 @@ func TestNew(t *testing.T) {
 		wantUsage := llm.Usage{InputTokens: 30, OutputTokens: 12, CachedTokens: 5, TotalTokens: 42}
 		agt, err := runtime.NewConversation(runtime.ConversationConfig{
 			ModelClient: &fakeModelClient{},
-			Session: session.Session{Messages: []llm.Message{
+			Messages: []llm.Message{
 				llm.AssistantMessage{Usage: llm.Usage{InputTokens: 1, OutputTokens: 2, TotalTokens: 3}},
 				llm.UserMessage{Text: "after first assistant"},
 				llm.AssistantMessage{Usage: wantUsage},
 				llm.ToolOutputMessage{ToolCallID: "call-1", ToolName: "shell"},
-			}},
+			},
 		})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
@@ -52,7 +52,7 @@ func TestNew(t *testing.T) {
 
 		agt, err := runtime.NewConversation(runtime.ConversationConfig{
 			ModelClient: &fakeModelClient{},
-			Session:     session.Session{Messages: messages},
+			Messages:    messages,
 		})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
@@ -140,6 +140,64 @@ func TestPromptLifecycle(t *testing.T) {
 		}
 		assertEventType(t, gotEvents, runtime.ToolExecutionFailed{})
 		assertEventType(t, gotEvents, runtime.ToolExecutionEnded{})
+	})
+
+	t.Run("repairs interrupted tool calls before sending a new prompt", func(t *testing.T) {
+		modelClient := &fakeModelClient{events: []llm.PredictionEvent{
+			llm.BlockEnded{Block: llm.TextBlock{Text: "done"}},
+			llm.PredictionFinished{},
+		}}
+		messages := []llm.Message{
+			llm.AssistantMessage{Blocks: []llm.AssistantBlock{
+				llm.ToolCallBlock{ID: "completed", Name: "read_file", Arguments: json.RawMessage(`{}`)},
+				llm.ToolCallBlock{ID: "interrupted", Name: "shell", Arguments: json.RawMessage(`{}`)},
+			}},
+			llm.ToolOutputMessage{ToolCallID: "completed", ToolName: "read_file", ToolOutput: "ok"},
+		}
+		store := &fakeSessionStore{
+			sessions: map[string]session.Session{"sess-1": {ID: "sess-1", Title: "Existing"}},
+			activeID: "sess-1",
+		}
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{
+			ModelClient:  modelClient,
+			SessionStore: store,
+			Session:      store.sessions[store.activeID],
+			Messages:     messages,
+		})
+		if err != nil {
+			t.Fatalf("NewConversation() error = %v", err)
+		}
+
+		events, errs := agt.Prompt(t.Context(), "continue")
+		_ = collectEvents(events)
+		if err := <-errs; err != nil {
+			t.Fatalf("Prompt() error = %v", err)
+		}
+
+		gotMessages := agt.Messages()
+		if len(gotMessages) != 5 {
+			t.Fatalf("Messages() length = %d, want 5", len(gotMessages))
+		}
+		repair, ok := gotMessages[2].(llm.ToolErrorMessage)
+		if !ok {
+			t.Fatalf("message 2 = %T, want llm.ToolErrorMessage", gotMessages[2])
+		}
+		if repair.ToolCallID != "interrupted" || repair.ToolName != "shell" || !strings.Contains(repair.Error.Error(), "interrupted") {
+			t.Fatalf("repair message = %#v, want interrupted shell call", repair)
+		}
+		if user, ok := gotMessages[3].(llm.UserMessage); !ok || user.Text != "continue" {
+			t.Fatalf("message 3 = %#v, want new user message", gotMessages[3])
+		}
+		if len(store.messages["sess-1"]) != 5 {
+			t.Fatalf("persisted messages = %#v, want repaired history, user, and assistant", store.messages["sess-1"])
+		}
+		if len(modelClient.requests) != 1 {
+			t.Fatalf("PredictNext() requests = %d, want 1", len(modelClient.requests))
+		}
+		requestMessages := modelClient.requests[0].Messages
+		if repair, ok := requestMessages[2].(llm.ToolErrorMessage); !ok || repair.ToolCallID != "interrupted" {
+			t.Fatalf("request repair = %#v, want interrupted tool error", requestMessages[2])
+		}
 	})
 
 	t.Run("configured clock controls timestamps", func(t *testing.T) {
@@ -355,7 +413,7 @@ func TestNewConversation(t *testing.T) {
 	t.Run("without persistence clears messages in memory", func(t *testing.T) {
 		agt, err := runtime.NewConversation(runtime.ConversationConfig{
 			ModelClient: &fakeModelClient{},
-			Session:     session.Session{Messages: []llm.Message{llm.UserMessage{Text: "old"}}},
+			Messages:    []llm.Message{llm.UserMessage{Text: "old"}},
 		})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
@@ -378,8 +436,8 @@ func TestNewConversation(t *testing.T) {
 				ID:             "sess-1",
 				Model:          config.Model{Provider: "stale", Name: "old"},
 				ReasoningLevel: "off",
-				Messages:       []llm.Message{llm.UserMessage{Text: "old"}},
 			},
+			Messages: []llm.Message{llm.UserMessage{Text: "old"}},
 		})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
@@ -402,7 +460,8 @@ func TestNewConversation(t *testing.T) {
 		agt, err := runtime.NewConversation(runtime.ConversationConfig{
 			ModelClient:  &fakeModelClient{},
 			SessionStore: store,
-			Session:      session.Session{ID: "sess-1", Messages: []llm.Message{llm.UserMessage{Text: "old"}}},
+			Session:      session.Session{ID: "sess-1"},
+			Messages:     []llm.Message{llm.UserMessage{Text: "old"}},
 		})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
@@ -487,7 +546,7 @@ func TestCompactConversation(t *testing.T) {
 		agt, err := runtime.NewConversation(runtime.ConversationConfig{
 			ModelClient: &fakeModelClient{},
 			Compactor:   compactor,
-			Session:     session.Session{Messages: []llm.Message{llm.UserMessage{Text: "old"}}},
+			Messages:    []llm.Message{llm.UserMessage{Text: "old"}},
 		})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
@@ -510,7 +569,7 @@ func TestCompactConversation(t *testing.T) {
 		agt, err := runtime.NewConversation(runtime.ConversationConfig{
 			ModelClient: &fakeModelClient{},
 			Compactor:   &fakeCompactor{err: wantErr},
-			Session:     session.Session{Messages: []llm.Message{llm.UserMessage{Text: "old"}}},
+			Messages:    []llm.Message{llm.UserMessage{Text: "old"}},
 		})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
@@ -531,7 +590,7 @@ func TestCompactConversation(t *testing.T) {
 		agt, err := runtime.NewConversation(runtime.ConversationConfig{
 			ModelClient: &fakeModelClient{},
 			Compactor:   compactor,
-			Session:     session.Session{Messages: []llm.Message{llm.UserMessage{Text: "old"}}},
+			Messages:    []llm.Message{llm.UserMessage{Text: "old"}},
 		})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
@@ -544,6 +603,46 @@ func TestCompactConversation(t *testing.T) {
 		}
 		if compactor.gotCtx == nil || compactor.gotCtx.Value(ctxKey{}) != "v" {
 			t.Fatalf("compactor did not receive caller context")
+		}
+	})
+
+	t.Run("default compactor follows switched model", func(t *testing.T) {
+		originalClient := &fakeModelClient{structuredRaw: json.RawMessage(`{"current_goal":"wrong model"}`)}
+		switchedClient := &fakeModelClient{structuredRaw: json.RawMessage(`{"current_goal":"switched model"}`)}
+		switchedModel := llm.Model{Provider: "test", Name: "compactor-switch"}
+		if err := llm.RegisterModel(switchedModel, func(llm.ReasoningLevel) (llm.ModelClient, error) {
+			return switchedClient, nil
+		}); err != nil {
+			t.Fatalf("RegisterModel() error = %v", err)
+		}
+		compactor, err := runtime.NewDefaultCompactor(runtime.DefaultCompactorConfig{ModelClient: originalClient})
+		if err != nil {
+			t.Fatalf("NewDefaultCompactor() error = %v", err)
+		}
+		messages := make([]llm.Message, 14)
+		for i := range messages {
+			messages[i] = llm.UserMessage{Text: fmt.Sprintf("message %d", i)}
+		}
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{
+			ModelClient: originalClient,
+			Compactor:   compactor,
+			Messages:    messages,
+		})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+
+		if err := agt.SwitchModel(switchedModel); err != nil {
+			t.Fatalf("SwitchModel() error = %v", err)
+		}
+		if err := agt.CompactConversation(t.Context()); err != nil {
+			t.Fatalf("CompactConversation() error = %v", err)
+		}
+		if switchedClient.structuredCalls != 1 {
+			t.Fatalf("switched model structured calls = %d, want 1", switchedClient.structuredCalls)
+		}
+		if originalClient.structuredCalls != 0 {
+			t.Fatalf("original model structured calls = %d, want 0", originalClient.structuredCalls)
 		}
 	})
 
@@ -628,12 +727,15 @@ func writeFile(t *testing.T, path string, content string) {
 }
 
 type fakeModelClient struct {
-	events         []llm.PredictionEvent
-	eventBatches   [][]llm.PredictionEvent
-	model          llm.Model
-	reasoningLevel llm.ReasoningLevel
-	err            error
-	predictCalls   int
+	events          []llm.PredictionEvent
+	eventBatches    [][]llm.PredictionEvent
+	model           llm.Model
+	reasoningLevel  llm.ReasoningLevel
+	err             error
+	predictCalls    int
+	structuredRaw   json.RawMessage
+	structuredCalls int
+	requests        []llm.PredictNextRequest
 }
 
 func (f *fakeModelClient) Model() llm.Model                   { return f.model }
@@ -642,7 +744,8 @@ func (f *fakeModelClient) SetReasoningLevel(level llm.ReasoningLevel) error {
 	f.reasoningLevel = level
 	return nil
 }
-func (f *fakeModelClient) PredictNext(_ context.Context, _ llm.PredictNextRequest) (<-chan llm.PredictionEvent, <-chan error) {
+func (f *fakeModelClient) PredictNext(_ context.Context, req llm.PredictNextRequest) (<-chan llm.PredictionEvent, <-chan error) {
+	f.requests = append(f.requests, req)
 	events := f.events
 	if f.eventBatches != nil {
 		if f.predictCalls < len(f.eventBatches) {
@@ -667,7 +770,8 @@ func (f *fakeModelClient) PredictNext(_ context.Context, _ llm.PredictNextReques
 	return eventsCh, errsCh
 }
 func (f *fakeModelClient) PredictNextStructured(context.Context, llm.PredictNextStructuredRequest) (json.RawMessage, error) {
-	panic("not implemented")
+	f.structuredCalls++
+	return f.structuredRaw, nil
 }
 
 type fakeToolOutputSummarizer struct {
@@ -740,31 +844,30 @@ func (f fakeTool) Call(context.Context, json.RawMessage) (any, error) {
 }
 
 type fakeSessionStore struct {
-	sessions  map[string]session.Session
-	activeID  string
-	saveErr   error
-	createErr error
+	sessions           map[string]session.Session
+	messages           map[string][]llm.Message
+	activeID           string
+	saveErr            error
+	createErr          error
+	cancelOnAppend     context.CancelFunc
+	metadataContextErr error
 }
 
-func (f *fakeSessionStore) LoadActive(workingDir string) (session.Session, bool, error) {
-	if f.sessions == nil {
-		return session.Session{}, false, nil
-	}
+func (f *fakeSessionStore) Latest(context.Context, string) (session.Session, []llm.Message, bool, error) {
 	sess, ok := f.sessions[f.activeID]
-	return sess, ok, nil
+	return sess, append([]llm.Message(nil), f.messages[f.activeID]...), ok, nil
 }
-func (f *fakeSessionStore) Load(id string) (session.Session, bool, error) {
-	if f.sessions == nil {
-		return session.Session{}, false, nil
-	}
+
+func (f *fakeSessionStore) Load(_ context.Context, id string) (session.Session, []llm.Message, bool, error) {
 	sess, ok := f.sessions[id]
-	return sess, ok, nil
+	return sess, append([]llm.Message(nil), f.messages[id]...), ok, nil
 }
-func (f *fakeSessionStore) Create(workingDir string, metadata session.Metadata) (session.Session, error) {
+
+func (f *fakeSessionStore) Create(_ context.Context, workingDir string, metadata session.Metadata) (session.Session, error) {
 	if f.createErr != nil {
 		return session.Session{}, f.createErr
 	}
-	sess := session.Session{ID: "new-sess-123", WorkingDir: workingDir, Model: metadata.Model, ReasoningLevel: metadata.ReasoningLevel}
+	sess := session.Session{ID: "new-sess-123", WorkingDir: workingDir, Title: metadata.Title, Model: metadata.Model, ReasoningLevel: metadata.ReasoningLevel}
 	if f.sessions == nil {
 		f.sessions = make(map[string]session.Session)
 	}
@@ -772,40 +875,61 @@ func (f *fakeSessionStore) Create(workingDir string, metadata session.Metadata) 
 	f.activeID = sess.ID
 	return sess, nil
 }
-func (f *fakeSessionStore) Save(record session.Session) error {
+
+func (f *fakeSessionStore) Append(_ context.Context, id string, event session.Event) error {
 	if f.saveErr != nil {
 		return f.saveErr
 	}
-	if f.sessions == nil {
-		f.sessions = make(map[string]session.Session)
+	if f.messages == nil {
+		f.messages = make(map[string][]llm.Message)
 	}
-	f.sessions[record.ID] = record
+	if event.Type == session.EventCompaction {
+		f.messages[id] = append([]llm.Message(nil), event.Compacted...)
+	} else {
+		f.messages[id] = append(f.messages[id], event.Message)
+	}
+	if f.cancelOnAppend != nil {
+		f.cancelOnAppend()
+		f.cancelOnAppend = nil
+	}
 	return nil
 }
-func (f *fakeSessionStore) List(workingDir string) ([]session.Ref, error) {
+
+func (f *fakeSessionStore) UpdateMetadata(ctx context.Context, id string, metadata session.Metadata) error {
+	f.metadataContextErr = ctx.Err()
+	if f.saveErr != nil {
+		return f.saveErr
+	}
+	record := f.sessions[id]
+	record.Title = metadata.Title
+	record.Model = metadata.Model
+	record.ReasoningLevel = metadata.ReasoningLevel
+	f.sessions[id] = record
+	return nil
+}
+
+func (f *fakeSessionStore) List(context.Context, string) ([]session.Ref, error) {
 	refs := make([]session.Ref, 0, len(f.sessions))
 	for id := range f.sessions {
 		refs = append(refs, session.Ref{ID: id})
 	}
 	return refs, nil
 }
-func (f *fakeSessionStore) Delete(id string) error {
+func (f *fakeSessionStore) Delete(_ context.Context, id string) error {
 	delete(f.sessions, id)
-	if f.activeID == id {
-		f.activeID = ""
-	}
+	delete(f.messages, id)
 	return nil
 }
-func (f *fakeSessionStore) Clear(workingDir string) error {
-	f.activeID = ""
+func (f *fakeSessionStore) Clear(context.Context, string) error {
 	f.sessions = nil
+	f.messages = nil
 	return nil
 }
 
 func TestSessionPersistence(t *testing.T) {
 	t.Run("loads messages from ActiveSession when Messages is empty", func(t *testing.T) {
-		activeSess := session.Session{ID: "sess-1", Messages: []llm.Message{llm.UserMessage{Text: "restored text"}}}
-		agt, err := runtime.NewConversation(runtime.ConversationConfig{ModelClient: &fakeModelClient{}, Session: activeSess})
+		activeSess := session.Session{ID: "sess-1"}
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{ModelClient: &fakeModelClient{}, Session: activeSess, Messages: []llm.Message{llm.UserMessage{Text: "restored text"}}})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
@@ -826,12 +950,12 @@ func TestSessionPersistence(t *testing.T) {
 		if err := <-errs; err != nil {
 			t.Fatalf("Prompt() error = %v", err)
 		}
-		saved := store.sessions["sess-1"]
-		if len(saved.Messages) != 2 {
-			t.Fatalf("expected 2 messages in saved session, got: %d", len(saved.Messages))
+		saved := store.messages["sess-1"]
+		if len(saved) != 2 {
+			t.Fatalf("expected 2 messages in saved session, got: %d", len(saved))
 		}
-		if saved.Messages[0].(llm.UserMessage).Text != "hello" {
-			t.Fatalf("expected first message to be 'hello', got: %q", saved.Messages[0].(llm.UserMessage).Text)
+		if saved[0].(llm.UserMessage).Text != "hello" {
+			t.Fatalf("expected first message to be 'hello', got: %q", saved[0].(llm.UserMessage).Text)
 		}
 	})
 
@@ -861,6 +985,35 @@ func TestSessionPersistence(t *testing.T) {
 		}
 		if got := store.sessions["sess-1"].Title; got != "Add a login page" {
 			t.Fatalf("title after second prompt = %q, want unchanged", got)
+		}
+	})
+
+	t.Run("persists first title when prompt is canceled after the user message", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		store := &fakeSessionStore{
+			sessions:       map[string]session.Session{"sess-1": {ID: "sess-1", Title: "New session"}},
+			activeID:       "sess-1",
+			cancelOnAppend: cancel,
+		}
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{
+			ModelClient:  &fakeModelClient{},
+			SessionStore: store,
+			Session:      store.sessions[store.activeID],
+		})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+
+		events, errs := agt.Prompt(ctx, "Keep this title")
+		_ = collectEvents(events)
+		if err := <-errs; !errors.Is(err, context.Canceled) {
+			t.Fatalf("Prompt() error = %v, want context canceled", err)
+		}
+		if got := store.sessions["sess-1"].Title; got != "Keep this title" {
+			t.Fatalf("stored title = %q, want %q", got, "Keep this title")
+		}
+		if store.metadataContextErr != nil {
+			t.Fatalf("UpdateMetadata() context error = %v, want cancellation detached", store.metadataContextErr)
 		}
 	})
 

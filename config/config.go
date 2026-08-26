@@ -109,6 +109,35 @@ func EnsureDir() error {
 	return nil
 }
 
+// DataDir resolves the ronin data directory: $XDG_DATA_HOME/ronin when
+// XDG_DATA_HOME is set, otherwise $HOME/.local/share/ronin. Durable runtime
+// data lives here, separate from configuration.
+func DataDir() (string, error) {
+	if base := os.Getenv("XDG_DATA_HOME"); base != "" {
+		return filepath.Join(base, appName), nil
+	}
+
+	home := os.Getenv("HOME")
+	if home == "" {
+		return "", errors.New("resolve data dir: neither XDG_DATA_HOME nor HOME is set")
+	}
+
+	return filepath.Join(home, ".local", "share", appName), nil
+}
+
+// EnsureDataDir creates the ronin data directory if it does not exist and
+// returns its path.
+func EnsureDataDir() (string, error) {
+	dir, err := DataDir()
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("create data dir %q: %w", dir, err)
+	}
+	return dir, nil
+}
+
 func SkillsDir() (string, error) {
 	dir, err := Dir()
 	if err != nil {

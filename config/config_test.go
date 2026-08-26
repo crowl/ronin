@@ -48,6 +48,56 @@ func TestDir(t *testing.T) {
 	})
 }
 
+func TestDataDir(t *testing.T) {
+	t.Run("honors XDG_DATA_HOME", func(t *testing.T) {
+		t.Setenv("XDG_DATA_HOME", "/custom/data")
+
+		dir, err := config.DataDir()
+		if err != nil {
+			t.Fatalf("DataDir() error = %v", err)
+		}
+		if want := filepath.Join("/custom/data", "ronin"); dir != want {
+			t.Fatalf("DataDir() = %q, want %q", dir, want)
+		}
+	})
+
+	t.Run("falls back to HOME local share", func(t *testing.T) {
+		t.Setenv("XDG_DATA_HOME", "")
+		t.Setenv("HOME", "/home/user")
+
+		dir, err := config.DataDir()
+		if err != nil {
+			t.Fatalf("DataDir() error = %v", err)
+		}
+		if want := filepath.Join("/home/user", ".local", "share", "ronin"); dir != want {
+			t.Fatalf("DataDir() = %q, want %q", dir, want)
+		}
+	})
+
+	t.Run("errors when XDG and HOME unset", func(t *testing.T) {
+		t.Setenv("XDG_DATA_HOME", "")
+		t.Setenv("HOME", "")
+
+		_, err := config.DataDir()
+		if err == nil || !strings.Contains(err.Error(), "data dir") {
+			t.Fatalf("DataDir() error = %v, want data dir error", err)
+		}
+	})
+}
+
+func TestEnsureDataDir(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", base)
+
+	dir, err := config.EnsureDataDir()
+	if err != nil {
+		t.Fatalf("EnsureDataDir() error = %v", err)
+	}
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		t.Fatalf("data directory stat = %#v, error = %v", info, err)
+	}
+}
+
 func TestSkillsDir(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "/custom/xdg")
 

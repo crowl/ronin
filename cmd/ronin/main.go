@@ -21,7 +21,7 @@ import (
 	"github.com/crowl/ronin/llm/openai"
 	"github.com/crowl/ronin/runtime"
 	"github.com/crowl/ronin/session"
-	"github.com/crowl/ronin/session/fs"
+	"github.com/crowl/ronin/session/sqlite"
 	"github.com/crowl/ronin/tool/editfile"
 	"github.com/crowl/ronin/tool/fsutil"
 	"github.com/crowl/ronin/tool/gosemantic"
@@ -40,6 +40,10 @@ func writeVersion(output io.Writer) error {
 }
 
 func main() {
+	os.Exit(run())
+}
+
+func run() (exitCode int) {
 	var versionFlag bool
 	var acpMode bool
 	var resume bool
@@ -65,15 +69,15 @@ func main() {
 	if versionFlag {
 		if err := writeVersion(os.Stdout); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "failed to write version: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
-		return
+		return 0
 	}
 
 	workflowCmd, workflowMode, err := parseWorkflowCommand(flag.Args(), os.Stdin)
 	if err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		return 1
 	}
 
 	if workflowMode {
@@ -82,32 +86,32 @@ func main() {
 
 		if err := runWorkflow(ctx, workflowCmd.Script, workingDir, workflowCmd.Input, newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag), os.Stdout); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
-			os.Exit(1)
+			return 1
 		}
-		os.Exit(0)
+		return 0
 	}
 
 	if err := setupProviders(); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	if len(llm.Models()) == 0 {
 		_, _ = fmt.Fprintf(os.Stderr, "no models available, please define at least one of OPENAI_API_KEY, GEMINI_API_KEY or ANTHROPIC_API_KEY\n")
-		os.Exit(1)
+		return 1
 	}
 
 	settings, err := config.Load()
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	if modelFlag != "" {
 		override, err := parseModelFlag(modelFlag)
 		if err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
-			os.Exit(1)
+			return 1
 		}
 		settings.Model = override
 	}
@@ -118,36 +122,30 @@ func main() {
 	model, level, err := resolveModel(settings)
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
-		os.Exit(1)
-	}
-
-	modelClient, err := llm.LoadModelClient(model, level)
-	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "failed to load LLM model client: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	configDir, err := config.Dir()
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "failed to resolve config directory: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	skillsDir, err := config.SkillsDir()
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "failed to resolve skills directory: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	workflowsDir, err := config.WorkflowsDir()
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "failed to resolve workflows directory: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 	workflowCatalog, err := workflow.LoadCatalog(workflowsDir)
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "failed to load workflows: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	var skills []runtime.Skill
@@ -157,24 +155,24 @@ func main() {
 		skills, err = loadExplicitSkills(skillsDir, skillFlags)
 		if err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "failed to load skills: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 		contextFiles, err = loadExplicitContextFiles(contextFileFlags)
 		if err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "failed to load context files: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	} else {
 		skills, err = runtime.LoadSkills(skillsDir)
 		if err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "failed to load skills: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 
 		contextFiles, err = runtime.LoadContextFiles(configDir, workingDir)
 		if err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "failed to load context files: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	}
 
@@ -203,39 +201,62 @@ func main() {
 	})
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "failed to build system prompt: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
-	compactor, err := runtime.NewDefaultCompactor(runtime.DefaultCompactorConfig{
-		ModelClient: modelClient,
-		Now:         func() time.Time { return time.Now() },
+	dataDir, err := config.EnsureDataDir()
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "failed to initialize data directory: %v\n", err)
+		return 1
+	}
+	sessionStore, err := sqlite.Open(context.Background(), sqlite.StoreConfig{
+		Path: filepath.Join(dataDir, "ronin.db"),
+		Now:  time.Now,
 	})
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "failed to initialize compactor: %v\n", err)
-		os.Exit(1)
+		_, _ = fmt.Fprintf(os.Stderr, "failed to initialize session store: %v\n", err)
+		return 1
 	}
-
-	sessionStore := fs.NewStore(fs.StoreConfig{
-		Dir: configDir,
-		Now: func() time.Time { return time.Now() },
-	})
+	defer func() {
+		if err := sessionStore.Close(); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "failed to close session store: %v\n", err)
+			if exitCode == 0 {
+				exitCode = 1
+			}
+		}
+	}()
 
 	summarizer, summarizationPolicy, err := toolOutputSummarization(settings)
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "failed to initialize tool output summarization: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	// buildConversation creates a conversation for an existing session record.
 	// Each conversation owns its own model client so per-session model and
 	// reasoning switches stay isolated.
-	buildConversation := func(activeSession session.Session) (*runtime.Conversation, error) {
-		client, err := llm.LoadModelClient(model, level)
+	buildConversation := func(activeSession session.Session, messages []llm.Message) (*runtime.Conversation, error) {
+		sessionModel, sessionLevel, err := resolveSessionModel(
+			activeSession,
+			model,
+			level,
+			modelFlag != "",
+			reasoningLevelFlag != "",
+		)
+		if err != nil {
+			return nil, err
+		}
+		client, err := llm.LoadModelClient(sessionModel, sessionLevel)
 		if err != nil {
 			return nil, fmt.Errorf("load model client: %w", err)
 		}
-		activeSession.Model = config.Model{Provider: model.Provider, Name: model.Name}
-		activeSession.ReasoningLevel = string(level)
+		compactor, err := runtime.NewDefaultCompactor(runtime.DefaultCompactorConfig{
+			ModelClient: client,
+			Now:         time.Now,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("initialize compactor: %w", err)
+		}
 		return runtime.NewConversation(runtime.ConversationConfig{
 			CWD:                           workingDir,
 			ModelClient:                   client,
@@ -248,6 +269,7 @@ func main() {
 			Now:                           func() time.Time { return time.Now() },
 			SessionStore:                  sessionStore,
 			Session:                       activeSession,
+			Messages:                      messages,
 		})
 	}
 
@@ -256,14 +278,14 @@ func main() {
 		defer cancel()
 
 		newConversation := func() (acp.Conversation, error) {
-			activeSession, err := sessionStore.Create(workingDir, session.Metadata{
+			activeSession, err := sessionStore.Create(ctx, workingDir, session.Metadata{
 				Model:          settings.Model,
 				ReasoningLevel: settings.ReasoningLevel,
 			})
 			if err != nil {
 				return nil, fmt.Errorf("create session: %w", err)
 			}
-			conv, err := buildConversation(activeSession)
+			conv, err := buildConversation(activeSession, nil)
 			if err != nil {
 				return nil, err
 			}
@@ -271,7 +293,7 @@ func main() {
 		}
 
 		loadConversation := func(sessionID string) (acp.Conversation, bool, error) {
-			activeSession, ok, err := sessionStore.Load(sessionID)
+			activeSession, messages, ok, err := sessionStore.Load(ctx, sessionID)
 			if err != nil {
 				return nil, false, fmt.Errorf("load session: %w", err)
 			}
@@ -281,7 +303,7 @@ func main() {
 			if !sameWorkingDir(activeSession.WorkingDir, workingDir) {
 				return nil, false, nil
 			}
-			conv, err := buildConversation(activeSession)
+			conv, err := buildConversation(activeSession, messages)
 			if err != nil {
 				return nil, false, err
 			}
@@ -291,14 +313,14 @@ func main() {
 		absWorkingDir, err := filepath.Abs(workingDir)
 		if err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "resolve working directory: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 
 		listSessions := func(cwd string) ([]acp.SessionSummary, error) {
 			if cwd != "" && !sameWorkingDir(cwd, absWorkingDir) {
 				return nil, nil
 			}
-			refs, err := sessionStore.List(absWorkingDir)
+			refs, err := sessionStore.List(ctx, absWorkingDir)
 			if err != nil {
 				return nil, err
 			}
@@ -317,32 +339,34 @@ func main() {
 		if err := acp.Serve(ctx, acp.Config{
 			NewConversation:  newConversation,
 			LoadConversation: loadConversation,
-			DeleteSession:    sessionStore.Delete,
-			ListSessions:     listSessions,
-			CWD:              workingDir,
-			Input:            os.Stdin,
-			Output:           os.Stdout,
-			Log:              os.Stderr,
+			DeleteSession: func(sessionID string) error {
+				return sessionStore.Delete(ctx, sessionID)
+			},
+			ListSessions: listSessions,
+			CWD:          workingDir,
+			Input:        os.Stdin,
+			Output:       os.Stdout,
+			Log:          os.Stderr,
 		}); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
-			os.Exit(1)
+			return 1
 		}
-		os.Exit(0)
+		return 0
 	}
 
-	activeSession, err := startupSession(sessionStore, workingDir, session.Metadata{
+	activeSession, messages, err := startupSession(context.Background(), sessionStore, workingDir, session.Metadata{
 		Model:          settings.Model,
 		ReasoningLevel: settings.ReasoningLevel,
 	}, resume)
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
-	conv, err := buildConversation(activeSession)
+	conv, err := buildConversation(activeSession, messages)
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "failed to initialize conversation: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	if prompt != "" {
@@ -351,17 +375,17 @@ func main() {
 
 		if err := runPrompt(ctx, conv, prompt, os.Stdout); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
-			os.Exit(1)
+			return 1
 		}
-		os.Exit(0)
+		return 0
 	}
 
 	if err := runTUI(conv, workflowCatalog, workflowAgent); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
-	os.Exit(0)
+	return 0
 }
 
 func setupProviders() error {
@@ -750,22 +774,22 @@ func toolOutputSummarization(settings config.Settings) (runtime.ToolOutputSummar
 	return summarizer, policy, nil
 }
 
-func startupSession(store session.Store, workingDir string, metadata session.Metadata, resume bool) (session.Session, error) {
+func startupSession(ctx context.Context, store session.Store, workingDir string, metadata session.Metadata, resume bool) (session.Session, []llm.Message, error) {
 	if resume {
-		activeSession, ok, err := store.LoadActive(workingDir)
+		activeSession, messages, ok, err := store.Latest(ctx, workingDir)
 		if err != nil {
-			return session.Session{}, fmt.Errorf("failed to load session: %w", err)
+			return session.Session{}, nil, fmt.Errorf("failed to load session: %w", err)
 		}
 		if ok {
-			return activeSession, nil
+			return activeSession, messages, nil
 		}
 	}
 
-	activeSession, err := store.Create(workingDir, metadata)
+	activeSession, err := store.Create(ctx, workingDir, metadata)
 	if err != nil {
-		return session.Session{}, fmt.Errorf("failed to create session: %w", err)
+		return session.Session{}, nil, fmt.Errorf("failed to create session: %w", err)
 	}
-	return activeSession, nil
+	return activeSession, nil, nil
 }
 
 func sameWorkingDir(a, b string) bool {
@@ -789,6 +813,28 @@ func parseModelFlag(value string) (config.Model, error) {
 		return config.Model{}, fmt.Errorf("invalid -model %q: provider and name must not be empty", value)
 	}
 	return config.Model{Provider: provider, Name: name}, nil
+}
+
+func resolveSessionModel(activeSession session.Session, fallbackModel llm.Model, fallbackLevel llm.ReasoningLevel, modelOverridden, reasoningOverridden bool) (llm.Model, llm.ReasoningLevel, error) {
+	settings := config.Settings{
+		Model: config.Model{
+			Provider: fallbackModel.Provider,
+			Name:     fallbackModel.Name,
+		},
+		ReasoningLevel: string(fallbackLevel),
+	}
+	if !modelOverridden && activeSession.Model.Provider != "" && activeSession.Model.Name != "" {
+		settings.Model = activeSession.Model
+	}
+	if !reasoningOverridden && activeSession.ReasoningLevel != "" {
+		settings.ReasoningLevel = activeSession.ReasoningLevel
+	}
+
+	model, level, err := resolveModel(settings)
+	if err != nil {
+		return llm.Model{}, "", fmt.Errorf("resolve session model: %w", err)
+	}
+	return model, level, nil
 }
 
 func resolveModel(settings config.Settings) (llm.Model, llm.ReasoningLevel, error) {

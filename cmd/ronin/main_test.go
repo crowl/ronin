@@ -525,6 +525,59 @@ func TestParseModelFlag(t *testing.T) {
 	})
 }
 
+func TestResolveSessionModel(t *testing.T) {
+	sessionModel := llm.Model{Provider: "session-test", Name: "stored", ContextWindow: 272_000}
+	overrideModel := llm.Model{Provider: "session-test", Name: "override", ContextWindow: 128_000}
+	for _, model := range []llm.Model{sessionModel, overrideModel} {
+		if err := llm.RegisterModel(model, func(llm.ReasoningLevel) (llm.ModelClient, error) {
+			return nil, errors.New("unused")
+		}); err != nil {
+			t.Fatalf("RegisterModel(%s) error = %v", model, err)
+		}
+	}
+
+	activeSession := session.Session{
+		Model:          config.Model{Provider: sessionModel.Provider, Name: sessionModel.Name},
+		ReasoningLevel: string(llm.ReasoningLevelHigh),
+	}
+
+	t.Run("uses stored session settings without explicit overrides", func(t *testing.T) {
+		gotModel, gotLevel, err := resolveSessionModel(activeSession, overrideModel, llm.ReasoningLevelOff, false, false)
+		if err != nil {
+			t.Fatalf("resolveSessionModel() error = %v", err)
+		}
+		if gotModel != sessionModel {
+			t.Fatalf("resolveSessionModel() model = %#v, want stored model %#v", gotModel, sessionModel)
+		}
+		if gotLevel != llm.ReasoningLevelHigh {
+			t.Fatalf("resolveSessionModel() reasoning level = %q, want %q", gotLevel, llm.ReasoningLevelHigh)
+		}
+	})
+
+	t.Run("explicit flags override stored session settings", func(t *testing.T) {
+		gotModel, gotLevel, err := resolveSessionModel(activeSession, overrideModel, llm.ReasoningLevelLow, true, true)
+		if err != nil {
+			t.Fatalf("resolveSessionModel() error = %v", err)
+		}
+		if gotModel != overrideModel {
+			t.Fatalf("resolveSessionModel() model = %#v, want override model %#v", gotModel, overrideModel)
+		}
+		if gotLevel != llm.ReasoningLevelLow {
+			t.Fatalf("resolveSessionModel() reasoning level = %q, want %q", gotLevel, llm.ReasoningLevelLow)
+		}
+	})
+
+	t.Run("overrides are independent", func(t *testing.T) {
+		gotModel, gotLevel, err := resolveSessionModel(activeSession, overrideModel, llm.ReasoningLevelLow, true, false)
+		if err != nil {
+			t.Fatalf("resolveSessionModel() error = %v", err)
+		}
+		if gotModel != overrideModel || gotLevel != llm.ReasoningLevelHigh {
+			t.Fatalf("resolveSessionModel() = %#v/%q, want override model and stored reasoning", gotModel, gotLevel)
+		}
+	})
+}
+
 func TestStartupSession(t *testing.T) {
 	metadata := session.Metadata{
 		Model:          config.Model{Provider: "openai", Name: "gpt-5.5"},
@@ -536,15 +589,15 @@ func TestStartupSession(t *testing.T) {
 		created := session.Session{ID: "created", WorkingDir: workingDir}
 		store := &fakeStartupSessionStore{created: created}
 
-		got, err := startupSession(store, workingDir, metadata, false)
+		got, _, err := startupSession(t.Context(), store, workingDir, metadata, false)
 		if err != nil {
 			t.Fatalf("startupSession() error = %v", err)
 		}
 		if got.ID != created.ID {
 			t.Fatalf("startupSession() ID = %q, want %q", got.ID, created.ID)
 		}
-		if store.loadActiveCalls != 0 {
-			t.Fatalf("LoadActive calls = %d, want 0", store.loadActiveCalls)
+		if store.latestCalls != 0 {
+			t.Fatalf("Latest calls = %d, want 0", store.latestCalls)
 		}
 		if store.createCalls != 1 {
 			t.Fatalf("Create calls = %d, want 1", store.createCalls)
@@ -561,18 +614,18 @@ func TestStartupSession(t *testing.T) {
 		loaded := session.Session{ID: "loaded", WorkingDir: workingDir}
 		store := &fakeStartupSessionStore{loaded: loaded, loadedOK: true}
 
-		got, err := startupSession(store, workingDir, metadata, true)
+		got, _, err := startupSession(t.Context(), store, workingDir, metadata, true)
 		if err != nil {
 			t.Fatalf("startupSession() error = %v", err)
 		}
 		if got.ID != loaded.ID {
 			t.Fatalf("startupSession() ID = %q, want %q", got.ID, loaded.ID)
 		}
-		if store.loadActiveCalls != 1 {
-			t.Fatalf("LoadActive calls = %d, want 1", store.loadActiveCalls)
+		if store.latestCalls != 1 {
+			t.Fatalf("Latest calls = %d, want 1", store.latestCalls)
 		}
-		if store.loadedWorkingDir != workingDir {
-			t.Fatalf("LoadActive workingDir = %q, want %q", store.loadedWorkingDir, workingDir)
+		if store.latestWorkingDir != workingDir {
+			t.Fatalf("Latest workingDir = %q, want %q", store.latestWorkingDir, workingDir)
 		}
 		if store.createCalls != 0 {
 			t.Fatalf("Create calls = %d, want 0", store.createCalls)
@@ -583,15 +636,15 @@ func TestStartupSession(t *testing.T) {
 		created := session.Session{ID: "created", WorkingDir: workingDir}
 		store := &fakeStartupSessionStore{created: created}
 
-		got, err := startupSession(store, workingDir, metadata, true)
+		got, _, err := startupSession(t.Context(), store, workingDir, metadata, true)
 		if err != nil {
 			t.Fatalf("startupSession() error = %v", err)
 		}
 		if got.ID != created.ID {
 			t.Fatalf("startupSession() ID = %q, want %q", got.ID, created.ID)
 		}
-		if store.loadActiveCalls != 1 {
-			t.Fatalf("LoadActive calls = %d, want 1", store.loadActiveCalls)
+		if store.latestCalls != 1 {
+			t.Fatalf("Latest calls = %d, want 1", store.latestCalls)
 		}
 		if store.createCalls != 1 {
 			t.Fatalf("Create calls = %d, want 1", store.createCalls)
@@ -602,7 +655,7 @@ func TestStartupSession(t *testing.T) {
 		wantErr := errors.New("read workspace")
 		store := &fakeStartupSessionStore{loadErr: wantErr}
 
-		_, err := startupSession(store, workingDir, metadata, true)
+		_, _, err := startupSession(t.Context(), store, workingDir, metadata, true)
 		if err == nil || !errors.Is(err, wantErr) || !strings.Contains(err.Error(), "failed to load session") {
 			t.Fatalf("startupSession() error = %v, want load error wrapping %v", err, wantErr)
 		}
@@ -612,7 +665,7 @@ func TestStartupSession(t *testing.T) {
 		wantErr := errors.New("write session")
 		store := &fakeStartupSessionStore{createErr: wantErr}
 
-		_, err := startupSession(store, workingDir, metadata, false)
+		_, _, err := startupSession(t.Context(), store, workingDir, metadata, false)
 		if err == nil || !errors.Is(err, wantErr) || !strings.Contains(err.Error(), "failed to create session") {
 			t.Fatalf("startupSession() error = %v, want create error wrapping %v", err, wantErr)
 		}
@@ -677,52 +730,47 @@ func (r *failingReader) Read([]byte) (int, error) {
 
 type fakeStartupSessionStore struct {
 	loaded   session.Session
+	messages []llm.Message
 	loadedOK bool
 	loadErr  error
 
 	created   session.Session
 	createErr error
 
-	loadActiveCalls int
-	createCalls     int
+	latestCalls int
+	createCalls int
 
-	loadedWorkingDir  string
+	latestWorkingDir  string
 	createdWorkingDir string
 	createdMetadata   session.Metadata
 }
 
-func (s *fakeStartupSessionStore) LoadActive(workingDir string) (session.Session, bool, error) {
-	s.loadActiveCalls++
-	s.loadedWorkingDir = workingDir
-	return s.loaded, s.loadedOK, s.loadErr
+func (s *fakeStartupSessionStore) Latest(_ context.Context, workingDir string) (session.Session, []llm.Message, bool, error) {
+	s.latestCalls++
+	s.latestWorkingDir = workingDir
+	return s.loaded, s.messages, s.loadedOK, s.loadErr
 }
 
-func (s *fakeStartupSessionStore) Load(string) (session.Session, bool, error) {
-	return session.Session{}, false, nil
+func (s *fakeStartupSessionStore) Load(context.Context, string) (session.Session, []llm.Message, bool, error) {
+	return session.Session{}, nil, false, nil
 }
 
-func (s *fakeStartupSessionStore) Create(workingDir string, metadata session.Metadata) (session.Session, error) {
+func (s *fakeStartupSessionStore) Create(_ context.Context, workingDir string, metadata session.Metadata) (session.Session, error) {
 	s.createCalls++
 	s.createdWorkingDir = workingDir
 	s.createdMetadata = metadata
 	return s.created, s.createErr
 }
 
-func (s *fakeStartupSessionStore) Save(session.Session) error {
+func (s *fakeStartupSessionStore) Append(context.Context, string, session.Event) error { return nil }
+func (s *fakeStartupSessionStore) UpdateMetadata(context.Context, string, session.Metadata) error {
 	return nil
 }
-
-func (s *fakeStartupSessionStore) List(string) ([]session.Ref, error) {
+func (s *fakeStartupSessionStore) List(context.Context, string) ([]session.Ref, error) {
 	return nil, nil
 }
-
-func (s *fakeStartupSessionStore) Delete(string) error {
-	return nil
-}
-
-func (s *fakeStartupSessionStore) Clear(string) error {
-	return nil
-}
+func (s *fakeStartupSessionStore) Delete(context.Context, string) error { return nil }
+func (s *fakeStartupSessionStore) Clear(context.Context, string) error  { return nil }
 
 type fakePromptConversation struct {
 	events []runtime.Event
