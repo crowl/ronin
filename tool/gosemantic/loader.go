@@ -30,19 +30,11 @@ const syntaxLoadMode = packages.NeedName |
 	packages.NeedCompiledGoFiles |
 	packages.NeedSyntax
 
-func loadModule(ctx context.Context, workingDir string) (*module, error) {
-	return loadModuleWithMode(ctx, workingDir, syntaxLoadMode, false)
-}
-
-func loadSemanticModule(ctx context.Context, workingDir string) (*module, error) {
-	return loadModuleWithMode(ctx, workingDir, packages.LoadAllSyntax, true)
-}
-
-// loadModuleWithMode loads every package in the local Go module(s) for workingDir.
+// loadModule loads every package in the local Go module(s) for workingDir.
 // It searches upwards and downwards to locate all applicable module roots or workspaces.
 // Per-package parse errors are reported as warnings rather than failing the
 // whole load, because an active conversation often edits code that does not compile.
-func loadModuleWithMode(ctx context.Context, workingDir string, mode packages.LoadMode, tests bool) (*module, error) {
+func loadModule(ctx context.Context, workingDir string) (*module, error) {
 	if ctx.Err() != nil {
 		return nil, tool.Error{Code: "package_load_failed", Message: ctx.Err().Error()}
 	}
@@ -61,9 +53,8 @@ func loadModuleWithMode(ctx context.Context, workingDir string, mode packages.Lo
 		cfg := &packages.Config{
 			Context: ctx,
 			Dir:     root,
-			Mode:    mode,
+			Mode:    syntaxLoadMode,
 			Fset:    fset,
-			Tests:   tests,
 		}
 
 		pkgs, err := packages.Load(cfg, "./...")
@@ -77,14 +68,6 @@ func loadModuleWithMode(ctx context.Context, workingDir string, mode packages.Lo
 
 		for _, pkg := range pkgs {
 			id := pkg.ID
-			if tests && pkg.ForTest == "" {
-				for _, candidate := range pkgs {
-					if candidate.ForTest == pkg.PkgPath && candidate.PkgPath == pkg.PkgPath {
-						id = candidate.ID
-						break
-					}
-				}
-			}
 			if id == "" {
 				id = pkg.PkgPath
 			}

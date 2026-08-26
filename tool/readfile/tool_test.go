@@ -18,10 +18,13 @@ import (
 
 func TestToolDescriptionGuidesGoRangeReads(t *testing.T) {
 	description := readfile.New(t.TempDir(), fsutil.NewReadCache()).Description()
-	for _, expected := range []string{"Go exploration", "ranges returned by outline_package, find_symbol, or go_navigation", "whole-file reads"} {
+	for _, expected := range []string{"Go exploration", "ranges returned by outline_package or find_symbol", "whole-file reads"} {
 		if !strings.Contains(description, expected) {
 			t.Errorf("Description() = %q, want %q", description, expected)
 		}
+	}
+	if strings.Contains(description, "go_navigation") {
+		t.Errorf("Description() contains removed go_navigation tool: %q", description)
 	}
 }
 

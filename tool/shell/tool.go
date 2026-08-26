@@ -83,7 +83,7 @@ func (t *Tool) Name() string {
 }
 
 func (t *Tool) Description() string {
-	return "Run a shell command. Use for listing, git, tests, builds, and other CLI tasks. For Go exploration, use outline_package or find_symbol to locate declarations and go_navigation for semantic references, implementations, callers, or callees before text search. Use shell search for literals, textual patterns, generated files, or unsupported queries. Prefer read_file for exact file contents and edit_file/write_file for file modifications."
+	return "Run a shell command. Use for listing, git, tests, builds, and other CLI tasks. For Go exploration, use outline_package or find_symbol to locate declarations before text search. Use shell search for references, implementations, callers, callees, literals, textual patterns, generated files, and other queries those tools do not support. Prefer read_file for exact file contents and edit_file/write_file for file modifications."
 }
 
 func (t *Tool) Parameters() *jsonschema.Schema {
