@@ -147,6 +147,42 @@ func TestAppModel(t *testing.T) {
 		}
 	})
 
+	t.Run("renders padding between editor and status bar", func(t *testing.T) {
+		model := newTestModel(t)
+
+		lines, err := model.lines(80, &fakeConversation{}, time.Now())
+		if err != nil {
+			t.Fatalf("lines: %v", err)
+		}
+		if len(lines) < 3 {
+			t.Fatalf("rendered lines = %#v, want editor, padding, and status bar", lines)
+		}
+		if lines[len(lines)-2] != "" {
+			t.Fatalf("line before status bar = %q, want blank padding", lines[len(lines)-2])
+		}
+		if !strings.Contains(lines[len(lines)-1], mutedStyle.start()) {
+			t.Fatalf("last line is not the status bar: %q", lines[len(lines)-1])
+		}
+	})
+
+	t.Run("menu remains attached to editor above status padding", func(t *testing.T) {
+		model := newTestModel(t)
+		if _, err := model.handleKey(terminal.Key{Type: terminal.KeyRune, Rune: '/'}); err != nil {
+			t.Fatalf("open menu: %v", err)
+		}
+
+		lines, err := model.lines(80, &fakeConversation{}, time.Now())
+		if err != nil {
+			t.Fatalf("lines: %v", err)
+		}
+		if len(lines) < 4 || lines[len(lines)-2] != "" {
+			t.Fatalf("rendered lines = %#v, want menu followed by padding and status bar", lines)
+		}
+		if lines[len(lines)-3] == "" {
+			t.Fatalf("menu is separated from editor area: %#v", lines)
+		}
+	})
+
 	t.Run("session save failed event displays error in status bar", func(t *testing.T) {
 		model := newTestModel(t)
 
