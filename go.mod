@@ -1,6 +1,6 @@
 module github.com/crowl/ronin
 
-go 1.26.4
+go 1.27.0
 
 require (
 	github.com/Shopify/go-lua v0.0.0-20250718183320-1e37f32ad7d0

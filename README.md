@@ -32,7 +32,7 @@ cd /path/to/project
 ronin
 ```
 
-To run from source instead, use Go 1.26 or newer:
+To run from source instead, use Go 1.27.0 or newer:
 
 ```sh
 git clone https://github.com/crowl/ronin.git
