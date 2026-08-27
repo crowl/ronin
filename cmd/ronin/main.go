@@ -13,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/crowl/ronin/acp"
 	"github.com/crowl/ronin/config"
 	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/llm/anthropic"
@@ -45,7 +44,6 @@ func main() {
 
 func run() (exitCode int) {
 	var versionFlag bool
-	var acpMode bool
 	var resume bool
 	var prompt string
 	var workingDir string
@@ -55,7 +53,6 @@ func run() (exitCode int) {
 	var skillFlags repeatedFlag
 
 	flag.BoolVar(&versionFlag, "version", false, "Print the Ronin version.")
-	flag.BoolVar(&acpMode, "acp", false, "Run an ACP server over stdin/stdout.")
 	flag.BoolVar(&resume, "resume", false, "Load the active session for the working directory instead of starting a fresh session.")
 	flag.StringVar(&prompt, "prompt", "", "Prompt to run without launching the TUI.")
 	flag.StringVar(&workingDir, "working_dir", ".", "Working directory. Defaults to the current directory.")
@@ -270,87 +267,6 @@ func run() (exitCode int) {
 			Session:                       activeSession,
 			Messages:                      messages,
 		})
-	}
-
-	if acpMode {
-		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
-		defer cancel()
-
-		newConversation := func() (acp.Conversation, error) {
-			activeSession, err := sessionStore.Create(ctx, workingDir, session.Metadata{
-				Model:          settings.Model,
-				ReasoningLevel: settings.ReasoningLevel,
-			})
-			if err != nil {
-				return nil, fmt.Errorf("create session: %w", err)
-			}
-			conv, err := buildConversation(activeSession, nil)
-			if err != nil {
-				return nil, err
-			}
-			return conv, nil
-		}
-
-		loadConversation := func(sessionID string) (acp.Conversation, bool, error) {
-			activeSession, messages, ok, err := sessionStore.Load(ctx, sessionID)
-			if err != nil {
-				return nil, false, fmt.Errorf("load session: %w", err)
-			}
-			if !ok {
-				return nil, false, nil
-			}
-			if !sameWorkingDir(activeSession.WorkingDir, workingDir) {
-				return nil, false, nil
-			}
-			conv, err := buildConversation(activeSession, messages)
-			if err != nil {
-				return nil, false, err
-			}
-			return conv, true, nil
-		}
-
-		absWorkingDir, err := filepath.Abs(workingDir)
-		if err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "resolve working directory: %v\n", err)
-			return 1
-		}
-
-		listSessions := func(cwd string) ([]acp.SessionSummary, error) {
-			if cwd != "" && !sameWorkingDir(cwd, absWorkingDir) {
-				return nil, nil
-			}
-			refs, err := sessionStore.List(ctx, absWorkingDir)
-			if err != nil {
-				return nil, err
-			}
-			summaries := make([]acp.SessionSummary, 0, len(refs))
-			for _, ref := range refs {
-				summaries = append(summaries, acp.SessionSummary{
-					SessionID: ref.ID,
-					CWD:       absWorkingDir,
-					Title:     ref.Title,
-					UpdatedAt: ref.UpdatedAt,
-				})
-			}
-			return summaries, nil
-		}
-
-		if err := acp.Serve(ctx, acp.Config{
-			NewConversation:  newConversation,
-			LoadConversation: loadConversation,
-			DeleteSession: func(sessionID string) error {
-				return sessionStore.Delete(ctx, sessionID)
-			},
-			ListSessions: listSessions,
-			CWD:          workingDir,
-			Input:        os.Stdin,
-			Output:       os.Stdout,
-			Log:          os.Stderr,
-		}); err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
-			return 1
-		}
-		return 0
 	}
 
 	activeSession, messages, err := startupSession(context.Background(), sessionStore, workingDir, session.Metadata{
@@ -788,18 +704,6 @@ func startupSession(ctx context.Context, store session.Store, workingDir string,
 		return session.Session{}, nil, fmt.Errorf("failed to create session: %w", err)
 	}
 	return activeSession, nil, nil
-}
-
-func sameWorkingDir(a, b string) bool {
-	absA, err := filepath.Abs(a)
-	if err != nil {
-		return false
-	}
-	absB, err := filepath.Abs(b)
-	if err != nil {
-		return false
-	}
-	return filepath.Clean(absA) == filepath.Clean(absB)
 }
 
 func parseModelFlag(value string) (config.Model, error) {
