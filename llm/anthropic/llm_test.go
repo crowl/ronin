@@ -30,6 +30,19 @@ func TestSetReasoningLevelValidates(t *testing.T) {
 	}
 }
 
+func TestSetReasoningLevelRejectsUnsupportedModelConfiguration(t *testing.T) {
+	client, err := anthropic.NewLLM(anthropic.LLMConfig{APIKey: "key", Model: llm.Model{Provider: "anthropic", Name: "claude-sonnet-4-6"}, ReasoningLevel: llm.ReasoningLevelMedium})
+	if err != nil {
+		t.Fatalf("new llm: %v", err)
+	}
+	if err := client.SetReasoningLevel(llm.ReasoningLevelExtraHigh); err == nil || !strings.Contains(err.Error(), "not supported") {
+		t.Fatalf("SetReasoningLevel() error = %v, want unsupported effort error", err)
+	}
+	if client.ReasoningLevel() != llm.ReasoningLevelMedium {
+		t.Fatalf("reasoning level changed to %q", client.ReasoningLevel())
+	}
+}
+
 func TestPredictNext(t *testing.T) {
 	t.Run("sends ordered blocks tools and thinking config", func(t *testing.T) {
 		var body map[string]any
@@ -315,6 +328,62 @@ func TestPredictNext(t *testing.T) {
 	})
 }
 
+func TestPredictNextUsesModelThinkingConfiguration(t *testing.T) {
+	t.Run("uses extended thinking for Haiku 4.5", func(t *testing.T) {
+		var body map[string]any
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("data: {\"type\":\"message_start\"}\n\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n"))
+		}))
+		defer server.Close()
+
+		client, err := anthropic.NewLLM(anthropic.LLMConfig{BaseURL: server.URL, APIKey: "key", Model: anthropic.ClaudeHaiku45, ReasoningLevel: llm.ReasoningLevelMedium})
+		if err != nil {
+			t.Fatalf("new llm: %v", err)
+		}
+		events, errs := client.PredictNext(t.Context(), llm.PredictNextRequest{})
+		_ = drainEvents(events)
+		if err := <-errs; err != nil {
+			t.Fatalf("predict: %v", err)
+		}
+
+		thinking := body["thinking"].(map[string]any)
+		if thinking["type"] != "enabled" || thinking["budget_tokens"] != float64(4000) {
+			t.Fatalf("thinking = %#v, want enabled with 4000 token budget", thinking)
+		}
+		if body["output_config"] != nil {
+			t.Fatalf("output_config = %#v, want omitted", body["output_config"])
+		}
+		if body["max_tokens"] != float64(16000) {
+			t.Fatalf("max_tokens = %#v, want 16000", body["max_tokens"])
+		}
+	})
+
+	t.Run("rejects unsupported xhigh effort", func(t *testing.T) {
+		_, err := anthropic.NewLLM(anthropic.LLMConfig{APIKey: "key", Model: llm.Model{Provider: "anthropic", Name: "claude-sonnet-4-6"}, ReasoningLevel: llm.ReasoningLevelExtraHigh})
+		if err == nil || !strings.Contains(err.Error(), "not supported") {
+			t.Fatalf("error = %v, want unsupported effort error", err)
+		}
+	})
+
+	t.Run("rejects xhigh for extended thinking model", func(t *testing.T) {
+		_, err := anthropic.NewLLM(anthropic.LLMConfig{APIKey: "key", Model: anthropic.ClaudeHaiku45, ReasoningLevel: llm.ReasoningLevelExtraHigh})
+		if err == nil || !strings.Contains(err.Error(), "not supported") {
+			t.Fatalf("error = %v, want unsupported reasoning error", err)
+		}
+	})
+
+	t.Run("rejects disabling always-on thinking", func(t *testing.T) {
+		_, err := anthropic.NewLLM(anthropic.LLMConfig{APIKey: "key", Model: llm.Model{Provider: "anthropic", Name: "claude-fable-5"}, ReasoningLevel: llm.ReasoningLevelOff})
+		if err == nil || !strings.Contains(err.Error(), "cannot be disabled") {
+			t.Fatalf("error = %v, want always-on thinking error", err)
+		}
+	})
+}
+
 func TestPredictNextStructured(t *testing.T) {
 	t.Run("sends JSON schema format and returns text JSON", func(t *testing.T) {
 		var body map[string]any
@@ -407,6 +476,34 @@ func TestPredictNextStructured(t *testing.T) {
 		}
 		if attempts != 2 {
 			t.Fatalf("attempts = %d, want 2", attempts)
+		}
+	})
+
+	t.Run("rejects_truncated_response", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"{\"answer\":"}],"stop_reason":"max_tokens"}`))
+		}))
+		defer server.Close()
+
+		client, err := anthropic.NewLLM(anthropic.LLMConfig{BaseURL: server.URL, APIKey: "key", Model: llm.Model{Provider: "anthropic", Name: "test"}, ReasoningLevel: llm.ReasoningLevelOff})
+		if err != nil {
+			t.Fatalf("new llm: %v", err)
+		}
+		_, err = client.PredictNextStructured(t.Context(), llm.PredictNextStructuredRequest{Schema: &jsonschema.Schema{Type: "object"}})
+		if err == nil || !strings.Contains(err.Error(), "truncated") {
+			t.Fatalf("error = %v, want truncation error", err)
+		}
+	})
+
+	t.Run("rejects_always_thinking_model", func(t *testing.T) {
+		client, err := anthropic.NewLLM(anthropic.LLMConfig{APIKey: "key", Model: llm.Model{Provider: "anthropic", Name: "claude-fable-5"}, ReasoningLevel: llm.ReasoningLevelLow})
+		if err != nil {
+			t.Fatalf("new llm: %v", err)
+		}
+		_, err = client.PredictNextStructured(t.Context(), llm.PredictNextStructuredRequest{Schema: &jsonschema.Schema{Type: "object"}})
+		if err == nil || !strings.Contains(err.Error(), "unsupported for always-thinking") {
+			t.Fatalf("error = %v, want structured output incompatibility", err)
 		}
 	})
 

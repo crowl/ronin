@@ -21,7 +21,7 @@ import (
 const (
 	defaultBaseURL      = "https://api.anthropic.com/v1/messages"
 	anthropicVersion    = "2023-06-01"
-	defaultOutputTokens = 4096
+	defaultOutputTokens = 16_000
 )
 
 type LLMConfig struct {
@@ -38,6 +38,12 @@ func NewLLM(cfg LLMConfig) (*LLM, error) {
 	}
 	if !llm.IsValidReasoningLevel(cfg.ReasoningLevel) {
 		return nil, fmt.Errorf("reasoning level %v is not valid", cfg.ReasoningLevel)
+	}
+	if cfg.ReasoningLevel == llm.ReasoningLevelExtraHigh && !supportsExtraHighEffort(cfg.Model.Name) {
+		return nil, fmt.Errorf("reasoning level %q is not supported for Anthropic model %q", cfg.ReasoningLevel, cfg.Model.Name)
+	}
+	if requiresThinking(cfg.Model.Name) && cfg.ReasoningLevel == llm.ReasoningLevelOff {
+		return nil, fmt.Errorf("reasoning cannot be disabled for Anthropic model %q", cfg.Model.Name)
 	}
 	if cfg.BaseURL == "" {
 		cfg.BaseURL = defaultBaseURL
@@ -79,6 +85,12 @@ func (s *LLM) ReasoningLevel() llm.ReasoningLevel {
 func (s *LLM) SetReasoningLevel(level llm.ReasoningLevel) error {
 	if !llm.IsValidReasoningLevel(level) {
 		return fmt.Errorf("reasoning level %v is not valid", level)
+	}
+	if level == llm.ReasoningLevelExtraHigh && !supportsExtraHighEffort(s.model.Name) {
+		return fmt.Errorf("reasoning level %q is not supported for Anthropic model %q", level, s.model.Name)
+	}
+	if requiresThinking(s.model.Name) && level == llm.ReasoningLevelOff {
+		return fmt.Errorf("reasoning cannot be disabled for Anthropic model %q", s.model.Name)
 	}
 	s.reasoningMu.Lock()
 	defer s.reasoningMu.Unlock()
@@ -237,21 +249,29 @@ func (s *LLM) buildPayload(req llm.PredictNextRequest) (*anthropicRequest, error
 		return nil, err
 	}
 
+	maxTokens := maxTokensForRequest(req.MaxTokens)
+
 	var thinking *anthropicThinkingConfig
 	var outputConfig *anthropicOutputConfig
-	if s.reasoningLevel != llm.ReasoningLevelOff {
-		thinking = &anthropicThinkingConfig{
-			Type:    "adaptive",
-			Display: "summarized",
+	reasoningLevel := s.ReasoningLevel()
+	if reasoningLevel != llm.ReasoningLevelOff {
+		if usesExtendedThinking(s.model.Name) {
+			if maxTokens <= 1024 {
+				return nil, errors.New("anthropic max_tokens must be greater than 1024 when extended thinking is enabled")
+			}
+			thinking = &anthropicThinkingConfig{
+				Type:         "enabled",
+				BudgetTokens: extendedThinkingBudget(maxTokens, reasoningLevel),
+			}
+		} else {
+			thinking = &anthropicThinkingConfig{
+				Type:    "adaptive",
+				Display: "summarized",
+			}
+			outputConfig = &anthropicOutputConfig{
+				Effort: string(reasoningLevel),
+			}
 		}
-		outputConfig = &anthropicOutputConfig{
-			Effort: string(s.reasoningLevel),
-		}
-	}
-
-	maxTokens := defaultOutputTokens
-	if req.MaxTokens > 0 {
-		maxTokens = req.MaxTokens
 	}
 
 	payload := &anthropicRequest{
@@ -275,15 +295,15 @@ func (s *LLM) buildStructuredPayload(req llm.PredictNextStructuredRequest) (*ant
 	if req.Schema == nil {
 		return nil, errors.New("structured output schema is required")
 	}
+	if requiresThinking(s.model.Name) {
+		return nil, fmt.Errorf("Anthropic structured output is unsupported for always-thinking model %q", s.model.Name)
+	}
 	messages, err := convertMessages(req.Messages)
 	if err != nil {
 		return nil, err
 	}
 
-	maxTokens := defaultOutputTokens
-	if req.MaxTokens > 0 {
-		maxTokens = req.MaxTokens
-	}
+	maxTokens := maxTokensForRequest(req.MaxTokens)
 
 	payload := &anthropicRequest{
 		Model:     s.model.Name,
@@ -318,6 +338,48 @@ func anthropicCompletionError(reason string) error {
 	default:
 		return fmt.Errorf("response stopped for unsupported reason %q", reason)
 	}
+}
+
+func maxTokensForRequest(requested int) int {
+	if requested > 0 {
+		return requested
+	}
+	return defaultOutputTokens
+}
+
+func usesExtendedThinking(model string) bool {
+	return strings.Contains(model, "haiku-4-5") ||
+		strings.Contains(model, "sonnet-4-5") ||
+		strings.Contains(model, "opus-4-5")
+}
+
+func requiresThinking(model string) bool {
+	return strings.Contains(model, "fable-5") || strings.Contains(model, "mythos-5")
+}
+
+func supportsExtraHighEffort(model string) bool {
+	if model == "" || model == "test" {
+		return true
+	}
+	return strings.Contains(model, "opus-4-7") ||
+		strings.Contains(model, "opus-4-8") ||
+		strings.Contains(model, "opus-5") ||
+		strings.Contains(model, "sonnet-5") ||
+		strings.Contains(model, "fable-5") ||
+		strings.Contains(model, "mythos-5")
+}
+
+func extendedThinkingBudget(maxTokens int, level llm.ReasoningLevel) int {
+	var budget int
+	switch level {
+	case llm.ReasoningLevelLow:
+		budget = 1024
+	case llm.ReasoningLevelMedium:
+		budget = maxTokens / 4
+	case llm.ReasoningLevelHigh:
+		budget = maxTokens / 2
+	}
+	return min(max(budget, 1024), maxTokens-1)
 }
 
 type anthropicRequest struct {
@@ -403,8 +465,9 @@ type anthropicToolChoice struct {
 }
 
 type anthropicThinkingConfig struct {
-	Type    string `json:"type"`
-	Display string `json:"display"`
+	Type         string `json:"type"`
+	Display      string `json:"display,omitempty"`
+	BudgetTokens int    `json:"budget_tokens,omitempty"`
 }
 
 type anthropicOutputConfig struct {

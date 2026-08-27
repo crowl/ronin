@@ -70,7 +70,11 @@ func TestSetupWithBaseURLRegistersModels(t *testing.T) {
 			t.Fatalf("registered model count = %d, want %d", got, want)
 		}
 		for _, model := range models {
-			client, err := llm.LoadModelClient(model, llm.ReasoningLevelOff)
+			level := llm.ReasoningLevelOff
+			if requiresThinking(model.Name) {
+				level = llm.ReasoningLevelLow
+			}
+			client, err := llm.LoadModelClient(model, level)
 			if err != nil {
 				t.Fatalf("LoadModelClient(%s) error = %v", model, err)
 			}
