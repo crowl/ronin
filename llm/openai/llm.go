@@ -420,6 +420,8 @@ func convertMessages(messages []llm.Message) ([]openAIInput, error) {
 					text.WriteString(b.Text)
 				case llm.ThinkingBlock:
 					continue
+				case llm.RedactedThinkingBlock:
+					continue
 				case llm.ToolCallBlock:
 					if text.Len() != 0 {
 						input = append(input, openAIMessageInput{

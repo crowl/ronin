@@ -34,6 +34,12 @@ type ThinkingBlock struct {
 	Signature string
 }
 
+// RedactedThinkingBlock contains opaque Anthropic thinking data that must be
+// returned unchanged when continuing a tool-use conversation.
+type RedactedThinkingBlock struct {
+	Data string
+}
+
 type ToolCallBlock struct {
 	ID               string
 	Name             string
@@ -43,9 +49,10 @@ type ToolCallBlock struct {
 
 type AssistantBlock interface{ assistantBlock() }
 
-func (TextBlock) assistantBlock()     {}
-func (ThinkingBlock) assistantBlock() {}
-func (ToolCallBlock) assistantBlock() {}
+func (TextBlock) assistantBlock()             {}
+func (ThinkingBlock) assistantBlock()         {}
+func (RedactedThinkingBlock) assistantBlock() {}
+func (ToolCallBlock) assistantBlock()         {}
 
 type Usage struct {
 	InputTokens  int

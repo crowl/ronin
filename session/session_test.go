@@ -8,6 +8,23 @@ import (
 	"github.com/crowl/ronin/session"
 )
 
+func TestRedactedThinkingCodec(t *testing.T) {
+	want := llm.AssistantMessage{
+		Blocks: []llm.AssistantBlock{llm.RedactedThinkingBlock{Data: "opaque"}},
+	}
+	eventType, payload, err := session.EncodeEvent(session.Event{Type: session.EventMessage, Message: want})
+	if err != nil {
+		t.Fatalf("EncodeEvent() error = %v", err)
+	}
+	gotEvent, err := session.DecodeEvent(eventType, payload)
+	if err != nil {
+		t.Fatalf("DecodeEvent() error = %v", err)
+	}
+	if !reflect.DeepEqual(gotEvent.Message, want) {
+		t.Fatalf("decoded message = %#v, want %#v", gotEvent.Message, want)
+	}
+}
+
 func TestReconstruct(t *testing.T) {
 	old := llm.UserMessage{Text: "old"}
 	compacted := llm.UserMessage{Text: "compacted"}

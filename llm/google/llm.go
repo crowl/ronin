@@ -420,6 +420,8 @@ func convertMessagesToSteps(messages []llm.Message) ([]geminiStep, error) {
 						}
 					}
 					steps = append(steps, step)
+				case llm.RedactedThinkingBlock:
+					continue
 				case llm.ToolCallBlock:
 					args := b.Arguments
 					if len(args) == 0 || strings.TrimSpace(string(args)) == "" {

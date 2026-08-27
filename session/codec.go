@@ -32,6 +32,7 @@ type blockJSON struct {
 	Type             string          `json:"type"`
 	Text             string          `json:"text,omitempty"`
 	Signature        string          `json:"signature,omitempty"`
+	Data             string          `json:"data,omitempty"`
 	ID               string          `json:"id,omitempty"`
 	Name             string          `json:"name,omitempty"`
 	Arguments        json.RawMessage `json:"arguments,omitempty"`
@@ -238,6 +239,8 @@ func encodeBlock(block llm.AssistantBlock) (blockJSON, error) {
 		return blockJSON{Type: "text", Text: b.Text}, nil
 	case llm.ThinkingBlock:
 		return blockJSON{Type: "thinking", Text: b.Text, Signature: b.Signature}, nil
+	case llm.RedactedThinkingBlock:
+		return blockJSON{Type: "redacted_thinking", Data: b.Data}, nil
 	case llm.ToolCallBlock:
 		return blockJSON{Type: "tool_call", ID: b.ID, Name: b.Name, Arguments: cloneRawMessage(b.Arguments), ThoughtSignature: b.ThoughtSignature}, nil
 	default:
@@ -251,6 +254,8 @@ func decodeBlock(encoded blockJSON) (llm.AssistantBlock, error) {
 		return llm.TextBlock{Text: encoded.Text}, nil
 	case "thinking":
 		return llm.ThinkingBlock{Text: encoded.Text, Signature: encoded.Signature}, nil
+	case "redacted_thinking":
+		return llm.RedactedThinkingBlock{Data: encoded.Data}, nil
 	case "tool_call":
 		return llm.ToolCallBlock{ID: encoded.ID, Name: encoded.Name, Arguments: cloneRawMessage(encoded.Arguments), ThoughtSignature: encoded.ThoughtSignature}, nil
 	default:

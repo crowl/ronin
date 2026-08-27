@@ -332,6 +332,11 @@ type anthropicThinkingBlock struct {
 	Signature string `json:"signature"`
 }
 
+type anthropicRedactedThinkingBlock struct {
+	Type string `json:"type"`
+	Data string `json:"data"`
+}
+
 type anthropicToolUseBlock struct {
 	Type  string          `json:"type"`
 	ID    string          `json:"id"`
@@ -346,16 +351,18 @@ type anthropicToolResultBlock struct {
 	IsError   bool   `json:"is_error,omitempty"`
 }
 
-func (anthropicTextBlock) anthropicMessageContentBlock()       {}
-func (anthropicThinkingBlock) anthropicMessageContentBlock()   {}
-func (anthropicToolUseBlock) anthropicMessageContentBlock()    {}
-func (anthropicToolResultBlock) anthropicMessageContentBlock() {}
+func (anthropicTextBlock) anthropicMessageContentBlock()             {}
+func (anthropicThinkingBlock) anthropicMessageContentBlock()         {}
+func (anthropicRedactedThinkingBlock) anthropicMessageContentBlock() {}
+func (anthropicToolUseBlock) anthropicMessageContentBlock()          {}
+func (anthropicToolResultBlock) anthropicMessageContentBlock()       {}
 
 type anthropicContentBlock struct {
 	Type      string          `json:"type"`
 	Text      string          `json:"text,omitempty"`
 	Thinking  string          `json:"thinking,omitempty"`
 	Signature string          `json:"signature,omitempty"`
+	Data      string          `json:"data,omitempty"`
 	ID        string          `json:"id,omitempty"`
 	Name      string          `json:"name,omitempty"`
 	Input     json.RawMessage `json:"input,omitempty"`
@@ -490,6 +497,8 @@ func convertAssistantBlocks(blocks []llm.AssistantBlock) ([]anthropicMessageCont
 		switch b := block.(type) {
 		case llm.ThinkingBlock:
 			content = append(content, anthropicThinkingBlock{Type: "thinking", Thinking: b.Text, Signature: b.Signature})
+		case llm.RedactedThinkingBlock:
+			content = append(content, anthropicRedactedThinkingBlock{Type: "redacted_thinking", Data: b.Data})
 		case llm.TextBlock:
 			content = append(content, anthropicTextBlock{Type: "text", Text: b.Text})
 		case llm.ToolCallBlock:
@@ -529,6 +538,7 @@ type anthropicPartialBlock struct {
 	kind      llm.BlockKind
 	id        string
 	name      string
+	data      string
 	text      strings.Builder
 	thinking  strings.Builder
 	signature strings.Builder
@@ -615,6 +625,9 @@ func (state *anthropicStreamState) startBlock(ctx context.Context, index int, bl
 		kind = llm.BlockKindThinking
 		partial.thinking.WriteString(block.Thinking)
 		partial.signature.WriteString(block.Signature)
+	case "redacted_thinking":
+		kind = llm.BlockKindRedactedThinking
+		partial.data = block.Data
 	case "tool_use":
 		kind = llm.BlockKindToolCall
 	default:
@@ -663,6 +676,8 @@ func (state *anthropicStreamState) stopBlock(ctx context.Context, index int, eve
 		return sendEvent(ctx, events, llm.BlockEnded{Index: index, Block: llm.TextBlock{Text: partial.text.String()}})
 	case llm.BlockKindThinking:
 		return sendEvent(ctx, events, llm.BlockEnded{Index: index, Block: llm.ThinkingBlock{Text: partial.thinking.String(), Signature: partial.signature.String()}})
+	case llm.BlockKindRedactedThinking:
+		return sendEvent(ctx, events, llm.BlockEnded{Index: index, Block: llm.RedactedThinkingBlock{Data: partial.data}})
 	case llm.BlockKindToolCall:
 		args := strings.TrimSpace(partial.input.String())
 		if args == "" {

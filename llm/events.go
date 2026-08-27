@@ -3,9 +3,10 @@ package llm
 type BlockKind string
 
 const (
-	BlockKindText     BlockKind = "text"
-	BlockKindThinking BlockKind = "thinking"
-	BlockKindToolCall BlockKind = "tool_call"
+	BlockKindText             BlockKind = "text"
+	BlockKindThinking         BlockKind = "thinking"
+	BlockKindRedactedThinking BlockKind = "redacted_thinking"
+	BlockKindToolCall         BlockKind = "tool_call"
 )
 
 type PredictionStarted struct{}
