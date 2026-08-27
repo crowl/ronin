@@ -45,7 +45,19 @@ func renderBoxLinesAt(block box, width int, toolsExpanded bool, now time.Time) [
 	for i := range lines {
 		lines[i] = conversationBoxPadding + lines[i]
 	}
+	if _, isUserMessage := block.(userMessageBox); isUserMessage {
+		return borderedLines(lines, width)
+	}
 	return lines
+}
+
+func borderedLines(lines []string, width int) []string {
+	border := mutedStyle.apply(strings.Repeat("─", max(width, 0)))
+	bordered := make([]string, 0, len(lines)+2)
+	bordered = append(bordered, border)
+	bordered = append(bordered, lines...)
+	bordered = append(bordered, border)
+	return bordered
 }
 
 func renderBoxContentLinesAt(block box, width int, toolsExpanded bool, now time.Time) []string {
@@ -155,7 +167,7 @@ func (p editorPresenter) Lines(width int) []string {
 	logicalLines := spliteditorPresenterLogicalLines(p.Text)
 	cursorLine, cursorColumn := editorCursorLineColumn(p.Text, cursor)
 
-	lines := make([]string, 0, len(logicalLines)+1)
+	lines := make([]string, 0, len(logicalLines)+3)
 	if p.Label != "" {
 		lines = append(lines, "% "+p.Label)
 	}
@@ -173,8 +185,7 @@ func (p editorPresenter) Lines(width int) []string {
 			firstVisualLine = false
 		}
 	}
-
-	return lines
+	return borderedLines(lines, width)
 }
 
 type editorSegment struct {

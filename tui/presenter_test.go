@@ -22,10 +22,10 @@ func TestMinimalConversationRendering(t *testing.T) {
 		t.Fatalf("markers missing from render:\n%s", got)
 	}
 	thinkingStyle := thinkingTextStyles().normal.start()
-	if !strings.Contains(lines[4], thinkingStyle) {
-		t.Fatalf("thinking text is not muted and italic: %q", lines[4])
+	if !strings.Contains(lines[6], thinkingStyle) {
+		t.Fatalf("thinking text is not muted and italic: %q", lines[6])
 	}
-	for _, index := range []int{0, 2, 6} {
+	for _, index := range []int{1, 4, 8} {
 		if strings.Contains(lines[index], mutedStyle.start()) {
 			t.Fatalf("message at line %d is unexpectedly muted: %q", index, lines[index])
 		}
@@ -86,12 +86,52 @@ func TestPendingSteeringPresenterUsesQueuedToolMarker(t *testing.T) {
 	}
 }
 
+func TestUserMessageUsesMutedBorders(t *testing.T) {
+	lines := renderBoxLines(userMessageBox{Text: "one two three"}, 10, false)
+	if len(lines) != 5 {
+		t.Fatalf("user message lines = %#v, want borders around three wrapped lines", plainLines(lines))
+	}
+	border := strings.Repeat("─", 10)
+	plain := plainLines(lines)
+	if plain[0] != border || plain[len(plain)-1] != border {
+		t.Fatalf("user message borders = %q, %q; want %q", plain[0], plain[len(plain)-1], border)
+	}
+	for _, index := range []int{0, len(lines) - 1} {
+		if !strings.Contains(lines[index], mutedStyle.start()) {
+			t.Fatalf("user message border is not muted: %q", lines[index])
+		}
+	}
+	if strings.Contains(lines[1], mutedStyle.start()) {
+		t.Fatalf("user message content is unexpectedly muted: %q", lines[1])
+	}
+}
+
+func TestEditorUsesMutedBorders(t *testing.T) {
+	lines := editorPresenter{Label: "workflow implement input"}.Lines(32)
+	if len(lines) != 4 {
+		t.Fatalf("editor lines = %#v, want borders around label and editor", plainLines(lines))
+	}
+	border := strings.Repeat("─", 32)
+	plain := plainLines(lines)
+	if plain[0] != border || plain[len(plain)-1] != border {
+		t.Fatalf("editor borders = %q, %q; want %q", plain[0], plain[len(plain)-1], border)
+	}
+	for _, index := range []int{0, len(lines) - 1} {
+		if !strings.Contains(lines[index], mutedStyle.start()) {
+			t.Fatalf("editor border is not muted: %q", lines[index])
+		}
+	}
+	if plain[1] != "% workflow implement input" {
+		t.Fatalf("editor label = %q", plain[1])
+	}
+}
+
 func TestEditorPresenterUsesPromptMarkerAndReverseCursor(t *testing.T) {
 	lines := editorPresenter{Text: []rune("abc"), Cursor: 1}.Lines(80)
-	if got := plainLines(lines)[0]; got != " > abc" {
+	if got := plainLines(lines)[1]; got != " > abc" {
 		t.Fatalf("editor line = %q", got)
 	}
-	if !strings.Contains(lines[0], cursorStyle.start()) {
-		t.Fatalf("editor cursor is not reversed: %q", lines[0])
+	if !strings.Contains(lines[1], cursorStyle.start()) {
+		t.Fatalf("editor cursor is not reversed: %q", lines[1])
 	}
 }
