@@ -609,7 +609,6 @@ func (m *appModel) lines(width int, conversation Conversation, now time.Time) ([
 		cwdStatus = fmt.Sprintf("Save Error: %s | %s", m.saveError, cwdStatus)
 	}
 
-	appendBlankLine()
 	lines = append(lines, statusBar{
 		CWD:            conversation.CWD(),
 		CWDStatus:      cwdStatus,
