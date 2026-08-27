@@ -321,12 +321,26 @@ func run() (exitCode int) {
 }
 
 func connectMCPServers(ctx context.Context, workingDir string, servers map[string]config.MCPServer) (*mcp.Client, error) {
+	if len(servers) == 0 {
+		return mcp.Connect(ctx, workingDir, nil)
+	}
+
+	dataDir, err := config.EnsureDataDir()
+	if err != nil {
+		return nil, fmt.Errorf("initialize MCP log directory: %w", err)
+	}
+	logDir := filepath.Join(dataDir, "logs", "mcp")
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
+		return nil, fmt.Errorf("create MCP log directory %q: %w", logDir, err)
+	}
+
 	configs := make(map[string]mcp.ServerConfig, len(servers))
 	for name, server := range servers {
 		configs[name] = mcp.ServerConfig{
 			Command: server.Command,
 			Args:    append([]string(nil), server.Args...),
 			Env:     cloneStrings(server.Env),
+			LogPath: filepath.Join(logDir, name+".log"),
 		}
 	}
 	return mcp.Connect(ctx, workingDir, configs)

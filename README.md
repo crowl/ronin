@@ -102,6 +102,8 @@ Ronin can start MCP servers that communicate over stdin/stdout and expose their 
 
 MCP tools are namespaced as `<server>__<tool>`, such as `gopls__go_search`. Commands run in Ronin's working directory and inherit its environment. Add an `env` object to override environment variables for a server. Ronin fails startup if a configured server cannot start, initialize, or list its tools.
 
+Server stderr is written to one log per server under `$XDG_DATA_HOME/ronin/logs/mcp`, or `$HOME/.local/share/ronin/logs/mcp` when `XDG_DATA_HOME` is unset. Each log is truncated when Ronin starts and capped at 10 MiB.
+
 If an MCP server returns `instructions` in its standard initialization response, Ronin includes them in the system prompt together with the server's namespaced tool names.
 
 Provider-compatible proxies can be configured with `OPENAI_BASE_URL`, `GEMINI_BASE_URL`, or `ANTHROPIC_BASE_URL`. Each value must be an API root rather than a complete operation endpoint.

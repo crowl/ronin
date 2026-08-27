@@ -2,8 +2,10 @@ package mcp
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -69,9 +71,68 @@ func TestConnectStdioServer(t *testing.T) {
 	}
 }
 
+func TestBoundedWriter(t *testing.T) {
+	var output bytes.Buffer
+	writer := &boundedWriter{writer: &output, remaining: 5}
+
+	for _, input := range []string{"abc", "def", "ignored"} {
+		written, err := writer.Write([]byte(input))
+		if err != nil {
+			t.Fatalf("Write(%q) error = %v", input, err)
+		}
+		if written != len(input) {
+			t.Fatalf("Write(%q) = %d, want %d", input, written, len(input))
+		}
+	}
+	if got := output.String(); got != "abcde" {
+		t.Fatalf("output = %q, want %q", got, "abcde")
+	}
+}
+
+func TestStartSessionWritesBoundedServerLog(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "test.log")
+	if err := os.WriteFile(logPath, []byte("old log contents"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	session, err := startSession(t.TempDir(), ServerConfig{
+		Command: os.Args[0],
+		Args:    []string{"-test.run=^TestMCPHelperProcess$"},
+		Env: map[string]string{
+			"RONIN_MCP_HELPER":        "1",
+			"RONIN_MCP_HELPER_STDERR": "server log",
+		},
+		LogPath: logPath,
+	})
+	if err != nil {
+		t.Fatalf("startSession() error = %v", err)
+	}
+	if err := session.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	log, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if got := string(log); got != "server log" {
+		t.Fatalf("log = %q, want %q", got, "server log")
+	}
+	info, err := os.Stat(logPath)
+	if err != nil {
+		t.Fatalf("Stat() error = %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("log permissions = %o, want 600", info.Mode().Perm())
+	}
+}
+
 func TestMCPHelperProcess(t *testing.T) {
 	if os.Getenv("RONIN_MCP_HELPER") != "1" {
 		return
+	}
+
+	if stderr := os.Getenv("RONIN_MCP_HELPER_STDERR"); stderr != "" {
+		_, _ = os.Stderr.WriteString(stderr)
 	}
 
 	scanner := bufio.NewScanner(os.Stdin)
@@ -124,6 +185,9 @@ func TestMCPHelperProcess(t *testing.T) {
 		if err := encoder.Encode(response); err != nil {
 			os.Exit(2)
 		}
+	}
+	if scanner.Err() != nil {
+		os.Exit(2)
 	}
 }
 

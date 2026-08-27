@@ -27,6 +27,7 @@ const (
 	initializationTimeout = 15 * time.Second
 	shutdownTimeout       = 5 * time.Second
 	maxMessageBytes       = 16 << 20
+	maxServerLogBytes     = 10 << 20
 	protocolVersion       = "2025-06-18"
 )
 
@@ -36,6 +37,7 @@ type ServerConfig struct {
 	Command string
 	Args    []string
 	Env     map[string]string
+	LogPath string
 }
 
 type Client struct {
@@ -170,9 +172,10 @@ func environment(overrides map[string]string) []string {
 }
 
 type session struct {
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	stdout io.ReadCloser
+	cmd       *exec.Cmd
+	stdin     io.WriteCloser
+	stdout    io.ReadCloser
+	serverLog io.Closer
 
 	writeMu sync.Mutex
 	mu      sync.Mutex
@@ -216,28 +219,87 @@ func startSession(cwd string, cfg ServerConfig) (*session, error) {
 	cmd := exec.Command(cfg.Command, cfg.Args...)
 	cmd.Dir = cwd
 	cmd.Env = environment(cfg.Env)
-	cmd.Stderr = os.Stderr
+
+	serverLog, err := openServerLog(cfg.LogPath)
+	if err != nil {
+		return nil, err
+	}
+	if serverLog != nil {
+		cmd.Stderr = &boundedWriter{writer: serverLog, remaining: maxServerLogBytes}
+	} else {
+		cmd.Stderr = io.Discard
+	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		_ = closeServerLog(serverLog)
 		return nil, fmt.Errorf("open stdout: %w", err)
 	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
+		_ = closeServerLog(serverLog)
 		return nil, fmt.Errorf("open stdin: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
+		_ = closeServerLog(serverLog)
 		return nil, fmt.Errorf("start command: %w", err)
 	}
 
 	s := &session{
-		cmd:     cmd,
-		stdin:   stdin,
-		stdout:  stdout,
-		pending: make(map[int64]chan rpcResponse),
+		cmd:       cmd,
+		stdin:     stdin,
+		stdout:    stdout,
+		serverLog: serverLog,
+		pending:   make(map[int64]chan rpcResponse),
 	}
 	go s.readLoop()
 	return s, nil
+}
+
+type boundedWriter struct {
+	writer    io.Writer
+	remaining int64
+}
+
+func (w *boundedWriter) Write(data []byte) (int, error) {
+	originalLength := len(data)
+	if w.remaining <= 0 {
+		return originalLength, nil
+	}
+	if int64(len(data)) > w.remaining {
+		data = data[:w.remaining]
+	}
+	written, err := w.writer.Write(data)
+	w.remaining -= int64(written)
+	if err != nil {
+		return written, err
+	}
+	if written != len(data) {
+		return written, io.ErrShortWrite
+	}
+	return originalLength, nil
+}
+
+func openServerLog(path string) (*os.File, error) {
+	if path == "" {
+		return nil, nil
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("open server log %q: %w", path, err)
+	}
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("set server log permissions %q: %w", path, err)
+	}
+	return file, nil
+}
+
+func closeServerLog(log io.Closer) error {
+	if log == nil {
+		return nil
+	}
+	return log.Close()
 }
 
 func (s *session) initialize(ctx context.Context) (string, error) {
@@ -486,6 +548,9 @@ func (s *session) Close() error {
 			}
 		}
 		_ = s.stdout.Close()
+		if err := closeServerLog(s.serverLog); err != nil {
+			s.closeErr = errors.Join(s.closeErr, fmt.Errorf("close MCP server log: %w", err))
+		}
 	})
 	return s.closeErr
 }
