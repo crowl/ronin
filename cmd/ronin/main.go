@@ -18,6 +18,7 @@ import (
 	"github.com/crowl/ronin/llm/anthropic"
 	"github.com/crowl/ronin/llm/google"
 	"github.com/crowl/ronin/llm/openai"
+	"github.com/crowl/ronin/mcp"
 	"github.com/crowl/ronin/runtime"
 	"github.com/crowl/ronin/session"
 	"github.com/crowl/ronin/session/sqlite"
@@ -80,7 +81,9 @@ func run() (exitCode int) {
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
 		defer cancel()
 
-		if err := runWorkflow(ctx, workflowCmd.Script, workingDir, workflowCmd.Input, newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag), os.Stdout); err != nil {
+		workflowAgent, closeWorkflowAgent := newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag, nil)
+		defer func() { _ = closeWorkflowAgent() }()
+		if err := runWorkflow(ctx, workflowCmd.Script, workingDir, workflowCmd.Input, workflowAgent, os.Stdout); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
 			return 1
 		}
@@ -172,6 +175,20 @@ func run() (exitCode int) {
 		}
 	}
 
+	mcpClient, err := connectMCPServers(context.Background(), workingDir, settings.MCPServers)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "failed to initialize MCP servers: %v\n", err)
+		return 1
+	}
+	defer func() {
+		if err := mcpClient.Close(); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "failed to close MCP servers: %v\n", err)
+			if exitCode == 0 {
+				exitCode = 1
+			}
+		}
+	}()
+
 	readCache := fsutil.NewReadCache()
 	mutationQueue := fsutil.NewMutationQueue()
 
@@ -181,16 +198,18 @@ func run() (exitCode int) {
 		writefile.New(workingDir, mutationQueue),
 		shell.New(workingDir),
 	}
+	tools = append(tools, mcpClient.Tools()...)
 
-	workflowAgent := newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag)
+	workflowAgent, _ := newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag, mcpClient)
 	if len(workflowCatalog.Workflows()) > 0 {
 		tools = append(tools, workflow.NewTool(workflowCatalog, workingDir, workflowAgent))
 	}
 
 	systemPrompt, err := runtime.BuildSystemPrompt(runtime.SystemPromptInput{
-		CWD:          workingDir,
-		Skills:       skills,
-		ContextFiles: contextFiles,
+		CWD:             workingDir,
+		Skills:          skills,
+		ContextFiles:    contextFiles,
+		MCPInstructions: mcpClient.Instructions(),
 	})
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "failed to build system prompt: %v\n", err)
@@ -300,6 +319,29 @@ func run() (exitCode int) {
 	return 0
 }
 
+func connectMCPServers(ctx context.Context, workingDir string, servers map[string]config.MCPServer) (*mcp.Client, error) {
+	configs := make(map[string]mcp.ServerConfig, len(servers))
+	for name, server := range servers {
+		configs[name] = mcp.ServerConfig{
+			Command: server.Command,
+			Args:    append([]string(nil), server.Args...),
+			Env:     cloneStrings(server.Env),
+		}
+	}
+	return mcp.Connect(ctx, workingDir, configs)
+}
+
+func cloneStrings(values map[string]string) map[string]string {
+	if values == nil {
+		return nil
+	}
+	clone := make(map[string]string, len(values))
+	for key, value := range values {
+		clone[key] = value
+	}
+	return clone
+}
+
 func setupProviders() error {
 	if baseURL, ok := os.LookupEnv("OPENAI_BASE_URL"); ok {
 		apiKey := os.Getenv("OPENAI_API_KEY")
@@ -343,7 +385,7 @@ func setupProviders() error {
 	return nil
 }
 
-func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string) workflow.AgentFunc {
+func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string, sharedMCP *mcp.Client) (workflow.AgentFunc, func() error) {
 	var initOnce sync.Once
 	var initErr error
 	var settings config.Settings
@@ -354,6 +396,7 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string) work
 	var compactor runtime.Compactor
 	var summarizer runtime.ToolOutputSummarizer
 	var summarizationPolicy runtime.ToolOutputSummarizationPolicy
+	var mcpClient *mcp.Client
 
 	init := func() {
 		if len(llm.Models()) == 0 {
@@ -388,6 +431,16 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string) work
 			return
 		}
 
+		if sharedMCP != nil {
+			mcpClient = sharedMCP
+		} else {
+			mcpClient, initErr = connectMCPServers(context.Background(), workingDir, settings.MCPServers)
+			if initErr != nil {
+				initErr = fmt.Errorf("failed to initialize MCP servers: %w", initErr)
+				return
+			}
+		}
+
 		readCache := fsutil.NewReadCache()
 		mutationQueue := fsutil.NewMutationQueue()
 		tools = []runtime.Tool{
@@ -396,8 +449,12 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string) work
 			writefile.New(workingDir, mutationQueue),
 			shell.New(workingDir),
 		}
+		tools = append(tools, mcpClient.Tools()...)
 
-		systemPrompt, err = runtime.BuildSystemPrompt(runtime.SystemPromptInput{CWD: workingDir})
+		systemPrompt, err = runtime.BuildSystemPrompt(runtime.SystemPromptInput{
+			CWD:             workingDir,
+			MCPInstructions: mcpClient.Instructions(),
+		})
 		if err != nil {
 			initErr = fmt.Errorf("failed to build system prompt: %w", err)
 			return
@@ -419,7 +476,7 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string) work
 		}
 	}
 
-	return func(ctx context.Context, req workflow.AgentRequest) (workflow.AgentResult, error) {
+	agent := func(ctx context.Context, req workflow.AgentRequest) (workflow.AgentResult, error) {
 		initOnce.Do(init)
 		if initErr != nil {
 			return workflow.AgentResult{}, initErr
@@ -469,6 +526,13 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string) work
 		}
 		return workflow.AgentResult{Text: text}, nil
 	}
+	closeAgent := func() error {
+		if sharedMCP == nil && mcpClient != nil {
+			return mcpClient.Close()
+		}
+		return nil
+	}
+	return agent, closeAgent
 }
 
 type workflowCommand struct {

@@ -1,6 +1,8 @@
 package jsonschema
 
 import (
+	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 )
@@ -13,6 +15,30 @@ type Schema struct {
 	Items                *Schema            `json:"items,omitempty"`
 	Enum                 []any              `json:"enum,omitempty"`
 	AdditionalProperties any                `json:"additionalProperties,omitempty"`
+
+	raw json.RawMessage
+}
+
+func FromRaw(data []byte) (*Schema, error) {
+	if !json.Valid(data) {
+		return nil, fmt.Errorf("invalid JSON schema")
+	}
+	var value any
+	if err := json.Unmarshal(data, &value); err != nil {
+		return nil, fmt.Errorf("decode JSON schema: %w", err)
+	}
+	if _, ok := value.(map[string]any); !ok {
+		return nil, fmt.Errorf("JSON schema must be an object")
+	}
+	return &Schema{raw: append(json.RawMessage(nil), data...)}, nil
+}
+
+func (s Schema) MarshalJSON() ([]byte, error) {
+	if len(s.raw) > 0 {
+		return append([]byte(nil), s.raw...), nil
+	}
+	type schema Schema
+	return json.Marshal(schema(s))
 }
 
 func FromType[T any]() *Schema {

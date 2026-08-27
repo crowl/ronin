@@ -16,9 +16,16 @@ var (
 )
 
 type SystemPromptInput struct {
-	CWD          string
-	ContextFiles []ContextFile
-	Skills       []Skill
+	CWD             string
+	ContextFiles    []ContextFile
+	Skills          []Skill
+	MCPInstructions []MCPInstruction
+}
+
+type MCPInstruction struct {
+	Server  string
+	Content string
+	Tools   []string
 }
 
 func BuildSystemPrompt(input SystemPromptInput) (string, error) {

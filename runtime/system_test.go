@@ -7,27 +7,41 @@ import (
 	"github.com/crowl/ronin/runtime"
 )
 
-func TestBuildSystemPromptGuidesGoExploration(t *testing.T) {
+func TestBuildSystemPromptIsLanguageNeutral(t *testing.T) {
 	prompt, err := runtime.BuildSystemPrompt(runtime.SystemPromptInput{CWD: "/work"})
 	if err != nil {
 		t.Fatalf("BuildSystemPrompt() error = %v", err)
 	}
+	if !strings.Contains(prompt, "Current working directory: /work") {
+		t.Fatalf("system prompt does not contain working directory:\n%s", prompt)
+	}
+	for _, unexpected := range []string{"Go Exploration", "gopls", "outline_package", "find_symbol"} {
+		if strings.Contains(prompt, unexpected) {
+			t.Errorf("system prompt contains language-specific guidance %q:\n%s", unexpected, prompt)
+		}
+	}
+}
 
+func TestBuildSystemPromptIncludesGenericMCPInstructions(t *testing.T) {
+	prompt, err := runtime.BuildSystemPrompt(runtime.SystemPromptInput{
+		CWD: "/work",
+		MCPInstructions: []runtime.MCPInstruction{
+			{Server: "knowledge", Content: "Search before answering.", Tools: []string{"search", "fetch"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildSystemPrompt() error = %v", err)
+	}
 	for _, expected := range []string{
-		"## Go Exploration",
-		"Use `outline_package` first when a package is unfamiliar",
-		"Use `find_symbol` when you know",
-		"returned `file`, `start_line`, and `end_line` with `read_file`",
-		"text search for references, interface implementations, callers, callees, literals, textual patterns, generated files",
-		"Prefer targeted range reads over whole-file reads",
-		"fall back to text search",
+		"# MCP Server Instructions",
+		"MCP tools are namespaced as `<server>__<tool>`.",
+		"## knowledge",
+		"`knowledge__search`",
+		"`knowledge__fetch`",
+		"Search before answering.",
 	} {
 		if !strings.Contains(prompt, expected) {
 			t.Errorf("system prompt does not contain %q:\n%s", expected, prompt)
 		}
-	}
-
-	if strings.Contains(prompt, "go_navigation") {
-		t.Errorf("system prompt contains removed go_navigation tool:\n%s", prompt)
 	}
 }

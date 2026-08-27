@@ -245,6 +245,46 @@ func TestLoad(t *testing.T) {
 	})
 }
 
+func TestMCPConfiguration(t *testing.T) {
+	t.Run("parses stdio server", func(t *testing.T) {
+		base := t.TempDir()
+		t.Setenv("XDG_CONFIG_HOME", base)
+		writeConfig(t, base, `{
+			"model": {"provider": "openai", "name": "gpt-5.5"},
+			"reasoning_level": "medium",
+			"max_turns": 512,
+			"mcp_servers": {
+				"gopls": {"command": "gopls", "args": ["mcp"], "env": {"GOWORK": "off"}}
+			}
+		}`)
+
+		settings, err := config.Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		server := settings.MCPServers["gopls"]
+		if server.Command != "gopls" || !reflect.DeepEqual(server.Args, []string{"mcp"}) || server.Env["GOWORK"] != "off" {
+			t.Fatalf("MCP server = %#v", server)
+		}
+	})
+
+	t.Run("rejects empty command", func(t *testing.T) {
+		base := t.TempDir()
+		t.Setenv("XDG_CONFIG_HOME", base)
+		writeConfig(t, base, `{
+			"model": {"provider": "openai", "name": "gpt-5.5"},
+			"reasoning_level": "medium",
+			"max_turns": 512,
+			"mcp_servers": {"gopls": {"command": ""}}
+		}`)
+
+		_, err := config.Load()
+		if err == nil || !strings.Contains(err.Error(), "mcp_servers.gopls.command") {
+			t.Fatalf("Load() error = %v", err)
+		}
+	})
+}
+
 func defaultSettings() config.Settings {
 	return config.Settings{
 		Model:          config.Model{Provider: "openai", Name: "gpt-5.5"},

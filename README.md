@@ -83,7 +83,26 @@ To back up sessions, copy `ronin.db` while Ronin is not running. To reset all pe
 
 ## Configuration
 
-Ronin creates `config.json` in `$XDG_CONFIG_HOME/ronin`, or in `$HOME/.config/ronin` when `XDG_CONFIG_HOME` is unset. It contains the default model, reasoning level, maximum turns, and tool-output summarization settings.
+Ronin creates `config.json` in `$XDG_CONFIG_HOME/ronin`, or in `$HOME/.config/ronin` when `XDG_CONFIG_HOME` is unset. It contains the default model, reasoning level, maximum turns, tool-output summarization settings, and optional MCP servers.
+
+### MCP servers
+
+Ronin can start MCP servers that communicate over stdin/stdout and expose their tools to the model. Configure servers by name in `config.json`:
+
+```json
+{
+  "mcp_servers": {
+    "gopls": {
+      "command": "gopls",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+MCP tools are namespaced as `<server>__<tool>`, such as `gopls__go_search`. Commands run in Ronin's working directory and inherit its environment. Add an `env` object to override environment variables for a server. Ronin fails startup if a configured server cannot start, initialize, or list its tools.
+
+If an MCP server returns `instructions` in its standard initialization response, Ronin includes them in the system prompt together with the server's namespaced tool names.
 
 Provider-compatible proxies can be configured with `OPENAI_BASE_URL`, `GEMINI_BASE_URL`, or `ANTHROPIC_BASE_URL`. Each value must be an API root rather than a complete operation endpoint.
 

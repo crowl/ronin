@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const (
@@ -35,11 +36,18 @@ type ToolOutputSummarization struct {
 	ExcludedTools    []string `json:"excluded_tools"`
 }
 
+type MCPServer struct {
+	Command string            `json:"command"`
+	Args    []string          `json:"args,omitempty"`
+	Env     map[string]string `json:"env,omitempty"`
+}
+
 type Settings struct {
 	Model                   Model                   `json:"model"`
 	ReasoningLevel          string                  `json:"reasoning_level"`
 	MaxTurns                int                     `json:"max_turns"`
 	ToolOutputSummarization ToolOutputSummarization `json:"tool_output_summarization"`
+	MCPServers              map[string]MCPServer    `json:"mcp_servers,omitempty"`
 }
 
 // Load resolves the config directory, writes a default config.json on first
@@ -215,6 +223,19 @@ func validate(settings Settings) error {
 	}
 	if settings.ToolOutputSummarization.MaxSummaryTokens < 0 {
 		return fmt.Errorf("tool_output_summarization.max_summary_tokens must be non-negative, got %d", settings.ToolOutputSummarization.MaxSummaryTokens)
+	}
+	for name, server := range settings.MCPServers {
+		if name == "" {
+			return errors.New("mcp_servers names must not be empty")
+		}
+		if server.Command == "" {
+			return fmt.Errorf("mcp_servers.%s.command must not be empty", name)
+		}
+		for key := range server.Env {
+			if key == "" || strings.ContainsRune(key, '=') {
+				return fmt.Errorf("mcp_servers.%s.env contains invalid name %q", name, key)
+			}
+		}
 	}
 	return nil
 }

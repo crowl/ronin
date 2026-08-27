@@ -8,6 +8,29 @@ import (
 	"github.com/crowl/ronin/jsonschema"
 )
 
+func TestFromRawPreservesSchema(t *testing.T) {
+	input := []byte(`{"type":"object","properties":{"value":{"oneOf":[{"type":"string"},{"type":"number"}]}},"required":["value"],"additionalProperties":false}`)
+	schema, err := jsonschema.FromRaw(input)
+	if err != nil {
+		t.Fatalf("FromRaw() error = %v", err)
+	}
+	got, err := json.Marshal(schema)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if string(got) != string(input) {
+		t.Fatalf("schema = %s, want %s", got, input)
+	}
+}
+
+func TestFromRawRejectsInvalidSchema(t *testing.T) {
+	for _, input := range [][]byte{[]byte(`not json`), []byte(`[]`)} {
+		if _, err := jsonschema.FromRaw(input); err == nil {
+			t.Fatalf("FromRaw(%q) error = nil", input)
+		}
+	}
+}
+
 func TestFromType(t *testing.T) {
 	t.Run("struct fields include required optional skipped and unexported", func(t *testing.T) {
 		type args struct {
