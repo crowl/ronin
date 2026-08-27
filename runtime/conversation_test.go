@@ -200,6 +200,67 @@ func TestPromptLifecycle(t *testing.T) {
 		}
 	})
 
+	t.Run("persists prediction stop reason", func(t *testing.T) {
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{
+			ModelClient: &fakeModelClient{events: []llm.PredictionEvent{
+				llm.BlockEnded{Block: llm.TextBlock{Text: "done"}},
+				llm.PredictionFinished{StopReason: llm.StopReasonEndTurn},
+			}},
+		})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+
+		events, errs := agt.Prompt(t.Context(), "hello")
+		_ = collectEvents(events)
+		if err := <-errs; err != nil {
+			t.Fatalf("Prompt() error = %v", err)
+		}
+		message := agt.Messages()[1].(llm.AssistantMessage)
+		if message.StopReason != llm.StopReasonEndTurn {
+			t.Fatalf("StopReason = %q, want end_turn", message.StopReason)
+		}
+	})
+
+	t.Run("returns truncation error after persisting partial response", func(t *testing.T) {
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{
+			ModelClient: &fakeModelClient{events: []llm.PredictionEvent{
+				llm.BlockEnded{Block: llm.TextBlock{Text: "partial"}},
+				llm.PredictionFinished{StopReason: llm.StopReasonMaxTokens},
+			}},
+		})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+
+		events, errs := agt.Prompt(t.Context(), "hello")
+		_ = collectEvents(events)
+		if err := <-errs; err == nil || !strings.Contains(err.Error(), "truncated") {
+			t.Fatalf("Prompt() error = %v, want truncation error", err)
+		}
+		message := agt.Messages()[1].(llm.AssistantMessage)
+		if message.StopReason != llm.StopReasonMaxTokens || message.Text() != "partial" {
+			t.Fatalf("message = %#v, want persisted partial max_tokens response", message)
+		}
+	})
+
+	t.Run("rejects a prediction without completion event", func(t *testing.T) {
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{
+			ModelClient: &fakeModelClient{events: []llm.PredictionEvent{
+				llm.TextDelta{Text: "partial"},
+			}},
+		})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+
+		events, errs := agt.Prompt(t.Context(), "hello")
+		_ = collectEvents(events)
+		if err := <-errs; err == nil || !strings.Contains(err.Error(), "without a completion event") {
+			t.Fatalf("Prompt() error = %v, want missing completion error", err)
+		}
+	})
+
 	t.Run("configured clock controls timestamps", func(t *testing.T) {
 		want := time.Unix(1700000000, 123000000)
 		agt, err := runtime.NewConversation(runtime.ConversationConfig{

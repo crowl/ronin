@@ -466,6 +466,8 @@ func (c *Conversation) run(ctx context.Context, prompt string, events chan<- Eve
 		var blocks []llm.AssistantBlock
 		var toolCalls []llm.ToolCallBlock
 		var usage llm.Usage
+		var stopReason llm.StopReason
+		predictionFinished := false
 		request := llm.PredictNextRequest{SystemPrompt: c.systemPrompt, Tools: append([]llm.Tool(nil), c.toolDefs...), Messages: append([]llm.Message(nil), c.messages...)}
 		predictionEventsCh, predictionErrCh := c.modelClient.PredictNext(ctx, request)
 		for event := range predictionEventsCh {
@@ -495,12 +497,31 @@ func (c *Conversation) run(ctx context.Context, prompt string, events chan<- Eve
 				}
 			case llm.PredictionFinished:
 				c.contextUsage, usage = typed.Usage, typed.Usage
+				stopReason = typed.StopReason
+				predictionFinished = true
 			}
 		}
 		if err := <-predictionErrCh; err != nil {
 			return finish(fmt.Errorf("llm prediction error: %w", err))
 		}
-		message := llm.AssistantMessage{Timestamp: c.now(), Blocks: blocks, Usage: usage}
+		if err := ctx.Err(); err != nil {
+			return finish(err)
+		}
+		if !predictionFinished {
+			return finish(errors.New("llm prediction ended without a completion event"))
+		}
+		message := llm.AssistantMessage{Timestamp: c.now(), Blocks: blocks, StopReason: stopReason, Usage: usage}
+		if err := completionError(stopReason); err != nil {
+			if appendErr := c.appendMessage(ctx, message); appendErr != nil {
+				return finish(c.reportSaveFailure(ctx, events, err, appendErr))
+			}
+			select {
+			case <-ctx.Done():
+				return finish(ctx.Err())
+			case events <- AssistantMessageEnded{Message: message}:
+			}
+			return finish(err)
+		}
 		if err := c.appendMessage(ctx, message); err != nil {
 			return finish(c.reportSaveFailure(ctx, events, nil, err))
 		}
@@ -534,6 +555,19 @@ func (c *Conversation) run(ctx context.Context, prompt string, events chan<- Eve
 		return finish(c.reportSaveFailure(ctx, events, err, appendErr))
 	}
 	return finish(err)
+}
+
+func completionError(reason llm.StopReason) error {
+	switch reason {
+	case llm.StopReasonMaxTokens, llm.StopReasonModelContextWindowExceeded:
+		return fmt.Errorf("llm response was truncated (%s)", reason)
+	case llm.StopReasonRefusal:
+		return errors.New("llm response was refused")
+	case llm.StopReasonPauseTurn:
+		return errors.New("llm response paused before completion")
+	default:
+		return nil
+	}
 }
 
 func (c *Conversation) executeToolCall(ctx context.Context, events chan<- Event, toolCall llm.ToolCallBlock) error {

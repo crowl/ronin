@@ -141,6 +141,9 @@ func (s *LLM) PredictNextStructured(ctx context.Context, req llm.PredictNextStru
 	if err := json.Unmarshal(data, &structuredResp); err != nil {
 		return nil, fmt.Errorf("parse anthropic structured response: %w", err)
 	}
+	if err := anthropicCompletionError(structuredResp.StopReason); err != nil {
+		return nil, fmt.Errorf("anthropic structured response: %w", err)
+	}
 	for _, block := range structuredResp.Content {
 		if block.Type == "text" {
 			text := strings.TrimSpace(block.Text)
@@ -202,6 +205,9 @@ func (s *LLM) stream(ctx context.Context, req llm.PredictNextRequest, events cha
 				return err
 			}
 			dataLines = nil
+			if state.finished {
+				break
+			}
 			continue
 		}
 		if strings.HasPrefix(line, ":") || strings.HasPrefix(line, "event:") {
@@ -220,10 +226,7 @@ func (s *LLM) stream(ctx context.Context, req llm.PredictNextRequest, events cha
 		return fmt.Errorf("read anthropic stream: %w", err)
 	}
 	if !state.finished {
-		return sendEvent(ctx, events, llm.PredictionFinished{
-			Usage:      state.usage,
-			StopReason: state.stopReason(),
-		})
+		return errors.New("anthropic stream ended before message_stop")
 	}
 	return nil
 }
@@ -298,6 +301,23 @@ func (s *LLM) buildStructuredPayload(req llm.PredictNextStructuredRequest) (*ant
 		payload.System = req.SystemPrompt
 	}
 	return payload, nil
+}
+
+func anthropicCompletionError(reason string) error {
+	switch reason {
+	case "", "end_turn", "stop_sequence":
+		return nil
+	case "max_tokens", "model_context_window_exceeded":
+		return fmt.Errorf("response was truncated (%s)", reason)
+	case "refusal":
+		return errors.New("response was refused")
+	case "pause_turn":
+		return errors.New("response paused before completion")
+	case "tool_use":
+		return errors.New("response requested tool use")
+	default:
+		return fmt.Errorf("response stopped for unsupported reason %q", reason)
+	}
 }
 
 type anthropicRequest struct {
@@ -398,8 +418,9 @@ type anthropicOutputConfigFormat struct {
 }
 
 type anthropicResponse struct {
-	Content []anthropicContentBlock `json:"content"`
-	Usage   anthropicUsage          `json:"usage"`
+	Content    []anthropicContentBlock `json:"content"`
+	Usage      anthropicUsage          `json:"usage"`
+	StopReason string                  `json:"stop_reason"`
 }
 
 type anthropicStreamEvent struct {
@@ -527,11 +548,11 @@ func convertTools(tools []llm.Tool) []anthropicTool {
 }
 
 type anthropicStreamState struct {
-	blocks      map[int]*anthropicPartialBlock
-	usage       llm.Usage
-	toolEmitted bool
-	started     bool
-	finished    bool
+	blocks     map[int]*anthropicPartialBlock
+	usage      llm.Usage
+	stopReason string
+	started    bool
+	finished   bool
 }
 
 type anthropicPartialBlock struct {
@@ -549,11 +570,25 @@ func newAnthropicStreamState() *anthropicStreamState {
 	return &anthropicStreamState{blocks: map[int]*anthropicPartialBlock{}}
 }
 
-func (state *anthropicStreamState) stopReason() llm.StopReason {
-	if state.toolEmitted {
+func (state *anthropicStreamState) stopReasonValue() llm.StopReason {
+	switch state.stopReason {
+	case "end_turn":
+		return llm.StopReasonEndTurn
+	case "max_tokens":
+		return llm.StopReasonMaxTokens
+	case "stop_sequence":
+		return llm.StopReasonStopSequence
+	case "tool_use":
 		return llm.StopReasonToolUse
+	case "pause_turn":
+		return llm.StopReasonPauseTurn
+	case "refusal":
+		return llm.StopReasonRefusal
+	case "model_context_window_exceeded":
+		return llm.StopReasonModelContextWindowExceeded
+	default:
+		return llm.StopReason(state.stopReason)
 	}
-	return llm.StopReasonFinished
 }
 
 func handleData(ctx context.Context, data string, state *anthropicStreamState, events chan<- llm.PredictionEvent) error {
@@ -583,22 +618,29 @@ func handleData(ctx context.Context, data string, state *anthropicStreamState, e
 	case "content_block_stop":
 		return state.stopBlock(ctx, event.Index, events)
 	case "message_delta":
-		if event.Delta != nil && event.Delta.StopReason == "tool_use" {
-			state.toolEmitted = true
+		if event.Delta == nil {
+			return errors.New("anthropic message_delta missing delta")
 		}
+		state.stopReason = event.Delta.StopReason
 		if event.Usage != nil {
 			state.usage.OutputTokens = event.Usage.OutputTokens
 			state.usage.TotalTokens = state.usage.InputTokens + state.usage.OutputTokens
 		}
 		return nil
 	case "message_stop":
+		if state.stopReason == "" {
+			return errors.New("anthropic message_stop received without stop_reason")
+		}
+		if len(state.blocks) != 0 {
+			return errors.New("anthropic message_stop received with an open content block")
+		}
 		if !state.started {
 			if err := sendEvent(ctx, events, llm.PredictionStarted{}); err != nil {
 				return err
 			}
 		}
 		state.finished = true
-		return sendEvent(ctx, events, llm.PredictionFinished{Usage: state.usage, StopReason: state.stopReason()})
+		return sendEvent(ctx, events, llm.PredictionFinished{Usage: state.usage, StopReason: state.stopReasonValue()})
 	case "ping":
 		return nil
 	case "error":
@@ -686,7 +728,7 @@ func (state *anthropicStreamState) stopBlock(ctx context.Context, index int, eve
 		if !json.Valid([]byte(args)) {
 			return fmt.Errorf("invalid anthropic tool call arguments for %q", partial.name)
 		}
-		state.toolEmitted = true
+		state.stopReason = "tool_use"
 		return sendEvent(ctx, events, llm.BlockEnded{Index: index, Block: llm.ToolCallBlock{ID: partial.id, Name: partial.name, Arguments: json.RawMessage(args)}})
 	default:
 		return fmt.Errorf("unsupported anthropic block kind %q", partial.kind)

@@ -14,8 +14,14 @@ type UserMessage struct {
 type StopReason string
 
 const (
-	StopReasonToolUse  StopReason = "tool_use"
-	StopReasonFinished StopReason = "finished"
+	StopReasonFinished                   StopReason = "finished"
+	StopReasonEndTurn                    StopReason = "end_turn"
+	StopReasonMaxTokens                  StopReason = "max_tokens"
+	StopReasonStopSequence               StopReason = "stop_sequence"
+	StopReasonToolUse                    StopReason = "tool_use"
+	StopReasonPauseTurn                  StopReason = "pause_turn"
+	StopReasonRefusal                    StopReason = "refusal"
+	StopReasonModelContextWindowExceeded StopReason = "model_context_window_exceeded"
 )
 
 type AssistantMessage struct {

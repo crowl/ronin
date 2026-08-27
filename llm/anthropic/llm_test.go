@@ -45,6 +45,7 @@ func TestPredictNext(t *testing.T) {
 			}
 			w.Header().Set("Content-Type", "text/event-stream")
 			_, _ = w.Write([]byte("data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1}}}\n\n"))
+			_, _ = w.Write([]byte("data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\n"))
 			_, _ = w.Write([]byte("data: {\"type\":\"message_stop\"}\n\n"))
 		}))
 		defer server.Close()
@@ -124,6 +125,7 @@ func TestPredictNext(t *testing.T) {
 			}
 			w.Header().Set("Content-Type", "text/event-stream")
 			_, _ = w.Write([]byte("data: {\"type\":\"message_start\"}\n\n"))
+			_, _ = w.Write([]byte("data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\n"))
 			_, _ = w.Write([]byte("data: {\"type\":\"message_stop\"}\n\n"))
 		}))
 		defer server.Close()
@@ -229,6 +231,79 @@ func TestPredictNext(t *testing.T) {
 		}
 		if finished.StopReason != llm.StopReasonToolUse || finished.Usage.InputTokens != 3 || finished.Usage.OutputTokens != 5 || finished.Usage.TotalTokens != 8 {
 			t.Fatalf("finished = %#v", finished)
+		}
+	})
+
+	t.Run("reports truncation stop reason", func(t *testing.T) {
+		stream := strings.Join([]string{
+			`data: {"type":"message_start","message":{"usage":{"input_tokens":3}}}`,
+			``,
+			`data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking"}}`,
+			``,
+			`data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"unfinished"}}`,
+			``,
+			`data: {"type":"content_block_stop","index":0}`,
+			``,
+			`data: {"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"output_tokens":16000}}`,
+			``,
+			`data: {"type":"message_stop"}`,
+			``,
+		}, "\n")
+
+		events, err := predictWithStream(t, stream)
+		if err != nil {
+			t.Fatalf("predict: %v", err)
+		}
+		finished, ok := events[len(events)-1].(llm.PredictionFinished)
+		if !ok || finished.StopReason != llm.StopReasonMaxTokens {
+			t.Fatalf("last event = %#v, want max_tokens finish", events[len(events)-1])
+		}
+	})
+
+	t.Run("returns an error when stream is interrupted", func(t *testing.T) {
+		stream := strings.Join([]string{
+			`data: {"type":"message_start","message":{"usage":{"input_tokens":3}}}`,
+			``,
+			`data: {"type":"content_block_start","index":0,"content_block":{"type":"text"}}`,
+			``,
+			`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}`,
+			``,
+		}, "\n")
+
+		events, err := predictWithStream(t, stream)
+		if err == nil || !strings.Contains(err.Error(), "before message_stop") {
+			t.Fatalf("error = %v, want interrupted stream error", err)
+		}
+		if len(events) != 3 {
+			t.Fatalf("events = %#v, want started, block start, and partial delta", events)
+		}
+	})
+
+	t.Run("preserves redacted thinking", func(t *testing.T) {
+		stream := strings.Join([]string{
+			`data: {"type":"message_start"}`,
+			``,
+			`data: {"type":"content_block_start","index":0,"content_block":{"type":"redacted_thinking","data":"opaque"}}`,
+			``,
+			`data: {"type":"content_block_stop","index":0}`,
+			``,
+			`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}`,
+			``,
+			`data: {"type":"message_stop"}`,
+			``,
+		}, "\n")
+
+		events, err := predictWithStream(t, stream)
+		if err != nil {
+			t.Fatalf("predict: %v", err)
+		}
+		ended, ok := events[2].(llm.BlockEnded)
+		if !ok {
+			t.Fatalf("event 2 = %#v, want BlockEnded", events[2])
+		}
+		block, ok := ended.Block.(llm.RedactedThinkingBlock)
+		if !ok || block.Data != "opaque" {
+			t.Fatalf("block = %#v, want opaque redacted thinking", ended.Block)
 		}
 	})
 
