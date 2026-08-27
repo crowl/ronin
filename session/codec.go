@@ -15,7 +15,7 @@ type messageJSON struct {
 	Text                    string      `json:"text,omitempty"`
 	Blocks                  []blockJSON `json:"blocks,omitempty"`
 	StopReason              string      `json:"stop_reason,omitempty"`
-	Usage                   llm.Usage   `json:"usage,omitempty"`
+	Usage                   llm.Usage   `json:"usage"`
 	ToolName                string      `json:"tool_name,omitempty"`
 	Name                    string      `json:"name,omitempty"`
 	ToolCallID              string      `json:"tool_call_id,omitempty"`

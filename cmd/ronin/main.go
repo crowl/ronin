@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -336,9 +337,7 @@ func cloneStrings(values map[string]string) map[string]string {
 		return nil
 	}
 	clone := make(map[string]string, len(values))
-	for key, value := range values {
-		clone[key] = value
-	}
+	maps.Copy(clone, values)
 	return clone
 }
 
@@ -697,8 +696,7 @@ func runWorkflow(ctx context.Context, script, workingDir, input string, agent wo
 		return nil
 	}
 
-	var doneErr *workflow.DoneError
-	if errors.As(err, &doneErr) {
+	if doneErr, ok := errors.AsType[*workflow.DoneError](err); ok {
 		if doneErr.Message != "" {
 			_, _ = fmt.Fprintln(output, doneErr.Message)
 		}

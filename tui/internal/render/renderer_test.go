@@ -270,10 +270,7 @@ func (t *virtualTerminal) lastWrite() string {
 }
 
 func (t *virtualTerminal) viewport() []string {
-	start := len(t.lines) - t.height
-	if start < 0 {
-		start = 0
-	}
+	start := max(len(t.lines)-t.height, 0)
 	out := make([]string, 0, t.height)
 	for row := start; row < len(t.lines); row++ {
 		out = append(out, strings.TrimRight(string(t.lines[row]), " "))
@@ -369,10 +366,7 @@ func (t *virtualTerminal) moveTo(row int, col int) {
 }
 
 func (t *virtualTerminal) clearScreen() {
-	start := len(t.lines) - t.height
-	if start < 0 {
-		start = 0
-	}
+	start := max(len(t.lines)-t.height, 0)
 	for row := start; row < len(t.lines); row++ {
 		t.lines[row] = blankRunes(t.width)
 	}

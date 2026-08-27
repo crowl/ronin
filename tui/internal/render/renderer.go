@@ -124,10 +124,7 @@ func (r *Renderer) Render(req Request) error {
 	}
 
 	if moveTargetRow > prevViewportBottom {
-		currentScreenRow := hardwareCursorRow - prevViewportTop
-		if currentScreenRow < 0 {
-			currentScreenRow = 0
-		}
+		currentScreenRow := max(hardwareCursorRow-prevViewportTop, 0)
 		if currentScreenRow >= req.Height {
 			currentScreenRow = req.Height - 1
 		}
@@ -227,7 +224,7 @@ func (r *Renderer) renderDeletedLines(lines []string, req Request, prevViewportT
 	if extraLines > 0 {
 		b.WriteString(terminal.MoveDown(1))
 	}
-	for i := 0; i < extraLines; i++ {
+	for i := range extraLines {
 		b.WriteString(terminal.CarriageReturn + terminal.ClearLine)
 		if i < extraLines-1 {
 			b.WriteString(terminal.MoveDown(1))

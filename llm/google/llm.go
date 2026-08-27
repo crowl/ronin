@@ -225,8 +225,8 @@ func (s *LLM) stream(ctx context.Context, req llm.PredictNextRequest, events cha
 		if strings.HasPrefix(line, ":") {
 			continue
 		}
-		if strings.HasPrefix(line, "data:") {
-			dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+		if after, ok := strings.CutPrefix(line, "data:"); ok {
+			dataLines = append(dataLines, strings.TrimSpace(after))
 		}
 	}
 	if len(dataLines) > 0 {

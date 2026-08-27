@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"text/template"
 	"time"
@@ -137,10 +138,7 @@ func safeCompactionStart(messages []llm.Message, keepRecent int) int {
 	if keepRecent <= 0 {
 		keepRecent = defaultCompactKeepMessages
 	}
-	start := len(messages) - keepRecent
-	if start < 0 {
-		start = 0
-	}
+	start := max(len(messages)-keepRecent, 0)
 	for {
 		seenCalls := map[string]bool{}
 		missingCallID := ""
@@ -164,11 +162,8 @@ func safeCompactionStart(messages []llm.Message, keepRecent int) int {
 		}
 		found := -1
 		for i := start - 1; i >= 0; i-- {
-			for _, callID := range messageToolCallIDs(messages[i]) {
-				if callID == missingCallID {
-					found = i
-					break
-				}
+			if slices.Contains(messageToolCallIDs(messages[i]), missingCallID) {
+				found = i
 			}
 			if found >= 0 {
 				break

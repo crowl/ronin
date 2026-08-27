@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 )
 
@@ -91,8 +92,7 @@ func structSchema(t reflect.Type) *Schema {
 		AdditionalProperties: false,
 	}
 
-	for i := 0; i < t.NumField(); i++ {
-		field := t.Field(i)
+	for field := range t.Fields() {
 
 		if field.PkgPath != "" && !field.Anonymous {
 			continue
@@ -128,13 +128,7 @@ func structSchema(t reflect.Type) *Schema {
 		s.Properties[name] = fieldSchema
 
 		if !options.omitempty && field.Type.Kind() != reflect.Pointer {
-			found := false
-			for _, required := range s.Required {
-				if required == name {
-					found = true
-					break
-				}
-			}
+			found := slices.Contains(s.Required, name)
 			if !found {
 				s.Required = append(s.Required, name)
 			}
@@ -174,13 +168,7 @@ func mergeEmbeddedStruct(parent *Schema, fieldType reflect.Type) {
 			continue
 		}
 
-		found := false
-		for _, required := range parent.Required {
-			if required == name {
-				found = true
-				break
-			}
-		}
+		found := slices.Contains(parent.Required, name)
 		if !found {
 			parent.Required = append(parent.Required, name)
 		}

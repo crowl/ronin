@@ -32,10 +32,7 @@ func toolArtifactLinesBounded(artifact tool.Artifact, width, limit int) ([]strin
 	startLine := 1
 	switch typed := artifact.(type) {
 	case tool.FileRangeArtifact:
-		startLine = typed.StartLine
-		if startLine < 1 {
-			startLine = 1
-		}
+		startLine = max(typed.StartLine, 1)
 	case tool.UnifiedDiffArtifact:
 		diff = true
 	}
@@ -126,10 +123,7 @@ func forEachArtifactLine(content string, visit func(string) bool) {
 
 func appendBoundedArtifactLine(rendered *[]string, line toolArtifactLine, width, limit int) bool {
 	prefix := toolArtifactLinePrefix(line, line.OldLine > 0 && line.NewLine == 0 || line.Kind == toolArtifactLineDiffAdded || line.Kind == toolArtifactLineDiffRemoved || line.Kind == toolArtifactLineMuted && line.OldLine == 0 && line.NewLine == 0)
-	available := width - text.VisibleLen(prefix)
-	if available < 1 {
-		available = 1
-	}
+	available := max(width-text.VisibleLen(prefix), 1)
 	return forEachBoundedWrappedLine("", line.Text, available, limit-len(*rendered), func(value string, index int) bool {
 		linePrefix := prefix
 		if index > 0 {
@@ -193,10 +187,7 @@ func forEachBoundedWrappedLine(prefix, value string, width, limit int, visit fun
 }
 
 func forEachBoundedWrappedParagraph(prefix, value string, width, limit int, visit func(string, int) bool) bool {
-	available := width - text.VisibleLen(prefix)
-	if available < 1 {
-		available = 1
-	}
+	available := max(width-text.VisibleLen(prefix), 1)
 	if value == "" {
 		return visit(prefix, 0)
 	}

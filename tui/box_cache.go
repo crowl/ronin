@@ -122,10 +122,7 @@ func boxSignature(block box, width int, toolsExpanded bool, now time.Time) boxLi
 		signature.StartedAt = typedBlock.StartedAt.UnixNano()
 		signature.EndedAt = typedBlock.EndedAt.UnixNano()
 		if typedBlock.EndedAt.IsZero() {
-			duration := now.Sub(typedBlock.StartedAt)
-			if duration < 0 {
-				duration = 0
-			}
+			duration := max(now.Sub(typedBlock.StartedAt), 0)
 			signature.ElapsedBucket = int64((duration + 50*time.Millisecond) / (100 * time.Millisecond))
 		}
 	case workflowBox:
@@ -133,10 +130,7 @@ func boxSignature(block box, width int, toolsExpanded bool, now time.Time) boxLi
 		signature.StartedAt = typedBlock.StartedAt.UnixNano()
 		signature.EndedAt = typedBlock.EndedAt.UnixNano()
 		if typedBlock.EndedAt.IsZero() {
-			duration := now.Sub(typedBlock.StartedAt)
-			if duration < 0 {
-				duration = 0
-			}
+			duration := max(now.Sub(typedBlock.StartedAt), 0)
 			signature.ElapsedBucket = int64((duration + 50*time.Millisecond) / (100 * time.Millisecond))
 		}
 		signature.Text = fmt.Sprintf("%s:%s:%s:%s:%d:%d:%t", typedBlock.Name, typedBlock.Input, typedBlock.Status, typedBlock.Summary, typedBlock.TimelineBytes, len(typedBlock.Entries), typedBlock.TimelineTruncated)

@@ -22,10 +22,7 @@ func Wrap(prefix string, text string, width int) []string {
 	if width <= 0 {
 		return []string{prefix + text}
 	}
-	available := width - VisibleLen(prefix)
-	if available < 1 {
-		available = 1
-	}
+	available := max(width-VisibleLen(prefix), 1)
 	if text == "" {
 		return []string{prefix}
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -629,8 +630,8 @@ func (m *appModel) editorLabel() string {
 }
 
 func findWorkflowBoxIndex(blocks []box) int {
-	for i := len(blocks) - 1; i >= 0; i-- {
-		if _, ok := blocks[i].(workflowBox); ok {
+	for i, block := range slices.Backward(blocks) {
+		if _, ok := block.(workflowBox); ok {
 			return i
 		}
 	}
@@ -707,8 +708,8 @@ func appendToolArtifact(artifacts []tool.Artifact, artifact tool.Artifact) []too
 }
 
 func findToolBlockIndex(blocks []box, toolCallID string) int {
-	for i := len(blocks) - 1; i >= 0; i-- {
-		switch typedBlock := blocks[i].(type) {
+	for i, block := range slices.Backward(blocks) {
+		switch typedBlock := block.(type) {
 		case toolCallBox:
 			if typedBlock.ToolCallID == toolCallID {
 				return i

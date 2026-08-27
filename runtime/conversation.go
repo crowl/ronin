@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -86,8 +87,8 @@ func NewConversation(cfg ConversationConfig) (*Conversation, error) {
 
 	messages := append([]llm.Message(nil), cfg.Messages...)
 	var contextUsage llm.Usage
-	for i := len(messages) - 1; i >= 0; i-- {
-		assistantMessage, ok := messages[i].(llm.AssistantMessage)
+	for _, message := range slices.Backward(messages) {
+		assistantMessage, ok := message.(llm.AssistantMessage)
 		if ok {
 			contextUsage = assistantMessage.Usage
 			break
@@ -609,21 +610,21 @@ func (c *Conversation) modelVisibleToolOutput(ctx context.Context, toolCall llm.
 
 func (c *Conversation) toolOutputOrigin(toolCall llm.ToolCallBlock) string {
 	var latestUser string
-	for i := len(c.messages) - 1; i >= 0; i-- {
-		if msg, ok := c.messages[i].(llm.UserMessage); ok {
+	for _, v := range slices.Backward(c.messages) {
+		if msg, ok := v.(llm.UserMessage); ok {
 			latestUser = msg.Text
 			break
 		}
 	}
-	var assistantText string
-	for i := len(c.messages) - 1; i >= 0; i-- {
-		msg, ok := c.messages[i].(llm.AssistantMessage)
+	var assistantText strings.Builder
+	for _, v := range slices.Backward(c.messages) {
+		msg, ok := v.(llm.AssistantMessage)
 		if !ok {
 			continue
 		}
 		for _, block := range msg.Blocks {
 			if text, ok := block.(llm.TextBlock); ok {
-				assistantText += text.Text
+				assistantText.WriteString(text.Text)
 			}
 		}
 		break
@@ -634,9 +635,9 @@ func (c *Conversation) toolOutputOrigin(toolCall llm.ToolCallBlock) string {
 		b.WriteString(latestUser)
 		b.WriteString("\n\n")
 	}
-	if strings.TrimSpace(assistantText) != "" {
+	if strings.TrimSpace(assistantText.String()) != "" {
 		b.WriteString("Assistant text before tool call:\n")
-		b.WriteString(assistantText)
+		b.WriteString(assistantText.String())
 		b.WriteString("\n\n")
 	}
 	b.WriteString("Tool call requested: ")

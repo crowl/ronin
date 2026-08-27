@@ -150,13 +150,7 @@ type editorPresenter struct {
 }
 
 func (p editorPresenter) Lines(width int) []string {
-	cursor := p.Cursor
-	if cursor < 0 {
-		cursor = 0
-	}
-	if cursor > len(p.Text) {
-		cursor = len(p.Text)
-	}
+	cursor := min(max(p.Cursor, 0), len(p.Text))
 
 	logicalLines := spliteditorPresenterLogicalLines(p.Text)
 	cursorLine, cursorColumn := editorCursorLineColumn(p.Text, cursor)
@@ -224,20 +218,14 @@ func wrapeditorPresenterLogicalLine(line []rune, width int, firstVisualLine bool
 	if firstVisualLine {
 		prefixWidth = text.VisibleLen(editorPrefix)
 	}
-	available := width - prefixWidth
-	if available < 1 {
-		available = 1
-	}
+	available := max(width-prefixWidth, 1)
 	if len(line) == 0 {
 		return []editorSegment{{startColumn: 0, endColumn: 0}}
 	}
 
 	segments := make([]editorSegment, 0, (len(line)/available)+1)
 	for start := 0; start < len(line); {
-		end := start + available
-		if end > len(line) {
-			end = len(line)
-		}
+		end := min(start+available, len(line))
 		segments = append(segments, editorSegment{
 			text:        line[start:end],
 			startColumn: start,
@@ -253,13 +241,7 @@ func rendereditorPresenterSegment(prefix string, segment editorSegment, cursorCo
 		return prefix + string(segment.text)
 	}
 
-	segmentCursor := cursorColumn - segment.startColumn
-	if segmentCursor < 0 {
-		segmentCursor = 0
-	}
-	if segmentCursor > len(segment.text) {
-		segmentCursor = len(segment.text)
-	}
+	segmentCursor := min(max(cursorColumn-segment.startColumn, 0), len(segment.text))
 
 	beforeCursor := string(segment.text[:segmentCursor])
 	if segmentCursor < len(segment.text) {
@@ -291,10 +273,7 @@ func (p menuPresenter) Lines(width int) []string {
 		return nil
 	}
 
-	selectedIndex := p.SelectedIndex
-	if selectedIndex < 0 {
-		selectedIndex = 0
-	}
+	selectedIndex := max(p.SelectedIndex, 0)
 	if selectedIndex >= len(p.Items) {
 		selectedIndex = len(p.Items) - 1
 	}
@@ -446,8 +425,8 @@ func statusBarCWDStatus(cwd string) string {
 			cwdStatus = "~"
 		}
 		prefix := homeDir + string(filepath.Separator)
-		if strings.HasPrefix(cwdAbsolute, prefix) {
-			cwdStatus = "~" + string(filepath.Separator) + strings.TrimPrefix(cwdAbsolute, prefix)
+		if after, ok := strings.CutPrefix(cwdAbsolute, prefix); ok {
+			cwdStatus = "~" + string(filepath.Separator) + after
 		}
 	}
 
@@ -472,11 +451,11 @@ func findGitBranch(cwd string) string {
 	}
 
 	head := strings.TrimSpace(string(data))
-	if strings.HasPrefix(head, "ref:") {
-		ref := strings.TrimSpace(strings.TrimPrefix(head, "ref:"))
+	if after, ok := strings.CutPrefix(head, "ref:"); ok {
+		ref := strings.TrimSpace(after)
 		const prefix = "refs/heads/"
-		if strings.HasPrefix(ref, prefix) {
-			return strings.TrimPrefix(ref, prefix)
+		if after, ok := strings.CutPrefix(ref, prefix); ok {
+			return after
 		}
 		return filepath.Base(ref)
 	}

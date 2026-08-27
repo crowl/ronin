@@ -228,7 +228,7 @@ func TestPromptLifecycle(t *testing.T) {
 		}
 	})
 	t.Run("incremental tool emits chunks before final result", func(t *testing.T) {
-		incrementalTool := fakeIncrementalTool{fakeTool: fakeTool{name: "stream", result: fakeResult{artifacts: []tool.Artifact{tool.ShellStreamArtifact{Stream: tool.ShellStreamStdout, Content: "final"}}}}, artifacts: []tool.Artifact{tool.ShellStreamArtifact{Stream: tool.ShellStreamStdout, Content: "live"}}}
+		incrementalTool := fakeIncrementalTool{name: "stream", result: fakeResult{artifacts: []tool.Artifact{tool.ShellStreamArtifact{Stream: tool.ShellStreamStdout, Content: "final"}}}, artifacts: []tool.Artifact{tool.ShellStreamArtifact{Stream: tool.ShellStreamStdout, Content: "live"}}}
 		agt, err := runtime.NewConversation(runtime.ConversationConfig{
 			ModelClient: &fakeModelClient{eventBatches: [][]llm.PredictionEvent{
 				{

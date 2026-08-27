@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 )
 
 const MaxContextFileBytes = 128 * 1024
@@ -47,8 +48,8 @@ func LoadContextFiles(configDir, cwd string) ([]ContextFile, error) {
 		current = parent
 	}
 
-	for i := len(localPaths) - 1; i >= 0; i-- {
-		paths = append(paths, localPaths[i])
+	for _, localPath := range slices.Backward(localPaths) {
+		paths = append(paths, localPath)
 	}
 
 	var files []ContextFile

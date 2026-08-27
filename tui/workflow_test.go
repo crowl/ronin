@@ -225,7 +225,7 @@ func TestWorkflowArtifactFieldsAreBoundThroughEvents(t *testing.T) {
 func TestWorkflowVisualExhaustionDropsDetailedEvents(t *testing.T) {
 	model := mustWorkflowModel(t)
 	model.startWorkflow(workflow.Workflow{Name: "narrow"}, "input")
-	for i := 0; i < maxWorkflowTimelineLines+10; i++ {
+	for i := range maxWorkflowTimelineLines + 10 {
 		model.handleWorkflowEvent(workflow.Log{Text: fmt.Sprintf("event %d", i)}, time.Now())
 	}
 	if _, err := model.lines(1, &fakeConversation{}, time.Now()); err != nil {

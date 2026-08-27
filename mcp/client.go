@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -82,8 +84,8 @@ func (c *Client) Instructions() []runtime.MCPInstruction {
 
 func (c *Client) Close() error {
 	var errs []error
-	for i := len(c.sessions) - 1; i >= 0; i-- {
-		if err := c.sessions[i].Close(); err != nil {
+	for _, v := range slices.Backward(c.sessions) {
+		if err := v.Close(); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -154,9 +156,7 @@ func environment(overrides map[string]string) []string {
 			env[key] = value
 		}
 	}
-	for key, value := range overrides {
-		env[key] = value
-	}
+	maps.Copy(env, overrides)
 	keys := make([]string, 0, len(env))
 	for key := range env {
 		keys = append(keys, key)

@@ -36,10 +36,7 @@ func renderWorkflowBoxLinesState(workflow workflowBox, width int, toolsExpanded 
 
 	summaryLines := boundedWorkflowWrap("  Summary: ", workflow.Summary, width, maxWorkflowSummaryLines)
 	footerLines := 1
-	timelineLimit := min(maxWorkflowTimelineLines, maxWorkflowVisualLines-len(lines)-footerLines-len(summaryLines))
-	if timelineLimit < 1 {
-		timelineLimit = 1
-	}
+	timelineLimit := max(min(maxWorkflowTimelineLines, maxWorkflowVisualLines-len(lines)-footerLines-len(summaryLines)), 1)
 	timelineStart := len(lines)
 	truncatedNotice := workflow.TimelineTruncated
 	for _, entry := range workflow.Entries {

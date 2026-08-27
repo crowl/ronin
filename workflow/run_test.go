@@ -27,7 +27,6 @@ func TestRunFile(t *testing.T) {
 			"xpcall(function() ronin.fail(\"broken\") end, function(err) return err end)",
 			"rawset(ronin, \"input\", \"changed\")",
 		} {
-			expr := expr
 			t.Run(expr, func(t *testing.T) {
 				t.Parallel()
 
@@ -149,8 +148,7 @@ ronin.done()`)
 		if err == nil {
 			t.Fatal("RunFile() error = nil, want runtime error")
 		}
-		var doneErr *DoneError
-		if errors.As(err, &doneErr) {
+		if _, ok := errors.AsType[*DoneError](err); ok {
 			t.Fatalf("RunFile() error type = %T, want runtime error", err)
 		}
 		if !strings.Contains(err.Error(), "attempt to call") {
@@ -265,7 +263,6 @@ ronin.log(file.content)
 		}
 
 		for name, tc := range cases {
-			tc := tc
 			t.Run(name, func(t *testing.T) {
 				_, err := runScriptAtPath(t, workDir, tc.script)
 				if err == nil {
@@ -449,7 +446,6 @@ func TestRequirementWorkflowExample(t *testing.T) {
 		t.Parallel()
 
 		for _, input := range []string{"", " \t\r\n"} {
-			input := input
 			t.Run(fmt.Sprintf("input_%q", input), func(t *testing.T) {
 				var calls int
 				var output strings.Builder
@@ -550,8 +546,7 @@ func TestRequirementWorkflowExample(t *testing.T) {
 			"requestor evaluation\nSTATUS: APPROVED",
 		}
 		requests, _, err := runRequirementWorkflowExample(t, responses)
-		var doneErr *DoneError
-		if !errors.As(err, &doneErr) {
+		if _, ok := errors.AsType[*DoneError](err); !ok {
 			t.Fatalf("RunFileWithAgentInWorkingDir() error = %v, want DoneError", err)
 		}
 		if len(requests) != 6 {
@@ -580,8 +575,7 @@ func TestRequirementWorkflowExample(t *testing.T) {
 			"requestor evaluation\nSTATUS: APPROVED",
 		}
 		requests, _, err := runRequirementWorkflowExample(t, responses)
-		var doneErr *DoneError
-		if !errors.As(err, &doneErr) {
+		if _, ok := errors.AsType[*DoneError](err); !ok {
 			t.Fatalf("RunFileWithAgentInWorkingDir() error = %v, want DoneError", err)
 		}
 		if len(requests) != 7 {
@@ -604,8 +598,7 @@ func TestRequirementWorkflowExample(t *testing.T) {
 			"requestor evaluation\nSTATUS: APPROVED",
 		}
 		requests, _, err := runRequirementWorkflowExample(t, responses)
-		var doneErr *DoneError
-		if !errors.As(err, &doneErr) {
+		if _, ok := errors.AsType[*DoneError](err); !ok {
 			t.Fatalf("RunFileWithAgentInWorkingDir() error = %v, want DoneError", err)
 		}
 		if len(requests) != 6 {
@@ -628,8 +621,7 @@ func TestRequirementWorkflowExample(t *testing.T) {
 			"requestor evaluation\nSTATUS: APPROVED",
 		}
 		requests, _, err := runRequirementWorkflowExample(t, responses)
-		var doneErr *DoneError
-		if !errors.As(err, &doneErr) {
+		if _, ok := errors.AsType[*DoneError](err); !ok {
 			t.Fatalf("RunFileWithAgentInWorkingDir() error = %v, want DoneError", err)
 		}
 		if len(requests) != 6 {
@@ -653,8 +645,7 @@ func TestRequirementWorkflowExample(t *testing.T) {
 			"requestor evaluation\nSTATUS: APPROVED",
 		}
 		requests, _, err := runRequirementWorkflowExample(t, responses)
-		var doneErr *DoneError
-		if !errors.As(err, &doneErr) {
+		if _, ok := errors.AsType[*DoneError](err); !ok {
 			t.Fatalf("RunFileWithAgentInWorkingDir() error = %v, want DoneError", err)
 		}
 		if len(requests) != 7 {

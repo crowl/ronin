@@ -35,10 +35,7 @@ func toolArtifactLines(artifact tool.Artifact, width int) []string {
 	case tool.FileArtifact:
 		return renderToolArtifactLines(numberedToolArtifactLines(typedArtifact.Content, 1), width, false)
 	case tool.FileRangeArtifact:
-		startLine := typedArtifact.StartLine
-		if startLine < 1 {
-			startLine = 1
-		}
+		startLine := max(typedArtifact.StartLine, 1)
 		return renderToolArtifactLines(numberedToolArtifactLines(typedArtifact.Content, startLine), width, false)
 	case tool.FileMetadataArtifact:
 		return wrappedToolArtifactText(fmt.Sprintf("Already in context (%s)", typedArtifact.FileID), width)
@@ -149,10 +146,7 @@ func renderToolArtifactLines(lines []toolArtifactLine, width int, diff bool) []s
 	var rendered []string
 	for _, line := range lines {
 		prefix := toolArtifactLinePrefix(line, diff)
-		available := width - text.VisibleLen(prefix)
-		if available < 1 {
-			available = 1
-		}
+		available := max(width-text.VisibleLen(prefix), 1)
 
 		wrapped := text.Wrap("", line.Text, available)
 		if len(wrapped) == 0 {
