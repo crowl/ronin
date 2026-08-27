@@ -16,15 +16,17 @@ import (
 	"github.com/crowl/ronin/tool/readfile"
 )
 
-func TestToolDescriptionGuidesGoRangeReads(t *testing.T) {
+func TestToolDescriptionIsLanguageAgnostic(t *testing.T) {
 	description := readfile.New(t.TempDir(), fsutil.NewReadCache()).Description()
-	for _, expected := range []string{"Go exploration", "ranges returned by outline_package or find_symbol", "whole-file reads"} {
+	for _, expected := range []string{"1-based line range", "targeted ranges", "whole-file reads", "edit_file"} {
 		if !strings.Contains(description, expected) {
 			t.Errorf("Description() = %q, want %q", description, expected)
 		}
 	}
-	if strings.Contains(description, "go_navigation") {
-		t.Errorf("Description() contains removed go_navigation tool: %q", description)
+	for _, unexpected := range []string{"Go", "outline_package", "find_symbol"} {
+		if strings.Contains(description, unexpected) {
+			t.Errorf("Description() = %q, contains language-specific guidance %q", description, unexpected)
+		}
 	}
 }
 

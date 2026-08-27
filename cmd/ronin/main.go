@@ -23,7 +23,6 @@ import (
 	"github.com/crowl/ronin/session/sqlite"
 	"github.com/crowl/ronin/tool/editfile"
 	"github.com/crowl/ronin/tool/fsutil"
-	"github.com/crowl/ronin/tool/gosemantic"
 	"github.com/crowl/ronin/tool/readfile"
 	"github.com/crowl/ronin/tool/shell"
 	"github.com/crowl/ronin/tool/writefile"
@@ -178,8 +177,6 @@ func run() (exitCode int) {
 
 	tools := []runtime.Tool{
 		readfile.New(workingDir, readCache),
-		gosemantic.NewOutlinePackage(workingDir),
-		gosemantic.NewFindSymbol(workingDir),
 		editfile.New(workingDir, mutationQueue),
 		writefile.New(workingDir, mutationQueue),
 		shell.New(workingDir),
@@ -395,8 +392,6 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string) work
 		mutationQueue := fsutil.NewMutationQueue()
 		tools = []runtime.Tool{
 			readfile.New(workingDir, readCache),
-			gosemantic.NewOutlinePackage(workingDir),
-			gosemantic.NewFindSymbol(workingDir),
 			editfile.New(workingDir, mutationQueue),
 			writefile.New(workingDir, mutationQueue),
 			shell.New(workingDir),
