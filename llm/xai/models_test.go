@@ -50,28 +50,30 @@ func TestResponsesEndpoint(t *testing.T) {
 	}
 }
 
-func TestSetupRegistersGrok46(t *testing.T) {
+func TestSetupRegistersModels(t *testing.T) {
 	if os.Getenv("RONIN_XAI_SETUP") == "1" {
 		if err := Setup("key"); err != nil {
 			t.Fatalf("Setup() error = %v", err)
 		}
-		if got, want := llm.Models(), []llm.Model{Grok46}; !reflect.DeepEqual(got, want) {
+		if got, want := llm.Models(), []llm.Model{Grok46, GrokBuild01}; !reflect.DeepEqual(got, want) {
 			t.Fatalf("registered models = %#v, want %#v", got, want)
 		}
-		client, err := llm.LoadModelClient(Grok46, llm.ReasoningLevelOff)
-		if err != nil {
-			t.Fatalf("LoadModelClient() error = %v", err)
-		}
-		if client.Model() != Grok46 {
-			t.Fatalf("client model = %#v, want %#v", client.Model(), Grok46)
-		}
-		if got := reflect.ValueOf(client).Elem().FieldByName("baseURL").String(); got != defaultBaseURL {
-			t.Fatalf("base URL = %q, want %q", got, defaultBaseURL)
+		for _, model := range []llm.Model{Grok46, GrokBuild01} {
+			client, err := llm.LoadModelClient(model, llm.ReasoningLevelOff)
+			if err != nil {
+				t.Fatalf("LoadModelClient(%s) error = %v", model, err)
+			}
+			if client.Model() != model {
+				t.Fatalf("client model = %#v, want %#v", client.Model(), model)
+			}
+			if got := reflect.ValueOf(client).Elem().FieldByName("baseURL").String(); got != defaultBaseURL {
+				t.Fatalf("base URL = %q, want %q", got, defaultBaseURL)
+			}
 		}
 		return
 	}
 
-	cmd := exec.Command(os.Args[0], "-test.run=^TestSetupRegistersGrok46$")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestSetupRegistersModels$")
 	cmd.Env = append(os.Environ(), "RONIN_XAI_SETUP=1")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Setup subprocess failed: %v\n%s", err, output)

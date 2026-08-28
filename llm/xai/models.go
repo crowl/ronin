@@ -15,7 +15,15 @@ const (
 	defaultBaseURL = "https://api.x.ai/v1/responses"
 )
 
-var Grok46 = llm.Model{Provider: provider, Name: "grok-4.6", ContextWindow: 500_000}
+var (
+	Grok46      = llm.Model{Provider: provider, Name: "grok-4.6", ContextWindow: 500_000}
+	GrokBuild01 = llm.Model{Provider: provider, Name: "grok-build-0.1", ContextWindow: 256_000}
+
+	models = []llm.Model{
+		Grok46,
+		GrokBuild01,
+	}
+)
 
 // Setup registers the xAI models using the default Responses API endpoint.
 func Setup(apiKey string) error {
@@ -61,19 +69,22 @@ func responsesEndpoint(baseURL string) (string, error) {
 }
 
 func registerModels(apiKey, endpoint string) error {
-	if err := llm.RegisterModel(Grok46, func(level llm.ReasoningLevel) (llm.ModelClient, error) {
-		client, err := openai.NewLLM(openai.LLMConfig{
-			BaseURL:        endpoint,
-			APIKey:         apiKey,
-			Model:          Grok46,
-			ReasoningLevel: level,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("create xAI llm: %w", err)
+	for _, model := range models {
+		registeredModel := model
+		if err := llm.RegisterModel(registeredModel, func(level llm.ReasoningLevel) (llm.ModelClient, error) {
+			client, err := openai.NewLLM(openai.LLMConfig{
+				BaseURL:        endpoint,
+				APIKey:         apiKey,
+				Model:          registeredModel,
+				ReasoningLevel: level,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("create xAI llm: %w", err)
+			}
+			return client, nil
+		}); err != nil {
+			return fmt.Errorf("failed to setup model: %w", err)
 		}
-		return client, nil
-	}); err != nil {
-		return fmt.Errorf("failed to setup model: %w", err)
 	}
 	return nil
 }
