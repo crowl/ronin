@@ -286,6 +286,47 @@ func TestPredictNext(t *testing.T) {
 		}
 	})
 
+	t.Run("labels http errors with the model provider", func(t *testing.T) {
+		for _, provider := range []string{"openai", "xai"} {
+			t.Run(provider, func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					http.Error(w, "bad request", http.StatusBadRequest)
+				}))
+				t.Cleanup(server.Close)
+
+				client, err := openai.NewLLM(openai.LLMConfig{
+					BaseURL:        server.URL,
+					APIKey:         "key",
+					Model:          llm.Model{Provider: provider, Name: "test"},
+					ReasoningLevel: llm.ReasoningLevelOff,
+				})
+				if err != nil {
+					t.Fatalf("new llm: %v", err)
+				}
+
+				events, errs := client.PredictNext(context.Background(), llm.PredictNextRequest{})
+				_ = drainEvents(events)
+				err = <-errs
+				want := provider + " status 400"
+				if err == nil || !strings.Contains(err.Error(), want) {
+					t.Fatalf("PredictNext() error = %v, want %q", err, want)
+				}
+				if provider != "openai" && strings.Contains(err.Error(), "openai") {
+					t.Fatalf("PredictNext() error = %v, want no openai label", err)
+				}
+
+				_, err = client.PredictNextStructured(context.Background(), llm.PredictNextStructuredRequest{Schema: &jsonschema.Schema{Type: "object"}})
+				want = provider + " structured status 400"
+				if err == nil || !strings.Contains(err.Error(), want) {
+					t.Fatalf("PredictNextStructured() error = %v, want %q", err, want)
+				}
+				if provider != "openai" && strings.Contains(err.Error(), "openai") {
+					t.Fatalf("PredictNextStructured() error = %v, want no openai label", err)
+				}
+			})
+		}
+	})
+
 	t.Run("returns invalid tool arguments on error channel", func(t *testing.T) {
 		stream := strings.Join([]string{
 			`data: {"type":"response.output_item.added","output_index":0,"item":{"id":"item-1","type":"function_call","call_id":"call-1","name":"tool"}}`,

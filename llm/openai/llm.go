@@ -105,13 +105,13 @@ func (s *LLM) PredictNextStructured(ctx context.Context, req llm.PredictNextStru
 
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return nil, fmt.Errorf("marshal openai structured request: %w", err)
+		return nil, fmt.Errorf("marshal %s structured request: %w", s.provider(), err)
 	}
 
 	resp, err := httpretry.Do(ctx, s.client, func() (*http.Request, error) {
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL, bytes.NewReader(body))
 		if err != nil {
-			return nil, fmt.Errorf("create openai structured request: %w", err)
+			return nil, fmt.Errorf("create %s structured request: %w", s.provider(), err)
 		}
 
 		httpReq.Header.Set("Authorization", "Bearer "+s.apiKey)
@@ -119,35 +119,35 @@ func (s *LLM) PredictNextStructured(ctx context.Context, req llm.PredictNextStru
 		return httpReq, nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("send openai structured request: %w", err)
+		return nil, fmt.Errorf("send %s structured request: %w", s.provider(), err)
 	}
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
-			slog.Error("failed to close openai structured response", "error", err)
+			slog.Error("failed to close structured response", "provider", s.provider(), "error", err)
 		}
 	}()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 16*1024))
-		return nil, fmt.Errorf("openai structured status %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+		return nil, fmt.Errorf("%s structured status %d: %s", s.provider(), resp.StatusCode, strings.TrimSpace(string(data)))
 	}
 
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, fmt.Errorf("read openai structured response: %w", err)
+		return nil, fmt.Errorf("read %s structured response: %w", s.provider(), err)
 	}
 
 	var structuredResp openAIStructuredResponse
 	if err := json.Unmarshal(data, &structuredResp); err != nil {
-		return nil, fmt.Errorf("parse openai structured response: %w", err)
+		return nil, fmt.Errorf("parse %s structured response: %w", s.provider(), err)
 	}
 
 	text := strings.TrimSpace(structuredResp.OutputText())
 	if text == "" {
-		return nil, errors.New("openai structured response contained no output text")
+		return nil, fmt.Errorf("%s structured response contained no output text", s.provider())
 	}
 	if !json.Valid([]byte(text)) {
-		return nil, errors.New("openai structured response output is not valid JSON")
+		return nil, fmt.Errorf("%s structured response output is not valid JSON", s.provider())
 	}
 	return json.RawMessage(text), nil
 }
@@ -160,13 +160,13 @@ func (s *LLM) stream(ctx context.Context, req llm.PredictNextRequest, events cha
 
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("marshal openai request: %w", err)
+		return fmt.Errorf("marshal %s request: %w", s.provider(), err)
 	}
 
 	resp, err := httpretry.Do(ctx, s.client, func() (*http.Request, error) {
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL, bytes.NewReader(body))
 		if err != nil {
-			return nil, fmt.Errorf("create openai request: %w", err)
+			return nil, fmt.Errorf("create %s request: %w", s.provider(), err)
 		}
 
 		httpReq.Header.Set("Authorization", "Bearer "+s.apiKey)
@@ -175,17 +175,17 @@ func (s *LLM) stream(ctx context.Context, req llm.PredictNextRequest, events cha
 		return httpReq, nil
 	})
 	if err != nil {
-		return fmt.Errorf("send openai request: %w", err)
+		return fmt.Errorf("send %s request: %w", s.provider(), err)
 	}
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
-			slog.Error("failed to close openai response", "error", err)
+			slog.Error("failed to close response", "provider", s.provider(), "error", err)
 		}
 	}()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 16*1024))
-		return fmt.Errorf("openai status %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+		return fmt.Errorf("%s status %d: %s", s.provider(), resp.StatusCode, strings.TrimSpace(string(data)))
 	}
 
 	if err := sendEvent(ctx, events, llm.PredictionStarted{}); err != nil {
@@ -201,7 +201,7 @@ func (s *LLM) stream(ctx context.Context, req llm.PredictNextRequest, events cha
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
-			if err := handleData(ctx, strings.Join(dataLines, "\n"), state, events); err != nil {
+			if err := s.handleData(ctx, strings.Join(dataLines, "\n"), state, events); err != nil {
 				return err
 			}
 			dataLines = nil
@@ -216,13 +216,13 @@ func (s *LLM) stream(ctx context.Context, req llm.PredictNextRequest, events cha
 	}
 
 	if len(dataLines) > 0 {
-		if err := handleData(ctx, strings.Join(dataLines, "\n"), state, events); err != nil {
+		if err := s.handleData(ctx, strings.Join(dataLines, "\n"), state, events); err != nil {
 			return err
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("read openai stream: %w", err)
+		return fmt.Errorf("read %s stream: %w", s.provider(), err)
 	}
 
 	if !state.finished {
@@ -583,20 +583,27 @@ func (call *partialCall) toToolCall() (llm.ToolCallBlock, error) {
 	}, nil
 }
 
-func handleData(ctx context.Context, data string, state *streamState, events chan<- llm.PredictionEvent) error {
+func (s *LLM) provider() string {
+	if provider := s.model.Provider; provider != "" {
+		return provider
+	}
+	return "openai"
+}
+
+func (s *LLM) handleData(ctx context.Context, data string, state *streamState, events chan<- llm.PredictionEvent) error {
 	if data == "" || data == "[DONE]" {
 		return nil
 	}
 
 	var raw map[string]any
 	if err := json.Unmarshal([]byte(data), &raw); err != nil {
-		return fmt.Errorf("parse openai event: %w", err)
+		return fmt.Errorf("parse %s event: %w", s.provider(), err)
 	}
 
 	typeName, _ := raw["type"].(string)
 
 	if strings.Contains(typeName, "error") {
-		return fmt.Errorf("openai error event: %s", data)
+		return fmt.Errorf("%s error event: %s", s.provider(), data)
 	}
 
 	if delta, ok := raw["delta"].(string); ok && strings.Contains(typeName, "reasoning") && strings.Contains(typeName, "delta") {
