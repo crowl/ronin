@@ -19,6 +19,7 @@ import (
 	"github.com/crowl/ronin/llm/anthropic"
 	"github.com/crowl/ronin/llm/google"
 	"github.com/crowl/ronin/llm/openai"
+	"github.com/crowl/ronin/llm/xai"
 	"github.com/crowl/ronin/mcp"
 	"github.com/crowl/ronin/runtime"
 	"github.com/crowl/ronin/session"
@@ -97,7 +98,7 @@ func run() (exitCode int) {
 	}
 
 	if len(llm.Models()) == 0 {
-		_, _ = fmt.Fprintf(os.Stderr, "no models available, please define at least one of OPENAI_API_KEY, GEMINI_API_KEY or ANTHROPIC_API_KEY\n")
+		_, _ = fmt.Fprintf(os.Stderr, "no models available, please define at least one of OPENAI_API_KEY, GEMINI_API_KEY, ANTHROPIC_API_KEY or XAI_API_KEY\n")
 		return 1
 	}
 
@@ -395,6 +396,19 @@ func setupProviders() error {
 			return fmt.Errorf("anthropic LLM provider setup failed: %w", err)
 		}
 	}
+	if baseURL, ok := os.LookupEnv("XAI_BASE_URL"); ok {
+		apiKey := os.Getenv("XAI_API_KEY")
+		if apiKey == "" {
+			return fmt.Errorf("XAI_API_KEY is required when XAI_BASE_URL is set")
+		}
+		if err := xai.SetupWithBaseURL(apiKey, baseURL); err != nil {
+			return fmt.Errorf("xAI LLM provider setup failed: %w", err)
+		}
+	} else if apiKey := os.Getenv("XAI_API_KEY"); apiKey != "" {
+		if err := xai.Setup(apiKey); err != nil {
+			return fmt.Errorf("xAI LLM provider setup failed: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -413,7 +427,7 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string, shar
 
 	init := func() {
 		if len(llm.Models()) == 0 {
-			initErr = fmt.Errorf("no models available, please define at least one of OPENAI_API_KEY, GEMINI_API_KEY or ANTHROPIC_API_KEY")
+			initErr = fmt.Errorf("no models available, please define at least one of OPENAI_API_KEY, GEMINI_API_KEY, ANTHROPIC_API_KEY or XAI_API_KEY")
 			return
 		}
 

@@ -19,6 +19,7 @@ import (
 	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/llm/anthropic"
 	"github.com/crowl/ronin/llm/openai"
+	"github.com/crowl/ronin/llm/xai"
 	"github.com/crowl/ronin/runtime"
 	"github.com/crowl/ronin/session"
 )
@@ -49,7 +50,7 @@ func TestVersion(t *testing.T) {
 }
 func TestSetupProvidersDefaultOpenAIConfiguration(t *testing.T) {
 	if scenario := os.Getenv("RONIN_SETUP_PROVIDERS_DEFAULT_SCENARIO"); scenario != "" {
-		for _, name := range []string{"OPENAI_API_KEY", "GEMINI_API_KEY", "ANTHROPIC_API_KEY"} {
+		for _, name := range []string{"OPENAI_API_KEY", "GEMINI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY"} {
 			t.Setenv(name, "")
 		}
 		if err := os.Unsetenv("OPENAI_BASE_URL"); err != nil {
@@ -60,6 +61,9 @@ func TestSetupProvidersDefaultOpenAIConfiguration(t *testing.T) {
 		}
 		if err := os.Unsetenv("ANTHROPIC_BASE_URL"); err != nil {
 			t.Fatalf("unset ANTHROPIC_BASE_URL: %v", err)
+		}
+		if err := os.Unsetenv("XAI_BASE_URL"); err != nil {
+			t.Fatalf("unset XAI_BASE_URL: %v", err)
 		}
 
 		switch scenario {
@@ -103,10 +107,10 @@ func TestSetupProvidersDefaultOpenAIConfiguration(t *testing.T) {
 }
 
 func TestSetupProvidersCustomOpenAIConfiguration(t *testing.T) {
-	for _, name := range []string{"GEMINI_API_KEY", "ANTHROPIC_API_KEY"} {
+	for _, name := range []string{"GEMINI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY"} {
 		t.Setenv(name, "")
 	}
-	for _, name := range []string{"GEMINI_BASE_URL", "ANTHROPIC_BASE_URL"} {
+	for _, name := range []string{"GEMINI_BASE_URL", "ANTHROPIC_BASE_URL", "XAI_BASE_URL"} {
 		if err := os.Unsetenv(name); err != nil {
 			t.Fatalf("unset %s: %v", name, err)
 		}
@@ -176,6 +180,7 @@ func TestSetupProvidersCustomProviderConfiguration(t *testing.T) {
 			"OPENAI_API_KEY", "OPENAI_BASE_URL",
 			"GEMINI_API_KEY", "GEMINI_BASE_URL",
 			"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL",
+			"XAI_API_KEY", "XAI_BASE_URL",
 		} {
 			if err := os.Unsetenv(name); err != nil {
 				t.Fatalf("unset %s: %v", name, err)
@@ -188,31 +193,42 @@ func TestSetupProvidersCustomProviderConfiguration(t *testing.T) {
 			t.Setenv("GEMINI_BASE_URL", "https://proxy.example.com/v1beta")
 		case "anthropic-missing-key":
 			t.Setenv("ANTHROPIC_BASE_URL", "https://proxy.example.com/v1")
+		case "xai-missing-key":
+			t.Setenv("XAI_BASE_URL", "https://proxy.example.com/v1")
 		case "gemini-empty-url":
 			t.Setenv("GEMINI_API_KEY", "key")
 			t.Setenv("GEMINI_BASE_URL", "")
 		case "anthropic-empty-url":
 			t.Setenv("ANTHROPIC_API_KEY", "key")
 			t.Setenv("ANTHROPIC_BASE_URL", "")
+		case "xai-empty-url":
+			t.Setenv("XAI_API_KEY", "key")
+			t.Setenv("XAI_BASE_URL", "")
 		case "gemini-invalid-url":
 			t.Setenv("GEMINI_API_KEY", "key")
 			t.Setenv("GEMINI_BASE_URL", "ftp://proxy.example.com/v1beta")
 		case "anthropic-invalid-url":
 			t.Setenv("ANTHROPIC_API_KEY", "key")
 			t.Setenv("ANTHROPIC_BASE_URL", "ftp://proxy.example.com/v1")
+		case "xai-invalid-url":
+			t.Setenv("XAI_API_KEY", "key")
+			t.Setenv("XAI_BASE_URL", "ftp://proxy.example.com/v1")
 		case "gemini-custom":
 			t.Setenv("GEMINI_API_KEY", "key")
 			t.Setenv("GEMINI_BASE_URL", "https://proxy.example.com/v1beta///")
 		case "anthropic-custom":
 			t.Setenv("ANTHROPIC_API_KEY", "key")
 			t.Setenv("ANTHROPIC_BASE_URL", "https://proxy.example.com/v1///")
+		case "xai-custom":
+			t.Setenv("XAI_API_KEY", "key")
+			t.Setenv("XAI_BASE_URL", "https://proxy.example.com/v1///")
 		default:
 			t.Fatalf("unknown scenario %q", scenario)
 		}
 
 		err := setupProviders()
 		switch scenario {
-		case "gemini-missing-key", "anthropic-missing-key", "gemini-empty-url", "anthropic-empty-url", "gemini-invalid-url", "anthropic-invalid-url":
+		case "gemini-missing-key", "anthropic-missing-key", "xai-missing-key", "gemini-empty-url", "anthropic-empty-url", "xai-empty-url", "gemini-invalid-url", "anthropic-invalid-url", "xai-invalid-url":
 			if err == nil {
 				t.Fatalf("setupProviders() error = nil, want failure")
 			}
@@ -244,15 +260,26 @@ func TestSetupProvidersCustomProviderConfiguration(t *testing.T) {
 			if got := reflect.ValueOf(client).Elem().FieldByName("baseURL").String(); got != "https://proxy.example.com/v1/messages" {
 				t.Fatalf("Anthropic base URL = %q", got)
 			}
+		case "xai-custom":
+			if err != nil {
+				t.Fatalf("setupProviders() error = %v", err)
+			}
+			client, err := llm.LoadModelClient(xai.Grok46, llm.ReasoningLevelOff)
+			if err != nil {
+				t.Fatalf("load xAI model: %v", err)
+			}
+			if got := reflect.ValueOf(client).Elem().FieldByName("baseURL").String(); got != "https://proxy.example.com/v1/responses" {
+				t.Fatalf("xAI base URL = %q", got)
+			}
 		}
 		return
 	}
 
 	for _, scenario := range []string{
-		"gemini-missing-key", "anthropic-missing-key",
-		"gemini-empty-url", "anthropic-empty-url",
-		"gemini-invalid-url", "anthropic-invalid-url",
-		"gemini-custom", "anthropic-custom",
+		"gemini-missing-key", "anthropic-missing-key", "xai-missing-key",
+		"gemini-empty-url", "anthropic-empty-url", "xai-empty-url",
+		"gemini-invalid-url", "anthropic-invalid-url", "xai-invalid-url",
+		"gemini-custom", "anthropic-custom", "xai-custom",
 	} {
 		t.Run(scenario, func(t *testing.T) {
 			cmd := exec.Command(os.Args[0], "-test.run=^TestSetupProvidersCustomProviderConfiguration$")

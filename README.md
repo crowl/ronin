@@ -9,7 +9,7 @@
 ## Features
 
 - Interactive terminal UI and non-interactive prompt mode
-- OpenAI, Gemini, and Anthropic models
+- OpenAI, Gemini, Anthropic, and xAI models
 - File reading, editing, shell commands, and Go-aware code navigation
 - Persistent sessions with optional resume
 - Project instructions through `AGENTS.md`
@@ -23,6 +23,7 @@ Download a binary for Linux, macOS, or Windows from [GitHub Releases](https://gi
 export OPENAI_API_KEY=...
 # or GEMINI_API_KEY=...
 # or ANTHROPIC_API_KEY=...
+# or XAI_API_KEY=...
 ```
 
 Start Ronin in a project directory:
@@ -43,7 +44,7 @@ go run ./cmd/ronin
 The default configuration selects an OpenAI model. Select another registered model with `-model`:
 
 ```sh
-ronin -model anthropic:claude-sonnet-4-6
+ronin -model xai:grok-4.6
 ```
 
 ## Common usage
@@ -106,7 +107,7 @@ Server stderr is written to one log per server under `$XDG_DATA_HOME/ronin/logs/
 
 If an MCP server returns `instructions` in its standard initialization response, Ronin includes them in the system prompt together with the server's namespaced tool names.
 
-Provider-compatible proxies can be configured with `OPENAI_BASE_URL`, `GEMINI_BASE_URL`, or `ANTHROPIC_BASE_URL`. Each value must be an API root rather than a complete operation endpoint.
+Provider-compatible proxies can be configured with `OPENAI_BASE_URL`, `GEMINI_BASE_URL`, `ANTHROPIC_BASE_URL`, or `XAI_BASE_URL`. Each value must be an API root rather than a complete operation endpoint.
 
 ### Project instructions and skills
 
