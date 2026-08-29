@@ -183,10 +183,11 @@ func (s *Store) Load(ctx context.Context, sessionID string) (session.Session, []
 	if err != nil || !found {
 		return record, nil, found, err
 	}
-	messages, err := s.loadMessages(ctx, record.ID)
+	messages, cost, err := s.loadMessages(ctx, record.ID)
 	if err != nil {
 		return session.Session{}, nil, false, err
 	}
+	record.Cost = cost
 	return record, messages, true, nil
 }
 
@@ -199,10 +200,11 @@ func (s *Store) Latest(ctx context.Context, workingDir string) (session.Session,
 	if err != nil || !found {
 		return record, nil, found, err
 	}
-	messages, err := s.loadMessages(ctx, record.ID)
+	messages, cost, err := s.loadMessages(ctx, record.ID)
 	if err != nil {
 		return session.Session{}, nil, false, err
 	}
+	record.Cost = cost
 	return record, messages, true, nil
 }
 
@@ -280,35 +282,45 @@ func (s *Store) loadSession(ctx context.Context, clause string, args ...any) (se
 	return record, true, nil
 }
 
-func (s *Store) loadMessages(ctx context.Context, sessionID string) ([]llm.Message, error) {
+func (s *Store) loadMessages(ctx context.Context, sessionID string) ([]llm.Message, llm.SessionCost, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT seq, type, payload, created_at
 		FROM session_events WHERE session_id = ? ORDER BY seq`, sessionID)
 	if err != nil {
-		return nil, fmt.Errorf("load events for session %q: %w", sessionID, err)
+		return nil, llm.SessionCost{}, fmt.Errorf("load events for session %q: %w", sessionID, err)
 	}
 	defer rows.Close()
 
 	var events []session.Event
+	cost := llm.SessionCost{Available: true}
 	for rows.Next() {
 		var seq, createdAt int64
 		var eventType string
 		var payload []byte
 		if err := rows.Scan(&seq, &eventType, &payload, &createdAt); err != nil {
-			return nil, fmt.Errorf("scan event for session %q: %w", sessionID, err)
+			return nil, llm.SessionCost{}, fmt.Errorf("scan event for session %q: %w", sessionID, err)
 		}
 		event, err := session.DecodeEvent(eventType, payload)
 		if err != nil {
-			return nil, fmt.Errorf("decode event %d for session %q: %w", seq, sessionID, err)
+			return nil, llm.SessionCost{}, fmt.Errorf("decode event %d for session %q: %w", seq, sessionID, err)
 		}
 		event.Seq = seq
 		event.CreatedAt = timeFromTimestamp(createdAt)
+		if event.Type == session.EventMessage {
+			if assistant, ok := event.Message.(llm.AssistantMessage); ok {
+				if !assistant.Usage.Cost.Available {
+					cost.Available = false
+				} else {
+					cost.Total += assistant.Usage.Cost.Total
+				}
+			}
+		}
 		events = append(events, event)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("load events for session %q: %w", sessionID, err)
+		return nil, llm.SessionCost{}, fmt.Errorf("load events for session %q: %w", sessionID, err)
 	}
-	return session.Reconstruct(events), nil
+	return session.Reconstruct(events), cost, nil
 }
 
 func cleanWorkingDir(workingDir string) (string, error) {

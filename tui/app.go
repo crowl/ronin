@@ -290,9 +290,17 @@ func (app *app) runCommand(ctx context.Context, item menuItem, command Command) 
 		app.model.startNewConversation()
 		return nil
 	case SwitchModel:
+		previousLevel := app.conversation.ReasoningLevel()
 		err = app.conversation.SwitchModel(typedCommand.Model)
 		if err != nil {
 			err = fmt.Errorf("failed to switch model: %w", err)
+		} else {
+			app.model.setReasoningLevels(app.conversation.Model().ReasoningLevels())
+			app.model.recordCommand(item, nil)
+			if app.conversation.ReasoningLevel() != previousLevel {
+				app.model.recordCommand(menuItem{Value: "/reasoning " + string(app.conversation.ReasoningLevel())}, nil)
+			}
+			return nil
 		}
 	case SwitchReasoningLevel:
 		err = app.conversation.SwitchReasoningLevel(typedCommand.Level)

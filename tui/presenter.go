@@ -386,13 +386,18 @@ func (p statusBar) Lines(width int) []string {
 		contextPercentText = normalForegroundStyle.start() + contextPercentText + mutedStyle.start()
 	}
 
+	cost := "$?"
+	if p.ContextUsage.Cost.Available {
+		cost = fmt.Sprintf("$%.2f", p.ContextUsage.Cost.Total)
+	}
 	usage := fmt.Sprintf(
-		"↑%s ↓%s R%s %s/%s",
+		"↑%s ↓%s R%s %s/%s %s",
 		statusBarTokenCountText(p.ContextUsage.InputTokens),
 		statusBarTokenCountText(p.ContextUsage.OutputTokens),
 		statusBarTokenCountText(p.ContextUsage.CachedTokens),
 		contextPercentText,
 		statusBarTokenCountText(int(p.Model.ContextWindow)),
+		cost,
 	)
 	details := fmt.Sprintf("%s %s | %s", p.Model, p.ReasoningLevel, usage)
 	return []string{mutedStyle.apply(twoColumnsLine(cwdStatus, details, width))}

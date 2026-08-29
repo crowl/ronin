@@ -46,6 +46,7 @@ type ConversationConfig struct {
 	SessionStore                  session.Store
 	Session                       session.Session
 	Messages                      []llm.Message
+	SessionCost                   llm.SessionCost
 }
 
 const (
@@ -95,6 +96,12 @@ func NewConversation(cfg ConversationConfig) (*Conversation, error) {
 		}
 	}
 
+	contextUsage.Cost = llm.Cost{Total: cfg.SessionCost.Total, Available: cfg.SessionCost.Available}
+	if cfg.Session.ID == "" && len(messages) == 0 && !cfg.SessionCost.Available {
+		cfg.SessionCost.Available = true
+		contextUsage.Cost.Available = true
+	}
+
 	return &Conversation{
 		cwd:                           cfg.CWD,
 		systemPrompt:                  cfg.SystemPrompt,
@@ -102,6 +109,7 @@ func NewConversation(cfg ConversationConfig) (*Conversation, error) {
 		now:                           now,
 		modelClient:                   cfg.ModelClient,
 		contextUsage:                  contextUsage,
+		sessionCost:                   cfg.SessionCost,
 		toolDefs:                      toolDefs,
 		toolByName:                    toolByName,
 		compactor:                     cfg.Compactor,
@@ -121,6 +129,7 @@ type Conversation struct {
 
 	modelClient  llm.ModelClient
 	contextUsage llm.Usage
+	sessionCost  llm.SessionCost
 
 	toolDefs   []llm.Tool
 	toolByName map[string]Tool
@@ -161,12 +170,21 @@ func (c *Conversation) ToolCallTitle(name string, arguments []byte) string {
 }
 
 func (c *Conversation) SwitchModel(model llm.Model) error {
-	newModelClient, err := llm.LoadModelClient(model, c.modelClient.ReasoningLevel())
+	level := c.modelClient.ReasoningLevel()
+	if model.SupportedReasoning != 0 && !model.SupportsReasoning(level) {
+		nearest, ok := model.NearestReasoningLevel(level)
+		if !ok {
+			return fmt.Errorf("model %s has no supported reasoning levels", model)
+		}
+		level = nearest
+	}
+	newModelClient, err := llm.LoadModelClient(model, level)
 	if err != nil {
 		return fmt.Errorf("select model client: %w", err)
 	}
 	updated := c.session
 	updated.Model = config.Model{Provider: model.Provider, Name: model.Name}
+	updated.ReasoningLevel = string(level)
 	updated.UpdatedAt = c.now().UTC()
 	if err := c.updateMetadata(context.Background(), updated); err != nil {
 		return fmt.Errorf("save session model: %w", err)
@@ -180,6 +198,9 @@ func (c *Conversation) SwitchModel(model llm.Model) error {
 }
 
 func (c *Conversation) SwitchReasoningLevel(lvl llm.ReasoningLevel) error {
+	if !c.modelClient.Model().SupportsReasoning(lvl) {
+		return fmt.Errorf("reasoning level %q is not supported by model %s", lvl, c.modelClient.Model())
+	}
 	prevLevel := c.modelClient.ReasoningLevel()
 	if err := c.modelClient.SetReasoningLevel(lvl); err != nil {
 		return fmt.Errorf("set reasoning level: %w", err)
@@ -237,7 +258,8 @@ func (c *Conversation) NewConversation() error {
 		}
 		c.session = newSession
 	}
-	c.contextUsage = llm.Usage{}
+	c.contextUsage = llm.Usage{Cost: llm.Cost{Available: true}}
+	c.sessionCost = llm.SessionCost{Available: true}
 	c.messages = nil
 	return nil
 }
@@ -496,7 +518,8 @@ func (c *Conversation) run(ctx context.Context, prompt string, events chan<- Eve
 					toolCalls = append(toolCalls, call)
 				}
 			case llm.PredictionFinished:
-				c.contextUsage, usage = typed.Usage, typed.Usage
+				typed.Usage.Cost = llm.EstimateCost(c.modelClient.Model(), typed.Usage)
+				usage = typed.Usage
 				stopReason = typed.StopReason
 				predictionFinished = true
 			}
@@ -515,6 +538,7 @@ func (c *Conversation) run(ctx context.Context, prompt string, events chan<- Eve
 			if appendErr := c.appendMessage(ctx, message); appendErr != nil {
 				return finish(c.reportSaveFailure(ctx, events, err, appendErr))
 			}
+			c.recordUsage(usage)
 			select {
 			case <-ctx.Done():
 				return finish(ctx.Err())
@@ -525,6 +549,7 @@ func (c *Conversation) run(ctx context.Context, prompt string, events chan<- Eve
 		if err := c.appendMessage(ctx, message); err != nil {
 			return finish(c.reportSaveFailure(ctx, events, nil, err))
 		}
+		c.recordUsage(usage)
 		select {
 		case <-ctx.Done():
 			return finish(ctx.Err())
@@ -555,6 +580,16 @@ func (c *Conversation) run(ctx context.Context, prompt string, events chan<- Eve
 		return finish(c.reportSaveFailure(ctx, events, err, appendErr))
 	}
 	return finish(err)
+}
+
+func (c *Conversation) recordUsage(usage llm.Usage) {
+	if usage.Cost.Available {
+		c.sessionCost.Total += usage.Cost.Total
+	} else {
+		c.sessionCost.Available = false
+	}
+	c.contextUsage = usage
+	c.contextUsage.Cost = llm.Cost{Total: c.sessionCost.Total, Available: c.sessionCost.Available}
 }
 
 func completionError(reason llm.StopReason) error {

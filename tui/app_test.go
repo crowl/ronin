@@ -227,6 +227,7 @@ func TestTUIRendering(t *testing.T) {
 				InputTokens:  2356,
 				OutputTokens: 2900,
 				CachedTokens: 1000,
+				Cost:         llm.Cost{Available: true, Total: 0.42},
 			},
 		}.Lines(120)
 
@@ -237,7 +238,7 @@ func TestTUIRendering(t *testing.T) {
 		if !strings.Contains(usageLine, mutedStyle.start()) {
 			t.Fatalf("status bar is not muted: %q", usageLine)
 		}
-		for _, want := range []string{"↑2.3K ↓2.9K R1.0K", "35.8%/14.6K"} {
+		for _, want := range []string{"↑2.3K ↓2.9K R1.0K", "35.8%/14.6K", "$0.42"} {
 			if !strings.Contains(usageLine, want) {
 				t.Fatalf("status usage line missing %q: %q", want, usageLine)
 			}
@@ -272,6 +273,17 @@ func TestTUIRendering(t *testing.T) {
 					t.Fatalf("status bar percentage style\ngot:  %q\nwant substring: %q", line, tc.wantStyledPercent)
 				}
 			})
+		}
+	})
+	t.Run("status bar marks unavailable session cost", func(t *testing.T) {
+		line := statusBar{
+			CWDStatus:    "cwd",
+			UseCWDStatus: true,
+			Model:        llm.Model{Provider: "test", Name: "model", ContextWindow: 1000},
+			ContextUsage: llm.Usage{Cost: llm.Cost{Available: false}},
+		}.Lines(120)[0]
+		if !strings.Contains(line, "$?") {
+			t.Fatalf("status bar cost = %q, want unavailable marker", line)
 		}
 	})
 }

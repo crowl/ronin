@@ -85,4 +85,5 @@ type Session struct {
 	UpdatedAt      time.Time
 	Model          config.Model
 	ReasoningLevel string
+	Cost           llm.SessionCost
 }

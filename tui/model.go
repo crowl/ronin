@@ -621,6 +621,41 @@ func (m *appModel) lines(width int, conversation Conversation, now time.Time) ([
 	return lines, nil
 }
 
+func (m *appModel) setReasoningLevels(levels []llm.ReasoningLevel) {
+	items := make([]menuItem, 0, len(m.menu.items)+len(levels))
+	for _, item := range m.menu.items {
+		if _, ok := item.Command.(SwitchReasoningLevel); !ok {
+			items = append(items, item)
+		}
+	}
+	insertAt := len(items)
+	if len(items) > 0 {
+		if _, ok := items[len(items)-1].Command.(Exit); ok {
+			insertAt--
+		}
+	}
+	reasoningItems := make([]menuItem, 0, len(levels))
+	for _, level := range levels {
+		command := SwitchReasoningLevel{Level: level}
+		argument := string(level)
+		reasoningItems = append(reasoningItems, menuItem{
+			Name:        "/reasoning",
+			Argument:    argument,
+			Value:       "/reasoning " + argument,
+			Description: "switch reasoning level to " + argument,
+			Command:     command,
+		})
+	}
+	updated := make([]menuItem, 0, len(items)+len(reasoningItems))
+	updated = append(updated, items[:insertAt]...)
+	updated = append(updated, reasoningItems...)
+	updated = append(updated, items[insertAt:]...)
+	for i := range updated {
+		updated[i].Index = i
+	}
+	m.menu.items = updated
+}
+
 func (m *appModel) editorLabel() string {
 	if m.workflowInput == nil {
 		return ""

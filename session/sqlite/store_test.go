@@ -42,7 +42,7 @@ func TestStorePersistsAcrossReopen(t *testing.T) {
 				llm.ToolCallBlock{ID: "call-1", Name: "shell", Arguments: []byte(`{"command":"go test ./..."}`)},
 			},
 			StopReason: llm.StopReasonToolUse,
-			Usage:      llm.Usage{InputTokens: 10, OutputTokens: 5, TotalTokens: 15},
+			Usage:      llm.Usage{InputTokens: 10, OutputTokens: 5, TotalTokens: 15, Cost: llm.Cost{Total: 0.12, Available: true}},
 		},
 		llm.ToolOutputMessage{Timestamp: createdAt.Add(2 * time.Second), ToolName: "shell", ToolCallID: "call-1", ToolOutput: "ok"},
 	}
@@ -70,6 +70,9 @@ func TestStorePersistsAcrossReopen(t *testing.T) {
 	}
 	if loaded.ID != created.ID || loaded.Title != created.Title || loaded.Model != created.Model || loaded.ReasoningLevel != created.ReasoningLevel || !loaded.CreatedAt.Equal(created.CreatedAt) {
 		t.Fatalf("Load() session = %#v, want %#v", loaded, created)
+	}
+	if loaded.Cost != (llm.SessionCost{Total: 0.12, Available: true}) {
+		t.Fatalf("Load() session cost = %#v", loaded.Cost)
 	}
 	if !reflect.DeepEqual(gotMessages, wantMessages) {
 		t.Fatalf("Load() messages = %#v, want %#v", gotMessages, wantMessages)
@@ -141,6 +144,10 @@ func TestStoreRoundTripAndCompaction(t *testing.T) {
 		t.Fatalf("Append(first) error = %v", err)
 	}
 	compacted := llm.UserMessage{Timestamp: clock.now, Text: "summary"}
+	priced := llm.AssistantMessage{Timestamp: clock.now, Usage: llm.Usage{Cost: llm.Cost{Total: 0.25, Available: true}}}
+	if err := store.Append(ctx, created.ID, session.Event{Type: session.EventMessage, Message: priced}); err != nil {
+		t.Fatalf("Append(priced) error = %v", err)
+	}
 	if err := store.Append(ctx, created.ID, session.Event{Type: session.EventCompaction, Compacted: []llm.Message{compacted}}); err != nil {
 		t.Fatalf("Append(compaction) error = %v", err)
 	}
@@ -155,6 +162,9 @@ func TestStoreRoundTripAndCompaction(t *testing.T) {
 	}
 	if loaded.ID != created.ID || loaded.Title != "Initial" || loaded.Model != created.Model {
 		t.Fatalf("Load() session = %#v, want %#v", loaded, created)
+	}
+	if loaded.Cost != (llm.SessionCost{Total: 0.25, Available: true}) {
+		t.Fatalf("Load() cost after compaction = %#v", loaded.Cost)
 	}
 	if len(messages) != 2 || messages[0].(llm.UserMessage).Text != "summary" || messages[1].(llm.ErrorMessage).Error.Error() != "after" {
 		t.Fatalf("Load() messages = %#v, want compacted history", messages)

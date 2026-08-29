@@ -598,6 +598,36 @@ func TestSessionMutationTransactions(t *testing.T) {
 			t.Fatalf("stored reasoning level = %q, want %q", got, llm.ReasoningLevelOff)
 		}
 	})
+	t.Run("SwitchModel selects nearest supported reasoning level", func(t *testing.T) {
+		model := llm.Model{
+			Provider:           "test",
+			Name:               "nearest-reasoning",
+			SupportedReasoning: llm.NewReasoningSet(llm.ReasoningLevelOff, llm.ReasoningLevelHigh),
+		}
+		if err := llm.RegisterModel(model, func(level llm.ReasoningLevel) (llm.ModelClient, error) {
+			return &fakeModelClient{model: model, reasoningLevel: level}, nil
+		}); err != nil {
+			t.Fatalf("RegisterModel() error = %v", err)
+		}
+		store := &fakeSessionStore{sessions: map[string]session.Session{"sess-nearest": {ID: "sess-nearest"}}, activeID: "sess-nearest"}
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{
+			ModelClient:  &fakeModelClient{reasoningLevel: llm.ReasoningLevelMedium},
+			SessionStore: store,
+			Session:      store.sessions[store.activeID],
+		})
+		if err != nil {
+			t.Fatalf("NewConversation() error = %v", err)
+		}
+		if err := agt.SwitchModel(model); err != nil {
+			t.Fatalf("SwitchModel() error = %v", err)
+		}
+		if got := agt.ReasoningLevel(); got != llm.ReasoningLevelHigh {
+			t.Fatalf("reasoning level = %q, want high", got)
+		}
+		if got := store.sessions[store.activeID].ReasoningLevel; got != string(llm.ReasoningLevelHigh) {
+			t.Fatalf("stored reasoning level = %q, want high", got)
+		}
+	})
 }
 
 func TestCompactConversation(t *testing.T) {
