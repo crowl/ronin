@@ -37,6 +37,9 @@ func NewLLM(cfg LLMConfig) (*LLM, error) {
 	if !llm.IsValidReasoningLevel(cfg.ReasoningLevel) {
 		return nil, fmt.Errorf("reasoning level %v is not valid", cfg.ReasoningLevel)
 	}
+	if !cfg.Model.SupportsReasoning(cfg.ReasoningLevel) {
+		return nil, fmt.Errorf("reasoning level %q is not supported by model %s", cfg.ReasoningLevel, cfg.Model)
+	}
 	if cfg.BaseURL == "" {
 		cfg.BaseURL = defaultBaseURL
 	}
@@ -77,6 +80,9 @@ func (s *LLM) ReasoningLevel() llm.ReasoningLevel {
 func (s *LLM) SetReasoningLevel(level llm.ReasoningLevel) error {
 	if !llm.IsValidReasoningLevel(level) {
 		return fmt.Errorf("reasoning level %v is not valid", level)
+	}
+	if !s.model.SupportsReasoning(level) {
+		return fmt.Errorf("reasoning level %q is not supported by model %s", level, s.model)
 	}
 	s.reasoningMu.Lock()
 	defer s.reasoningMu.Unlock()
@@ -253,7 +259,7 @@ func (s *LLM) buildPayload(req llm.PredictNextRequest) (*openAIRequest, error) {
 	if req.MaxTokens > 0 {
 		payload.MaxOutputTokens = req.MaxTokens
 	}
-	if reasoningLevel := s.ReasoningLevel(); reasoningLevel != llm.ReasoningLevelOff {
+	if reasoningLevel := s.ReasoningLevel(); reasoningLevel != llm.ReasoningLevelOff && s.model.ReasoningMode != llm.ReasoningModeNone {
 		payload.Reasoning = &openAIReasoning{
 			Effort:  reasoningLevel,
 			Summary: "auto",
@@ -304,7 +310,7 @@ func (s *LLM) buildStructuredPayload(req llm.PredictNextStructuredRequest) (*ope
 	if req.MaxTokens > 0 {
 		payload.MaxOutputTokens = req.MaxTokens
 	}
-	if reasoningLevel := s.ReasoningLevel(); reasoningLevel != llm.ReasoningLevelOff {
+	if reasoningLevel := s.ReasoningLevel(); reasoningLevel != llm.ReasoningLevelOff && s.model.ReasoningMode != llm.ReasoningModeNone {
 		payload.Reasoning = &openAIReasoning{
 			Effort:  reasoningLevel,
 			Summary: "auto",

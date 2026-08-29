@@ -61,19 +61,42 @@ func (RedactedThinkingBlock) assistantBlock() {}
 func (ToolCallBlock) assistantBlock()         {}
 
 type Usage struct {
-	InputTokens  int
-	OutputTokens int
-	CachedTokens int
-	TotalTokens  int
-	Cost         Cost
+	InputTokens      int
+	OutputTokens     int
+	CachedTokens     int
+	CacheWriteTokens int
+	TotalTokens      int
+	Cost             Cost
 }
 
 type Cost struct {
-	InputTokens      float64
-	OutputTokens     float64
-	CacheReadTokens  float64
-	CacheWriteTokens float64
-	TotalTokens      float64
+	Input      float64
+	Output     float64
+	CacheRead  float64
+	CacheWrite float64
+	Total      float64
+	Available  bool
+}
+
+func EstimateCost(model Model, usage Usage) Cost {
+	uncachedInput := max(usage.InputTokens-usage.CachedTokens-usage.CacheWriteTokens, 0)
+	cost := Cost{Available: true}
+	if uncachedInput > 0 && !model.Pricing.HasInput || usage.OutputTokens > 0 && !model.Pricing.HasOutput || usage.CachedTokens > 0 && !model.Pricing.HasCacheRead || usage.CacheWriteTokens > 0 && !model.Pricing.HasCacheWrite {
+		cost.Available = false
+		return cost
+	}
+	const tokensPerMillion = 1_000_000
+	cost.Input = float64(uncachedInput) * model.Pricing.Input / tokensPerMillion
+	cost.Output = float64(usage.OutputTokens) * model.Pricing.Output / tokensPerMillion
+	cost.CacheRead = float64(usage.CachedTokens) * model.Pricing.CacheRead / tokensPerMillion
+	cost.CacheWrite = float64(usage.CacheWriteTokens) * model.Pricing.CacheWrite / tokensPerMillion
+	cost.Total = cost.Input + cost.Output + cost.CacheRead + cost.CacheWrite
+	return cost
+}
+
+type SessionCost struct {
+	Total     float64
+	Available bool
 }
 
 func (m AssistantMessage) Text() string {

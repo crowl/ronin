@@ -31,7 +31,7 @@ func TestSetReasoningLevelValidates(t *testing.T) {
 }
 
 func TestSetReasoningLevelRejectsUnsupportedModelConfiguration(t *testing.T) {
-	client, err := anthropic.NewLLM(anthropic.LLMConfig{APIKey: "key", Model: llm.Model{Provider: "anthropic", Name: "claude-sonnet-4-6"}, ReasoningLevel: llm.ReasoningLevelMedium})
+	client, err := anthropic.NewLLM(anthropic.LLMConfig{APIKey: "key", Model: llm.Model{Provider: "anthropic", Name: "limited", SupportedReasoning: llm.NewReasoningSet(llm.ReasoningLevelOff, llm.ReasoningLevelMedium)}, ReasoningLevel: llm.ReasoningLevelMedium})
 	if err != nil {
 		t.Fatalf("new llm: %v", err)
 	}
@@ -362,8 +362,9 @@ func TestPredictNextUsesModelThinkingConfiguration(t *testing.T) {
 		}
 	})
 
-	t.Run("rejects unsupported xhigh effort", func(t *testing.T) {
-		_, err := anthropic.NewLLM(anthropic.LLMConfig{APIKey: "key", Model: llm.Model{Provider: "anthropic", Name: "claude-sonnet-4-6"}, ReasoningLevel: llm.ReasoningLevelExtraHigh})
+	t.Run("rejects unsupported configured reasoning", func(t *testing.T) {
+		model := llm.Model{Provider: "anthropic", Name: "limited", SupportedReasoning: llm.NewReasoningSet(llm.ReasoningLevelOff, llm.ReasoningLevelHigh)}
+		_, err := anthropic.NewLLM(anthropic.LLMConfig{APIKey: "key", Model: model, ReasoningLevel: llm.ReasoningLevelExtraHigh})
 		if err == nil || !strings.Contains(err.Error(), "not supported") {
 			t.Fatalf("error = %v, want unsupported effort error", err)
 		}
@@ -377,7 +378,8 @@ func TestPredictNextUsesModelThinkingConfiguration(t *testing.T) {
 	})
 
 	t.Run("rejects disabling always-on thinking", func(t *testing.T) {
-		_, err := anthropic.NewLLM(anthropic.LLMConfig{APIKey: "key", Model: llm.Model{Provider: "anthropic", Name: "claude-fable-5"}, ReasoningLevel: llm.ReasoningLevelOff})
+		model := llm.Model{Provider: "anthropic", Name: "claude-fable-5", ReasoningMode: llm.ReasoningModeBudget, SupportedReasoning: llm.NewReasoningSet(llm.ReasoningLevelLow, llm.ReasoningLevelMedium, llm.ReasoningLevelHigh)}
+		_, err := anthropic.NewLLM(anthropic.LLMConfig{APIKey: "key", Model: model, ReasoningLevel: llm.ReasoningLevelOff})
 		if err == nil || !strings.Contains(err.Error(), "cannot be disabled") {
 			t.Fatalf("error = %v, want always-on thinking error", err)
 		}
@@ -497,7 +499,8 @@ func TestPredictNextStructured(t *testing.T) {
 	})
 
 	t.Run("rejects_always_thinking_model", func(t *testing.T) {
-		client, err := anthropic.NewLLM(anthropic.LLMConfig{APIKey: "key", Model: llm.Model{Provider: "anthropic", Name: "claude-fable-5"}, ReasoningLevel: llm.ReasoningLevelLow})
+		model := llm.Model{Provider: "anthropic", Name: "claude-fable-5", ReasoningMode: llm.ReasoningModeBudget, SupportedReasoning: llm.NewReasoningSet(llm.ReasoningLevelLow, llm.ReasoningLevelMedium, llm.ReasoningLevelHigh)}
+		client, err := anthropic.NewLLM(anthropic.LLMConfig{APIKey: "key", Model: model, ReasoningLevel: llm.ReasoningLevelLow})
 		if err != nil {
 			t.Fatalf("new llm: %v", err)
 		}

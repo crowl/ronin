@@ -11,13 +11,27 @@ type Factory func(ReasoningLevel) (ModelClient, error)
 
 var (
 	registryMu sync.RWMutex
-	registry   = make(map[Model]Factory)
+	registry   = make(map[string]registeredModel)
 )
+
+type registeredModel struct {
+	model   Model
+	factory Factory
+}
+
+func modelKey(model Model) string {
+	return model.Provider + "\x00" + model.Name
+}
 
 func Models() []Model {
 	registryMu.RLock()
-	models := slices.Collect(maps.Keys(registry))
+	entries := slices.Collect(maps.Values(registry))
 	registryMu.RUnlock()
+
+	models := make([]Model, 0, len(entries))
+	for _, entry := range entries {
+		models = append(models, entry.model)
+	}
 
 	slices.SortFunc(models, func(a, b Model) int {
 		if a.Provider != b.Provider {
@@ -36,21 +50,25 @@ func RegisterModel(model Model, factory Factory) error {
 
 	registryMu.Lock()
 	defer registryMu.Unlock()
-	if _, ok := registry[model]; ok {
+	key := modelKey(model)
+	if _, ok := registry[key]; ok {
 		return fmt.Errorf("duplicate model registration: %s", model.String())
 	}
-	registry[model] = factory
+	registry[key] = registeredModel{model: model, factory: factory}
 	return nil
 }
 
 func LoadModelClient(model Model, level ReasoningLevel) (ModelClient, error) {
 	registryMu.RLock()
-	factory, ok := registry[model]
+	entry, ok := registry[modelKey(model)]
 	registryMu.RUnlock()
 	if !ok {
 		return nil, fmt.Errorf("unknown model: %s", model)
 	}
-	loaded, err := factory(level)
+	if !entry.model.SupportsReasoning(level) {
+		return nil, fmt.Errorf("reasoning level %q is not supported by model %s", level, entry.model)
+	}
+	loaded, err := entry.factory(level)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load model: %s with reasoning level: %s: %w", model, level, err)
 	}
