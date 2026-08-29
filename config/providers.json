@@ -1,0 +1,52 @@
+{
+  "providers": {
+    "openai": {
+      "adapter": "openai",
+      "base_url": "https://api.openai.com/v1",
+      "base_url_env": "OPENAI_BASE_URL",
+      "api_key_env": "OPENAI_API_KEY",
+      "models": {
+        "gpt-5.6-sol": {"context_window": 272000, "reasoning": {"mode": "effort", "levels": ["off", "low", "medium", "high", "xhigh"]}, "pricing": {"input": 4, "output": 20, "cache_read": 0.4, "cache_write": 5}},
+        "gpt-5.6-terra": {"context_window": 272000, "reasoning": {"mode": "effort", "levels": ["off", "low", "medium", "high", "xhigh"]}, "pricing": {"input": 2, "output": 12, "cache_read": 0.2, "cache_write": 2.5}},
+        "gpt-5.6-luna": {"context_window": 272000, "reasoning": {"mode": "effort", "levels": ["off", "low", "medium", "high", "xhigh"]}, "pricing": {"input": 0.2, "output": 1.2, "cache_read": 0.02, "cache_write": 0.25}},
+        "gpt-5.5": {"context_window": 272000, "reasoning": {"mode": "effort", "levels": ["off", "low", "medium", "high", "xhigh"]}, "pricing": {"input": 5, "output": 30, "cache_read": 0.5}},
+        "gpt-5.5-pro": {"context_window": 272000, "reasoning": {"mode": "effort", "levels": ["off", "low", "medium", "high", "xhigh"]}, "pricing": {"input": 30, "output": 180}},
+        "gpt-5.4": {"context_window": 272000, "reasoning": {"mode": "effort", "levels": ["off", "low", "medium", "high", "xhigh"]}, "pricing": {"input": 2.5, "output": 15, "cache_read": 0.25}},
+        "gpt-5.4-mini": {"context_window": 400000, "reasoning": {"mode": "effort", "levels": ["off", "low", "medium", "high", "xhigh"]}, "pricing": {"input": 0.75, "output": 4.5, "cache_read": 0.075}},
+        "gpt-5.4-nano": {"context_window": 400000, "reasoning": {"mode": "effort", "levels": ["off", "low", "medium", "high", "xhigh"]}, "pricing": {"input": 0.2, "output": 1.25, "cache_read": 0.02}}
+      }
+    },
+    "google": {
+      "adapter": "google",
+      "base_url": "https://generativelanguage.googleapis.com/v1beta",
+      "base_url_env": "GEMINI_BASE_URL",
+      "api_key_env": "GEMINI_API_KEY",
+      "models": {
+        "gemini-3.1-flash-lite": {"context_window": 1048576, "reasoning": {"mode": "effort", "levels": ["off", "low", "medium", "high"]}, "pricing": {"input": 0.25, "output": 1.5, "cache_read": 0.025}},
+        "gemini-3.5-flash": {"context_window": 1048576, "reasoning": {"mode": "effort", "levels": ["off", "low", "medium", "high"]}, "pricing": {"input": 1.5, "output": 9, "cache_read": 0.15}},
+        "gemini-3.7-flash": {"context_window": 1048576, "reasoning": {"mode": "effort", "levels": ["off", "low", "medium", "high"]}, "pricing": {"input": 0.75, "output": 3.75, "cache_read": 0.075}}
+      }
+    },
+    "anthropic": {
+      "adapter": "anthropic",
+      "base_url": "https://api.anthropic.com/v1",
+      "base_url_env": "ANTHROPIC_BASE_URL",
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "models": {
+        "claude-haiku-4-5": {"context_window": 1000000, "reasoning": {"mode": "budget", "levels": ["off", "low", "medium", "high"]}, "pricing": {"input": 1, "output": 5, "cache_read": 0.1, "cache_write": 1.25}},
+        "claude-sonnet-5": {"context_window": 1000000, "reasoning": {"mode": "effort", "levels": ["off", "low", "medium", "high", "xhigh"]}, "pricing": {"input": 2, "output": 10, "cache_read": 0.2, "cache_write": 2.5}},
+        "claude-opus-5": {"context_window": 1000000, "reasoning": {"mode": "effort", "levels": ["off", "low", "medium", "high", "xhigh"]}, "pricing": {"input": 5, "output": 25, "cache_read": 0.5, "cache_write": 6.25}}
+      }
+    },
+    "xai": {
+      "adapter": "openai",
+      "base_url": "https://api.x.ai/v1",
+      "base_url_env": "XAI_BASE_URL",
+      "api_key_env": "XAI_API_KEY",
+      "models": {
+        "grok-4.6": {"context_window": 500000, "reasoning": {"mode": "effort", "levels": ["off", "low", "medium", "high"]}, "pricing": {"input": 2, "output": 6, "cache_read": 0.5}},
+        "grok-build-0.1": {"context_window": 256000, "reasoning": {"mode": "effort", "levels": ["off", "low", "medium", "high"]}, "pricing": {"input": 1, "output": 2, "cache_read": 0.2}}
+      }
+    }
+  }
+}

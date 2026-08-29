@@ -242,7 +242,7 @@ func TestSetupProvidersCustomProviderConfiguration(t *testing.T) {
 			if err != nil {
 				t.Fatalf("setupProviders() error = %v", err)
 			}
-			client, err := llm.LoadModelClient(llm.Model{Provider: "google", Name: "gemini-3.1-pro-preview", ContextWindow: 1048576}, llm.ReasoningLevelOff)
+			client, err := llm.LoadModelClient(llm.Model{Provider: "google", Name: "gemini-3.1-flash-lite", ContextWindow: 1048576}, llm.ReasoningLevelOff)
 			if err != nil {
 				t.Fatalf("load Gemini model: %v", err)
 			}

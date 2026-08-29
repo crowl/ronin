@@ -67,6 +67,26 @@ func SetupWithBaseURL(apiKey, baseURL string) error {
 	})
 }
 
+// SetupModels registers models using baseURL as the OpenAI-compatible API root.
+func SetupModels(apiKey, baseURL string, models []llm.Model) error {
+	endpoint, err := responsesEndpoint(baseURL)
+	if err != nil {
+		return err
+	}
+	return registerModelList(models, func(model llm.Model, level llm.ReasoningLevel) (llm.ModelClient, error) {
+		newLLM, err := NewLLM(LLMConfig{
+			BaseURL:        endpoint,
+			APIKey:         apiKey,
+			Model:          model,
+			ReasoningLevel: level,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("create openai llm: %w", err)
+		}
+		return newLLM, nil
+	})
+}
+
 func responsesEndpoint(baseURL string) (string, error) {
 	parsed, err := url.Parse(baseURL)
 	if err != nil {
@@ -91,7 +111,11 @@ func responsesEndpoint(baseURL string) (string, error) {
 }
 
 func registerModels(newClient func(llm.Model, llm.ReasoningLevel) (llm.ModelClient, error)) error {
-	for _, model := range models {
+	return registerModelList(models, newClient)
+}
+
+func registerModelList(modelList []llm.Model, newClient func(llm.Model, llm.ReasoningLevel) (llm.ModelClient, error)) error {
+	for _, model := range modelList {
 		registeredModel := model
 		if err := llm.RegisterModel(registeredModel, func(level llm.ReasoningLevel) (llm.ModelClient, error) {
 			return newClient(registeredModel, level)

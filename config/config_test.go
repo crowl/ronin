@@ -131,8 +131,11 @@ func TestLoad(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Load() error = %v", err)
 		}
-		if !reflect.DeepEqual(settings, defaultSettings()) {
-			t.Fatalf("Load() = %#v, want %#v", settings, defaultSettings())
+		if !reflect.DeepEqual(settings.Model, defaultSettings().Model) || settings.ReasoningLevel != defaultSettings().ReasoningLevel || settings.MaxTurns != defaultSettings().MaxTurns || !reflect.DeepEqual(settings.ToolOutputSummarization, defaultSettings().ToolOutputSummarization) {
+			t.Fatalf("Load() preferences = %#v, want %#v", settings, defaultSettings())
+		}
+		if len(settings.Providers) == 0 {
+			t.Fatal("Load() provider catalog is empty")
 		}
 
 		path := filepath.Join(base, "ronin", "config.json")
@@ -145,6 +148,7 @@ func TestLoad(t *testing.T) {
 		if err := json.Unmarshal(data, &written); err != nil {
 			t.Fatalf("written config is not valid JSON: %v", err)
 		}
+		written.Providers = nil
 		if !reflect.DeepEqual(written, defaultSettings()) {
 			t.Fatalf("written config = %#v, want %#v", written, defaultSettings())
 		}
@@ -170,6 +174,7 @@ func TestLoad(t *testing.T) {
 			MaxTurns:                10,
 			ToolOutputSummarization: config.ToolOutputSummarization{},
 		}
+		want.Providers = settings.Providers
 		if !reflect.DeepEqual(settings, want) {
 			t.Fatalf("Load() = %#v, want %#v", settings, want)
 		}
@@ -241,6 +246,52 @@ func TestLoad(t *testing.T) {
 					t.Fatalf("Load() error = %v, want error containing %q", err, tc.wantErr)
 				}
 			})
+		}
+	})
+	t.Run("merges provider and model overrides", func(t *testing.T) {
+		base := t.TempDir()
+		t.Setenv("XDG_CONFIG_HOME", base)
+		writeConfig(t, base, `{
+			"model": {"provider": "openai", "name": "gpt-5.5"},
+			"reasoning_level": "medium",
+			"max_turns": 512,
+			"providers": {
+				"openai": {"models": {"gpt-5.5": {"pricing": {"input": 0, "output": 10}}}},
+				"custom": {
+					"adapter": "openai", "base_url": "https://example.com/v1", "api_key_env": "CUSTOM_KEY",
+					"models": {"model": {"context_window": 1000, "reasoning": {"mode": "none", "levels": ["off"]}}}
+				}
+			}
+		}`)
+
+		settings, err := config.Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		pricing := settings.Providers["openai"].Models["gpt-5.5"].Pricing
+		if !pricing.Input.Set || pricing.Input.Value != 0 || !pricing.Output.Set || pricing.Output.Value != 10 {
+			t.Fatalf("merged pricing = %#v", pricing)
+		}
+		if got := settings.Providers["custom"].Models["model"].ContextWindow.Value; got != 1000 {
+			t.Fatalf("custom model context window = %d", got)
+		}
+	})
+	t.Run("supports disabling bundled models", func(t *testing.T) {
+		base := t.TempDir()
+		t.Setenv("XDG_CONFIG_HOME", base)
+		writeConfig(t, base, `{
+			"model": {"provider": "openai", "name": "gpt-5.5"},
+			"reasoning_level": "medium",
+			"max_turns": 512,
+			"providers": {"openai": {"models": {"gpt-5.5": {"enabled": false}}}}
+		}`)
+		settings, err := config.Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		model := settings.Providers["openai"].Models["gpt-5.5"]
+		if !model.Enabled.Set || model.Enabled.Value {
+			t.Fatalf("model enabled = %#v, want explicit false", model.Enabled)
 		}
 	})
 }

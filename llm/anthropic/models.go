@@ -11,9 +11,9 @@ import (
 const provider = "anthropic"
 
 var (
-	ClaudeHaiku45 = llm.Model{Provider: provider, Name: "claude-haiku-4-5", ContextWindow: 1000000}
-	ClaudeSonnet5 = llm.Model{Provider: provider, Name: "claude-sonnet-5", ContextWindow: 1000000}
-	ClaudeOpus5   = llm.Model{Provider: provider, Name: "claude-opus-5", ContextWindow: 1000000}
+	ClaudeHaiku45 = llm.Model{Provider: provider, Name: "claude-haiku-4-5", ContextWindow: 1000000, ReasoningMode: llm.ReasoningModeBudget, SupportedReasoning: llm.NewReasoningSet(llm.ReasoningLevelOff, llm.ReasoningLevelLow, llm.ReasoningLevelMedium, llm.ReasoningLevelHigh)}
+	ClaudeSonnet5 = llm.Model{Provider: provider, Name: "claude-sonnet-5", ContextWindow: 1000000, ReasoningMode: llm.ReasoningModeEffort, SupportedReasoning: llm.NewReasoningSet(llm.ReasoningLevelOff, llm.ReasoningLevelLow, llm.ReasoningLevelMedium, llm.ReasoningLevelHigh, llm.ReasoningLevelExtraHigh)}
+	ClaudeOpus5   = llm.Model{Provider: provider, Name: "claude-opus-5", ContextWindow: 1000000, ReasoningMode: llm.ReasoningModeEffort, SupportedReasoning: llm.NewReasoningSet(llm.ReasoningLevelOff, llm.ReasoningLevelLow, llm.ReasoningLevelMedium, llm.ReasoningLevelHigh, llm.ReasoningLevelExtraHigh)}
 
 	models = []llm.Model{
 		ClaudeHaiku45,
@@ -57,6 +57,27 @@ func SetupWithBaseURL(apiKey, baseURL string) error {
 	})
 }
 
+// SetupModels registers models using baseURL as the Anthropic API root.
+func SetupModels(apiKey, baseURL string, models []llm.Model) error {
+	root, err := validateBaseURL(baseURL)
+	if err != nil {
+		return err
+	}
+	endpoint := root + "/messages"
+	return registerModelList(models, func(model llm.Model, level llm.ReasoningLevel) (llm.ModelClient, error) {
+		newLLM, err := NewLLM(LLMConfig{
+			BaseURL:        endpoint,
+			APIKey:         apiKey,
+			Model:          model,
+			ReasoningLevel: level,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("create anthropic llm: %w", err)
+		}
+		return newLLM, nil
+	})
+}
+
 func validateBaseURL(baseURL string) (string, error) {
 	parsed, err := url.Parse(baseURL)
 	if err != nil {
@@ -81,7 +102,11 @@ func validateBaseURL(baseURL string) (string, error) {
 }
 
 func registerModels(newClient func(llm.Model, llm.ReasoningLevel) (llm.ModelClient, error)) error {
-	for _, model := range models {
+	return registerModelList(models, newClient)
+}
+
+func registerModelList(modelList []llm.Model, newClient func(llm.Model, llm.ReasoningLevel) (llm.ModelClient, error)) error {
+	for _, model := range modelList {
 		registeredModel := model
 		if err := llm.RegisterModel(registeredModel, func(level llm.ReasoningLevel) (llm.ModelClient, error) {
 			return newClient(registeredModel, level)

@@ -71,8 +71,8 @@ func TestSetupWithBaseURLRegistersModels(t *testing.T) {
 		}
 		for _, model := range models {
 			level := llm.ReasoningLevelOff
-			if requiresThinking(model.Name) {
-				level = llm.ReasoningLevelLow
+			if !model.SupportsReasoning(level) {
+				level = model.ReasoningLevels()[0]
 			}
 			client, err := llm.LoadModelClient(model, level)
 			if err != nil {
