@@ -15,14 +15,15 @@ type style struct {
 }
 
 var (
-	strongStyle   = style{bold: true}
-	emphasisStyle = style{italic: true}
-	mutedStyle    = style{color: "bright-black"}
-	cursorStyle   = style{reverse: true}
-	selectedStyle = style{reverse: true}
-	errorStyle    = style{color: "red"}
-	addedStyle    = style{color: "green"}
-	removedStyle  = style{color: "red"}
+	strongStyle           = style{bold: true}
+	emphasisStyle         = style{italic: true}
+	mutedStyle            = style{color: "bright-black"}
+	normalForegroundStyle = style{color: "default"}
+	cursorStyle           = style{reverse: true}
+	selectedStyle         = style{reverse: true}
+	errorStyle            = style{color: "red"}
+	addedStyle            = style{color: "green"}
+	removedStyle          = style{color: "red"}
 )
 
 type textStyles struct {
@@ -71,6 +72,8 @@ func (s style) start() string {
 		params = append(params, "7")
 	}
 	switch s.color {
+	case "default":
+		params = append(params, "39")
 	case "bright-black":
 		params = append(params, "90")
 	case "red":

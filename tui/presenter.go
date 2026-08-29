@@ -379,12 +379,19 @@ func (p statusBar) Lines(width int) []string {
 		contextPercent = min(100.0, (float64(contextUsed)*100)/float64(p.Model.ContextWindow))
 	}
 
+	contextPercentText := fmt.Sprintf("%.1f%%", contextPercent)
+	if contextPercent > 80 {
+		contextPercentText = errorStyle.start() + contextPercentText + mutedStyle.start()
+	} else if contextPercent > 60 {
+		contextPercentText = normalForegroundStyle.start() + contextPercentText + mutedStyle.start()
+	}
+
 	usage := fmt.Sprintf(
-		"↑%s ↓%s R%s %.1f%%/%s",
+		"↑%s ↓%s R%s %s/%s",
 		statusBarTokenCountText(p.ContextUsage.InputTokens),
 		statusBarTokenCountText(p.ContextUsage.OutputTokens),
 		statusBarTokenCountText(p.ContextUsage.CachedTokens),
-		contextPercent,
+		contextPercentText,
 		statusBarTokenCountText(int(p.Model.ContextWindow)),
 	)
 	details := fmt.Sprintf("%s %s | %s", p.Model, p.ReasoningLevel, usage)

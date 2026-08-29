@@ -243,6 +243,37 @@ func TestTUIRendering(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("status bar colors only elevated context percentages", func(t *testing.T) {
+		cases := []struct {
+			name              string
+			inputTokens       int
+			wantStyledPercent string
+		}{
+			{name: "at sixty percent stays muted", inputTokens: 600, wantStyledPercent: "60.0%/1.0K"},
+			{name: "above sixty percent uses normal foreground", inputTokens: 601, wantStyledPercent: normalForegroundStyle.start() + "60.1%" + mutedStyle.start() + "/1.0K"},
+			{name: "at eighty percent uses normal foreground", inputTokens: 800, wantStyledPercent: normalForegroundStyle.start() + "80.0%" + mutedStyle.start() + "/1.0K"},
+			{name: "above eighty percent is red", inputTokens: 801, wantStyledPercent: errorStyle.start() + "80.1%" + mutedStyle.start() + "/1.0K"},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				line := statusBar{
+					CWDStatus:    "cwd",
+					UseCWDStatus: true,
+					Model:        llm.Model{Provider: "test", Name: "model", ContextWindow: 1000},
+					ContextUsage: llm.Usage{InputTokens: tc.inputTokens},
+				}.Lines(120)[0]
+
+				if !strings.HasPrefix(line, mutedStyle.start()) {
+					t.Fatalf("status bar is not muted: %q", line)
+				}
+				if !strings.Contains(line, tc.wantStyledPercent) {
+					t.Fatalf("status bar percentage style\ngot:  %q\nwant substring: %q", line, tc.wantStyledPercent)
+				}
+			})
+		}
+	})
 }
 
 func TestTUIRenderScheduling(t *testing.T) {
