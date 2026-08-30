@@ -330,7 +330,42 @@ func TestMCPConfiguration(t *testing.T) {
 		}`)
 
 		_, err := config.Load()
-		if err == nil || !strings.Contains(err.Error(), "mcp_servers.gopls.command") {
+		if err == nil || !strings.Contains(err.Error(), "must set exactly one of command or url") {
+			t.Fatalf("Load() error = %v", err)
+		}
+	})
+
+	t.Run("parses remote server", func(t *testing.T) {
+		base := t.TempDir()
+		t.Setenv("XDG_CONFIG_HOME", base)
+		writeConfig(t, base, `{
+			"model": {"provider": "openai", "name": "gpt-5.5"},
+			"reasoning_level": "medium",
+			"max_turns": 512,
+			"mcp_servers": {"gopls": {"url": "http://127.0.0.1:3000"}}
+		}`)
+
+		settings, err := config.Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if got := settings.MCPServers["gopls"].URL; got != "http://127.0.0.1:3000" {
+			t.Fatalf("MCP server URL = %q", got)
+		}
+	})
+
+	t.Run("rejects multiple transports", func(t *testing.T) {
+		base := t.TempDir()
+		t.Setenv("XDG_CONFIG_HOME", base)
+		writeConfig(t, base, `{
+			"model": {"provider": "openai", "name": "gpt-5.5"},
+			"reasoning_level": "medium",
+			"max_turns": 512,
+			"mcp_servers": {"gopls": {"command": "gopls", "url": "http://127.0.0.1:3000"}}
+		}`)
+
+		_, err := config.Load()
+		if err == nil || !strings.Contains(err.Error(), "exactly one") {
 			t.Fatalf("Load() error = %v", err)
 		}
 	})

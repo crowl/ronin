@@ -24,11 +24,12 @@ import (
 )
 
 const (
-	initializationTimeout = 15 * time.Second
-	shutdownTimeout       = 5 * time.Second
-	maxMessageBytes       = 16 << 20
-	maxServerLogBytes     = 10 << 20
-	protocolVersion       = "2025-06-18"
+	initializationTimeout           = 15 * time.Second
+	shutdownTimeout                 = 5 * time.Second
+	cancellationNotificationTimeout = 5 * time.Second
+	maxMessageBytes                 = 16 << 20
+	maxServerLogBytes               = 10 << 20
+	protocolVersion                 = "2025-06-18"
 )
 
 var exposedNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
@@ -37,6 +38,7 @@ type ServerConfig struct {
 	Command string
 	Args    []string
 	Env     map[string]string
+	URL     string
 	LogPath string
 }
 
@@ -99,7 +101,13 @@ func (c *Client) connectServer(ctx context.Context, cwd, serverName string, cfg 
 	initCtx, cancel := context.WithTimeout(ctx, initializationTimeout)
 	defer cancel()
 
-	session, err := startSession(cwd, cfg)
+	var session *session
+	var err error
+	if cfg.URL != "" {
+		session, err = connectRemoteSession(initCtx, cwd, cfg.URL)
+	} else {
+		session, err = startSession(cwd, cfg)
+	}
 	if err != nil {
 		return err
 	}
@@ -139,8 +147,13 @@ func validateServer(name string, cfg ServerConfig) error {
 	if !exposedNamePattern.MatchString(name) {
 		return fmt.Errorf("invalid MCP server name %q: use letters, numbers, underscores, or hyphens", name)
 	}
-	if strings.TrimSpace(cfg.Command) == "" {
-		return fmt.Errorf("MCP server %q command must not be empty", name)
+	hasCommand := strings.TrimSpace(cfg.Command) != ""
+	hasURL := strings.TrimSpace(cfg.URL) != ""
+	if hasCommand == hasURL {
+		return fmt.Errorf("MCP server %q must set exactly one of command or URL", name)
+	}
+	if hasURL && (len(cfg.Args) != 0 || len(cfg.Env) != 0 || cfg.LogPath != "") {
+		return fmt.Errorf("MCP server %q command options require a command", name)
 	}
 	for key := range cfg.Env {
 		if key == "" || strings.ContainsRune(key, '=') {
@@ -171,11 +184,16 @@ func environment(overrides map[string]string) []string {
 	return result
 }
 
+type messageTransport interface {
+	ReadMessage() ([]byte, error)
+	WriteMessage(context.Context, []byte) error
+	Close() error
+}
+
 type session struct {
-	cmd       *exec.Cmd
-	stdin     io.WriteCloser
-	stdout    io.ReadCloser
-	serverLog io.Closer
+	transport    messageTransport
+	capabilities map[string]any
+	rootURI      string
 
 	writeMu sync.Mutex
 	mu      sync.Mutex
@@ -216,6 +234,36 @@ func (e *rpcError) Error() string {
 }
 
 func startSession(cwd string, cfg ServerConfig) (*session, error) {
+	transport, err := startStdioTransport(cwd, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return newSession(transport, nil, ""), nil
+}
+
+func newSession(transport messageTransport, capabilities map[string]any, rootURI string) *session {
+	s := &session{
+		transport:    transport,
+		capabilities: capabilities,
+		rootURI:      rootURI,
+		pending:      make(map[int64]chan rpcResponse),
+	}
+	go s.readLoop()
+	return s
+}
+
+type stdioTransport struct {
+	cmd       *exec.Cmd
+	stdin     io.WriteCloser
+	stdout    io.ReadCloser
+	scanner   *bufio.Scanner
+	serverLog io.Closer
+
+	closeOnce sync.Once
+	closeErr  error
+}
+
+func startStdioTransport(cwd string, cfg ServerConfig) (*stdioTransport, error) {
 	cmd := exec.Command(cfg.Command, cfg.Args...)
 	cmd.Dir = cwd
 	cmd.Env = environment(cfg.Env)
@@ -245,15 +293,62 @@ func startSession(cwd string, cfg ServerConfig) (*session, error) {
 		return nil, fmt.Errorf("start command: %w", err)
 	}
 
-	s := &session{
+	t := &stdioTransport{
 		cmd:       cmd,
 		stdin:     stdin,
 		stdout:    stdout,
 		serverLog: serverLog,
-		pending:   make(map[int64]chan rpcResponse),
 	}
-	go s.readLoop()
-	return s, nil
+	t.scanner = bufio.NewScanner(stdout)
+	t.scanner.Buffer(make([]byte, 64<<10), maxMessageBytes)
+	return t, nil
+}
+
+func (t *stdioTransport) ReadMessage() ([]byte, error) {
+	if t.scanner.Scan() {
+		return append([]byte(nil), t.scanner.Bytes()...), nil
+	}
+	if err := t.scanner.Err(); err != nil {
+		return nil, err
+	}
+	return nil, io.EOF
+}
+
+func (t *stdioTransport) WriteMessage(ctx context.Context, data []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	data = append(append([]byte(nil), data...), '\n')
+	if _, err := t.stdin.Write(data); err != nil {
+		return fmt.Errorf("write MCP message: %w", err)
+	}
+	return nil
+}
+
+func (t *stdioTransport) Close() error {
+	t.closeOnce.Do(func() {
+		_ = t.stdin.Close()
+		wait := make(chan error, 1)
+		go func() { wait <- t.cmd.Wait() }()
+		select {
+		case err := <-wait:
+			if err != nil && !isExpectedExit(err) {
+				t.closeErr = fmt.Errorf("wait for MCP server: %w", err)
+			}
+		case <-time.After(shutdownTimeout):
+			if err := t.cmd.Process.Kill(); err != nil {
+				t.closeErr = fmt.Errorf("kill MCP server: %w", err)
+			}
+			if err := <-wait; err != nil && !isExpectedExit(err) && t.closeErr == nil {
+				t.closeErr = fmt.Errorf("wait for killed MCP server: %w", err)
+			}
+		}
+		_ = t.stdout.Close()
+		if err := closeServerLog(t.serverLog); err != nil {
+			t.closeErr = errors.Join(t.closeErr, fmt.Errorf("close MCP server log: %w", err))
+		}
+	})
+	return t.closeErr
 }
 
 type boundedWriter struct {
@@ -303,13 +398,17 @@ func closeServerLog(log io.Closer) error {
 }
 
 func (s *session) initialize(ctx context.Context) (string, error) {
+	capabilities := s.capabilities
+	if capabilities == nil {
+		capabilities = map[string]any{}
+	}
 	var result struct {
 		ProtocolVersion string `json:"protocolVersion"`
 		Instructions    string `json:"instructions,omitempty"`
 	}
 	if err := s.call(ctx, "initialize", map[string]any{
 		"protocolVersion": protocolVersion,
-		"capabilities":    map[string]any{},
+		"capabilities":    capabilities,
 		"clientInfo": map[string]string{
 			"name":    "ronin",
 			"version": "dev",
@@ -320,7 +419,7 @@ func (s *session) initialize(ctx context.Context) (string, error) {
 	if result.ProtocolVersion == "" {
 		return "", errors.New("initialize: server returned no protocol version")
 	}
-	if err := s.notify("notifications/initialized", map[string]any{}); err != nil {
+	if err := s.notify(ctx, "notifications/initialized", map[string]any{}); err != nil {
 		return "", fmt.Errorf("send initialized notification: %w", err)
 	}
 	return result.Instructions, nil
@@ -381,7 +480,7 @@ func (s *session) call(ctx context.Context, method string, params any, result an
 	s.pending[id] = responses
 	s.mu.Unlock()
 
-	if err := s.write(rpcRequest{JSONRPC: "2.0", ID: id, Method: method, Params: params}); err != nil {
+	if err := s.writeContext(ctx, rpcRequest{JSONRPC: "2.0", ID: id, Method: method, Params: params}); err != nil {
 		s.removePending(id)
 		return err
 	}
@@ -403,17 +502,19 @@ func (s *session) call(ctx context.Context, method string, params any, result an
 		return nil
 	case <-ctx.Done():
 		if s.removePending(id) {
-			_ = s.notify("notifications/cancelled", map[string]any{"requestId": id, "reason": ctx.Err().Error()})
+			notificationCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cancellationNotificationTimeout)
+			_ = s.notify(notificationCtx, "notifications/cancelled", map[string]any{"requestId": id, "reason": ctx.Err().Error()})
+			cancel()
 		}
 		return ctx.Err()
 	}
 }
 
-func (s *session) notify(method string, params any) error {
-	return s.write(rpcRequest{JSONRPC: "2.0", Method: method, Params: params})
+func (s *session) notify(ctx context.Context, method string, params any) error {
+	return s.writeContext(ctx, rpcRequest{JSONRPC: "2.0", Method: method, Params: params})
 }
 
-func (s *session) write(message any) error {
+func (s *session) writeContext(ctx context.Context, message any) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
@@ -421,6 +522,9 @@ func (s *session) write(message any) error {
 	closed := s.closed
 	readErr := s.readErr
 	s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if closed {
 		return errors.New("MCP connection is closed")
 	}
@@ -431,18 +535,23 @@ func (s *session) write(message any) error {
 	if err != nil {
 		return fmt.Errorf("encode MCP message: %w", err)
 	}
-	data = append(data, '\n')
-	if _, err := s.stdin.Write(data); err != nil {
-		return fmt.Errorf("write MCP message: %w", err)
+	if err := s.transport.WriteMessage(ctx, data); err != nil {
+		return err
 	}
 	return nil
 }
 
 func (s *session) readLoop() {
-	scanner := bufio.NewScanner(s.stdout)
-	scanner.Buffer(make([]byte, 64<<10), maxMessageBytes)
-	for scanner.Scan() {
-		line := append([]byte(nil), scanner.Bytes()...)
+	for {
+		line, err := s.transport.ReadMessage()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				s.failPending(io.EOF)
+			} else {
+				s.failPending(fmt.Errorf("read MCP message: %w", err))
+			}
+			return
+		}
 		var envelope struct {
 			ID     json.RawMessage `json:"id,omitempty"`
 			Method string          `json:"method,omitempty"`
@@ -452,16 +561,7 @@ func (s *session) readLoop() {
 			return
 		}
 		if envelope.Method != "" {
-			if len(envelope.ID) > 0 && string(envelope.ID) != "null" {
-				_ = s.write(map[string]any{
-					"jsonrpc": "2.0",
-					"id":      envelope.ID,
-					"error": map[string]any{
-						"code":    -32601,
-						"message": "method not supported by ronin",
-					},
-				})
-			}
+			s.handleServerMessage(envelope.ID, envelope.Method)
 			continue
 		}
 
@@ -482,11 +582,32 @@ func (s *session) readLoop() {
 			responses <- response
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		s.failPending(fmt.Errorf("read MCP message: %w", err))
-	} else {
-		s.failPending(io.EOF)
+}
+
+func (s *session) handleServerMessage(id json.RawMessage, method string) {
+	if len(id) == 0 || string(id) == "null" {
+		return
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), initializationTimeout)
+	defer cancel()
+	if method == "roots/list" && s.rootURI != "" {
+		_ = s.writeContext(ctx, map[string]any{
+			"jsonrpc": "2.0",
+			"id":      id,
+			"result": map[string]any{
+				"roots": []map[string]string{{"uri": s.rootURI}},
+			},
+		})
+		return
+	}
+	_ = s.writeContext(ctx, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"error": map[string]any{
+			"code":    -32601,
+			"message": "method not supported by ronin",
+		},
+	})
 }
 
 func responseID(raw json.RawMessage) (int64, error) {
@@ -531,25 +652,8 @@ func (s *session) Close() error {
 		s.mu.Unlock()
 		s.failPending(errors.New("MCP connection closed"))
 
-		_ = s.stdin.Close()
-		wait := make(chan error, 1)
-		go func() { wait <- s.cmd.Wait() }()
-		select {
-		case err := <-wait:
-			if err != nil && !isExpectedExit(err) {
-				s.closeErr = fmt.Errorf("wait for MCP server: %w", err)
-			}
-		case <-time.After(shutdownTimeout):
-			if err := s.cmd.Process.Kill(); err != nil {
-				s.closeErr = fmt.Errorf("kill MCP server: %w", err)
-			}
-			if err := <-wait; err != nil && !isExpectedExit(err) && s.closeErr == nil {
-				s.closeErr = fmt.Errorf("wait for killed MCP server: %w", err)
-			}
-		}
-		_ = s.stdout.Close()
-		if err := closeServerLog(s.serverLog); err != nil {
-			s.closeErr = errors.Join(s.closeErr, fmt.Errorf("close MCP server log: %w", err))
+		if err := s.transport.Close(); err != nil {
+			s.closeErr = err
 		}
 	})
 	return s.closeErr

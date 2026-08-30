@@ -142,7 +142,7 @@ The TUI only offers reasoning levels supported by the active model. Switching to
 
 ### MCP servers
 
-Ronin can start MCP servers that communicate over stdin/stdout and expose their tools to the model. Configure servers by name in `config.json`:
+Ronin can start MCP servers over stdin/stdout or connect to externally managed MCP servers over HTTP/SSE. Configure servers by name in `config.json`:
 
 ```json
 {
@@ -155,9 +155,21 @@ Ronin can start MCP servers that communicate over stdin/stdout and expose their 
 }
 ```
 
-MCP tools are namespaced as `<server>__<tool>`, such as `gopls__go_search`. Commands run in Ronin's working directory and inherit its environment. Add an `env` object to override environment variables for a server. Ronin fails startup if a configured server cannot start, initialize, or list its tools.
+For a server managed outside Ronin, configure its SSE endpoint instead:
 
-Server stderr is written to one log per server under `$XDG_DATA_HOME/ronin/logs/mcp`, or `$HOME/.local/share/ronin/logs/mcp` when `XDG_DATA_HOME` is unset. Each log is truncated when Ronin starts and capped at 10 MiB.
+```json
+{
+  "mcp_servers": {
+    "gopls": {
+      "url": "http://127.0.0.1:3000"
+    }
+  }
+}
+```
+
+Each server must set exactly one of `command` or `url`. MCP tools are namespaced as `<server>__<tool>`, such as `gopls__go_search`. Commands run in Ronin's working directory and inherit its environment; add an `env` object to override environment variables for a command. Remote servers receive Ronin's working directory as an MCP workspace root. Ronin fails startup if a configured server cannot start or connect, initialize, or list its tools.
+
+Server stderr for command-based servers is written to one log per server under `$XDG_DATA_HOME/ronin/logs/mcp`, or `$HOME/.local/share/ronin/logs/mcp` when `XDG_DATA_HOME` is unset. Each log is truncated when Ronin starts and capped at 10 MiB.
 
 If an MCP server returns `instructions` in its standard initialization response, Ronin includes them in the system prompt together with the server's namespaced tool names.
 

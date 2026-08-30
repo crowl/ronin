@@ -3,10 +3,23 @@ package mcp
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestConnectStdioServer(t *testing.T) {
@@ -68,6 +81,209 @@ func TestConnectStdioServer(t *testing.T) {
 	data, err := json.Marshal(result)
 	if err != nil || !containsJSONText(data, "stdio") {
 		t.Fatalf("result = %s, error = %v", data, err)
+	}
+}
+
+func TestConnectRemoteServer(t *testing.T) {
+	server := newTestSSEServer()
+	httpServer := httptest.NewServer(server)
+	defer httpServer.Close()
+	server.baseURL = httpServer.URL
+
+	connectCtx, cancel := context.WithCancel(t.Context())
+	workspace := t.TempDir()
+	currentDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	relativeWorkspace, err := filepath.Rel(currentDir, workspace)
+	if err != nil {
+		t.Fatalf("Rel() error = %v", err)
+	}
+	client, err := Connect(connectCtx, relativeWorkspace, map[string]ServerConfig{
+		"test": {URL: httpServer.URL},
+	})
+	cancel()
+	if err != nil {
+		t.Fatalf("Connect() error = %v", err)
+	}
+	defer client.Close()
+
+	instructions := client.Instructions()
+	if len(instructions) != 1 || instructions[0].Content != "Use echo to repeat text." {
+		t.Fatalf("Instructions() = %#v", instructions)
+	}
+	tools := client.Tools()
+	if len(tools) != 1 || tools[0].Name() != "test__echo" {
+		t.Fatalf("Tools() = %#v", tools)
+	}
+	value, err := tools[0].Call(t.Context(), json.RawMessage(`{"text":"remote"}`))
+	if err != nil {
+		t.Fatalf("Call() error = %v", err)
+	}
+	data, err := json.Marshal(value)
+	if err != nil || !containsJSONText(data, "remote") {
+		t.Fatalf("result = %s, error = %v", data, err)
+	}
+
+	roots := server.roots()
+	wantRoot := (&url.URL{Scheme: "file", Path: workspace}).String()
+	if len(roots) != 1 || roots[0] != wantRoot {
+		t.Fatalf("roots = %#v, want [%q]", roots, wantRoot)
+	}
+
+	other, err := Connect(t.Context(), t.TempDir(), map[string]ServerConfig{
+		"test": {URL: httpServer.URL},
+	})
+	if err != nil {
+		t.Fatalf("connect second client: %v", err)
+	}
+	if err := other.Close(); err != nil {
+		t.Fatalf("close second client: %v", err)
+	}
+	if _, err := tools[0].Call(t.Context(), json.RawMessage(`{"text":"still running"}`)); err != nil {
+		t.Fatalf("Call() after another client closed = %v", err)
+	}
+}
+
+func TestConnectRemoteServerAgainstGopls(t *testing.T) {
+	gopls, err := exec.LookPath("gopls")
+	if err != nil {
+		t.Skip("gopls is not installed")
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen() error = %v", err)
+	}
+	address := listener.Addr().String()
+	_ = listener.Close()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	command := exec.CommandContext(ctx, gopls, "mcp", "-listen="+address)
+	var log bytes.Buffer
+	command.Stdout = &log
+	command.Stderr = &log
+	if err := command.Start(); err != nil {
+		t.Fatalf("start gopls: %v", err)
+	}
+	defer func() {
+		cancel()
+		_ = command.Wait()
+	}()
+
+	var client *Client
+	for range 100 {
+		attemptCtx, attemptCancel := context.WithTimeout(t.Context(), 250*time.Millisecond)
+		client, err = Connect(attemptCtx, t.TempDir(), map[string]ServerConfig{
+			"gopls": {URL: "http://" + address},
+		})
+		attemptCancel()
+		if err == nil {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("connect to gopls: %v\n%s", err, log.String())
+	}
+	defer client.Close()
+	if len(client.Tools()) == 0 {
+		t.Fatal("gopls exposed no MCP tools")
+	}
+}
+
+func TestConnectRemoteServerHonorsInitializationCancellation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	_, err := Connect(ctx, t.TempDir(), map[string]ServerConfig{
+		"test": {URL: server.URL},
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Connect() error = %v, want context deadline exceeded", err)
+	}
+}
+
+func TestConnectRemoteServerRejectsCrossOriginMessageEndpoint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "event: endpoint\ndata: http://example.com/messages\n\n")
+	}))
+	defer server.Close()
+
+	_, err := Connect(t.Context(), t.TempDir(), map[string]ServerConfig{
+		"test": {URL: server.URL},
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid SSE message endpoint") {
+		t.Fatalf("Connect() error = %v", err)
+	}
+}
+
+func TestConnectRemoteServerRejectsUnexpectedContentType(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer server.Close()
+
+	_, err := Connect(t.Context(), t.TempDir(), map[string]ServerConfig{
+		"test": {URL: server.URL},
+	})
+	if err == nil || !strings.Contains(err.Error(), "expected text/event-stream") {
+		t.Fatalf("Connect() error = %v", err)
+	}
+}
+
+func TestScanSSEEvent(t *testing.T) {
+	scanner := newSSEScanner(strings.NewReader(": comment\r\nevent: message\r\ndata: first\r\ndata: second\r\n\r\n"))
+	event, err := scanSSEEvent(scanner)
+	if err != nil {
+		t.Fatalf("scanSSEEvent() error = %v", err)
+	}
+	if event.name != "message" || string(event.data) != "first\nsecond" {
+		t.Fatalf("event = %#v", event)
+	}
+}
+
+func TestCallSendsCancellationNotification(t *testing.T) {
+	transport := newRecordingTransport()
+	session := newSession(transport, nil, "")
+	defer session.Close()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	result := make(chan error, 1)
+	go func() {
+		result <- session.call(ctx, "tools/call", map[string]any{}, nil)
+	}()
+
+	request := <-transport.writes
+	var sent rpcRequest
+	if err := json.Unmarshal(request, &sent); err != nil {
+		t.Fatalf("decode request: %v", err)
+	}
+	cancel()
+
+	if err := <-result; !errors.Is(err, context.Canceled) {
+		t.Fatalf("call() error = %v, want context canceled", err)
+	}
+	select {
+	case notification := <-transport.writes:
+		if err := json.Unmarshal(notification, &sent); err != nil {
+			t.Fatalf("decode notification: %v", err)
+		}
+		if sent.Method != "notifications/cancelled" {
+			t.Fatalf("notification method = %q", sent.Method)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancellation notification was not sent")
 	}
 }
 
@@ -191,6 +407,153 @@ func TestMCPHelperProcess(t *testing.T) {
 	}
 }
 
+type testSSEServer struct {
+	baseURL string
+
+	mu        sync.Mutex
+	sessions  map[string]chan []byte
+	seenRoots []string
+	nextID    int
+}
+
+func newTestSSEServer() *testSSEServer {
+	return &testSSEServer{sessions: make(map[string]chan []byte)}
+}
+
+func (s *testSSEServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	switch {
+	case r.Method == http.MethodGet && r.URL.Path == "/":
+		s.serveStream(w, r)
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/messages/"):
+		s.receiveMessage(w, r)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func (s *testSSEServer) serveStream(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	s.mu.Lock()
+	s.nextID++
+	id := strconv.Itoa(s.nextID)
+	messages := make(chan []byte, 16)
+	s.sessions[id] = messages
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.sessions, id)
+		s.mu.Unlock()
+	}()
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.WriteHeader(http.StatusOK)
+	_, _ = fmt.Fprintf(w, "event: endpoint\ndata: %s/messages/%s\n\n", s.baseURL, id)
+	flusher.Flush()
+
+	for {
+		select {
+		case message := <-messages:
+			_, _ = fmt.Fprintf(w, "event: message\ndata: %s\n\n", message)
+			flusher.Flush()
+		case <-r.Context().Done():
+			return
+		}
+	}
+}
+
+func (s *testSSEServer) receiveMessage(w http.ResponseWriter, r *http.Request) {
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var message struct {
+		ID     json.RawMessage `json:"id,omitempty"`
+		Method string          `json:"method,omitempty"`
+		Params json.RawMessage `json:"params,omitempty"`
+		Result json.RawMessage `json:"result,omitempty"`
+	}
+	if err := json.Unmarshal(data, &message); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	id := strings.TrimPrefix(r.URL.Path, "/messages/")
+	s.mu.Lock()
+	messages := s.sessions[id]
+	s.mu.Unlock()
+	if messages == nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	if message.Method == "" {
+		var roots struct {
+			Roots []struct {
+				URI string `json:"uri"`
+			} `json:"roots"`
+		}
+		if len(message.Result) > 0 && json.Unmarshal(message.Result, &roots) == nil {
+			s.mu.Lock()
+			for _, root := range roots.Roots {
+				s.seenRoots = append(s.seenRoots, root.URI)
+			}
+			s.mu.Unlock()
+		}
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+	if len(message.ID) == 0 {
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+
+	response := map[string]any{"jsonrpc": "2.0", "id": message.ID}
+	switch message.Method {
+	case "initialize":
+		response["result"] = map[string]any{
+			"protocolVersion": protocolVersion,
+			"capabilities":    map[string]any{"tools": map[string]any{}},
+			"serverInfo":      map[string]string{"name": "test", "version": "1"},
+			"instructions":    "Use echo to repeat text.",
+		}
+		requestID := json.RawMessage(`9001`)
+		rootRequest, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": requestID, "method": "roots/list", "params": map[string]any{}})
+		messages <- rootRequest
+	case "tools/list":
+		response["result"] = map[string]any{"tools": []any{map[string]any{
+			"name":        "echo",
+			"description": "Echoes text",
+			"inputSchema": json.RawMessage(`{"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false}`),
+		}}}
+	case "tools/call":
+		var params struct {
+			Arguments struct {
+				Text string `json:"text"`
+			} `json:"arguments"`
+		}
+		_ = json.Unmarshal(message.Params, &params)
+		response["result"] = map[string]any{
+			"content":           []any{map[string]string{"type": "text", "text": params.Arguments.Text}},
+			"structuredContent": map[string]string{"echo": params.Arguments.Text},
+		}
+	default:
+		response["error"] = map[string]any{"code": -32601, "message": "method not found"}
+	}
+	encoded, _ := json.Marshal(response)
+	messages <- encoded
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func (s *testSSEServer) roots() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.seenRoots...)
+}
+
 func TestValidateServer(t *testing.T) {
 	for _, test := range []struct {
 		name       string
@@ -198,9 +561,11 @@ func TestValidateServer(t *testing.T) {
 		config     ServerConfig
 		wantErr    bool
 	}{
-		{name: "valid", serverName: "go-tools", config: ServerConfig{Command: "gopls"}},
+		{name: "valid stdio", serverName: "go-tools", config: ServerConfig{Command: "gopls"}},
+		{name: "valid remote", serverName: "go-tools", config: ServerConfig{URL: "http://127.0.0.1:3000"}},
 		{name: "invalid name", serverName: "go tools", config: ServerConfig{Command: "gopls"}, wantErr: true},
-		{name: "empty command", serverName: "go", config: ServerConfig{}, wantErr: true},
+		{name: "missing transport", serverName: "go", config: ServerConfig{}, wantErr: true},
+		{name: "multiple transports", serverName: "go", config: ServerConfig{Command: "gopls", URL: "http://127.0.0.1:3000"}, wantErr: true},
 		{name: "invalid env", serverName: "go", config: ServerConfig{Command: "gopls", Env: map[string]string{"BAD=KEY": "value"}}, wantErr: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -210,6 +575,38 @@ func TestValidateServer(t *testing.T) {
 			}
 		})
 	}
+}
+
+type recordingTransport struct {
+	writes chan []byte
+	closed chan struct{}
+	once   sync.Once
+}
+
+func newRecordingTransport() *recordingTransport {
+	return &recordingTransport{
+		writes: make(chan []byte, 2),
+		closed: make(chan struct{}),
+	}
+}
+
+func (t *recordingTransport) ReadMessage() ([]byte, error) {
+	<-t.closed
+	return nil, io.EOF
+}
+
+func (t *recordingTransport) WriteMessage(ctx context.Context, data []byte) error {
+	select {
+	case t.writes <- append([]byte(nil), data...):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (t *recordingTransport) Close() error {
+	t.once.Do(func() { close(t.closed) })
+	return nil
 }
 
 func containsJSONText(data []byte, text string) bool {

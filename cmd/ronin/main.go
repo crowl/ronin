@@ -328,23 +328,34 @@ func connectMCPServers(ctx context.Context, workingDir string, servers map[strin
 		return mcp.Connect(ctx, workingDir, nil)
 	}
 
-	dataDir, err := config.EnsureDataDir()
-	if err != nil {
-		return nil, fmt.Errorf("initialize MCP log directory: %w", err)
-	}
-	logDir := filepath.Join(dataDir, "logs", "mcp")
-	if err := os.MkdirAll(logDir, 0o700); err != nil {
-		return nil, fmt.Errorf("create MCP log directory %q: %w", logDir, err)
+	logDir := ""
+	for _, server := range servers {
+		if strings.TrimSpace(server.Command) == "" {
+			continue
+		}
+		dataDir, err := config.EnsureDataDir()
+		if err != nil {
+			return nil, fmt.Errorf("initialize MCP log directory: %w", err)
+		}
+		logDir = filepath.Join(dataDir, "logs", "mcp")
+		if err := os.MkdirAll(logDir, 0o700); err != nil {
+			return nil, fmt.Errorf("create MCP log directory %q: %w", logDir, err)
+		}
+		break
 	}
 
 	configs := make(map[string]mcp.ServerConfig, len(servers))
 	for name, server := range servers {
-		configs[name] = mcp.ServerConfig{
+		cfg := mcp.ServerConfig{
 			Command: server.Command,
 			Args:    append([]string(nil), server.Args...),
 			Env:     cloneStrings(server.Env),
-			LogPath: filepath.Join(logDir, name+".log"),
+			URL:     server.URL,
 		}
+		if strings.TrimSpace(server.Command) != "" {
+			cfg.LogPath = filepath.Join(logDir, name+".log")
+		}
+		configs[name] = cfg
 	}
 	return mcp.Connect(ctx, workingDir, configs)
 }

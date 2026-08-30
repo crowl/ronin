@@ -151,9 +151,10 @@ type ToolOutputSummarization struct {
 }
 
 type MCPServer struct {
-	Command string            `json:"command"`
+	Command string            `json:"command,omitempty"`
 	Args    []string          `json:"args,omitempty"`
 	Env     map[string]string `json:"env,omitempty"`
+	URL     string            `json:"url,omitempty"`
 }
 
 type Settings struct {
@@ -355,8 +356,13 @@ func validate(settings Settings) error {
 		if name == "" {
 			return errors.New("mcp_servers names must not be empty")
 		}
-		if server.Command == "" {
-			return fmt.Errorf("mcp_servers.%s.command must not be empty", name)
+		hasCommand := strings.TrimSpace(server.Command) != ""
+		hasURL := strings.TrimSpace(server.URL) != ""
+		if hasCommand == hasURL {
+			return fmt.Errorf("mcp_servers.%s must set exactly one of command or url", name)
+		}
+		if hasURL && (len(server.Args) != 0 || len(server.Env) != 0) {
+			return fmt.Errorf("mcp_servers.%s args and env require command", name)
 		}
 		for key := range server.Env {
 			if key == "" || strings.ContainsRune(key, '=') {
