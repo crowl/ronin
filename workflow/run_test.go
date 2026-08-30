@@ -511,7 +511,7 @@ ronin.log(ronin.input)`)
 func TestRequirementWorkflowExample(t *testing.T) {
 	t.Parallel()
 
-	t.Run("missing input fails before planning", func(t *testing.T) {
+	t.Run("missing input fails before design", func(t *testing.T) {
 		t.Parallel()
 
 		for _, input := range []string{"", " \t\r\n"} {
@@ -543,14 +543,14 @@ func TestRequirementWorkflowExample(t *testing.T) {
 		}
 	})
 
-	t.Run("technical and requestor approval complete the workflow", func(t *testing.T) {
+	t.Run("technical and acceptance approval complete the workflow", func(t *testing.T) {
 		t.Parallel()
 
 		responses := []string{
-			"plan output",
+			"design output",
 			"implementation output",
 			"technical review\nSTATUS: APPROVED\n",
-			"requestor evaluation\nSTATUS: APPROVED\n",
+			"acceptance evaluation\nSTATUS: APPROVED\n",
 		}
 		requests, output, err := runRequirementWorkflowExample(t, responses)
 		var doneErr *DoneError
@@ -584,8 +584,65 @@ func TestRequirementWorkflowExample(t *testing.T) {
 				t.Errorf("request %d reasoning = %q, want %q", i, req.ReasoningLevel, wantReasoning[i])
 			}
 		}
-		if !strings.Contains(requests[1].Prompt, responses[0]) {
-			t.Error("implementation prompt does not contain plan output")
+		promptContracts := []struct {
+			role     string
+			request  int
+			required []string
+		}{
+			{
+				role:    "designer",
+				request: 0,
+				required: []string{
+					"Act as the software designer",
+					"do not modify files",
+					"distinguish verified facts from assumptions",
+					"Scale its depth to the task",
+					"acceptance criteria stated by the user as authoritative",
+					"File-level implementation plan",
+				},
+			},
+			{
+				role:    "implementer",
+				request: 1,
+				required: []string{
+					"Act as the implementation engineer",
+					"Preserve unrelated user changes",
+					"informed guidance, not unquestionable truth",
+					"Verification — exact commands run and their outcomes",
+				},
+			},
+			{
+				role:    "reviewer",
+				request: 2,
+				required: []string{
+					"independent technical reviewer",
+					"actual repository state and working-tree diff",
+					"may be challenged",
+					"Report only concrete findings",
+				},
+			},
+			{
+				role:    "acceptance evaluator",
+				request: 3,
+				required: []string{
+					"fresh acceptance evaluator",
+					"source of truth",
+					"Map every acceptance criterion",
+					"observable completeness",
+				},
+			},
+		}
+		for _, contract := range promptContracts {
+			for _, required := range contract.required {
+				if !strings.Contains(requests[contract.request].System, required) {
+					t.Errorf("%s system prompt does not contain %q", contract.role, required)
+				}
+			}
+		}
+		for i, req := range requests[1:] {
+			if !strings.Contains(req.Prompt, responses[0]) {
+				t.Errorf("request %d prompt does not contain proposed design output", i+1)
+			}
 		}
 		for i, req := range requests {
 			if !strings.Contains(req.Prompt, "Implement the requested behavior.") {
@@ -595,8 +652,14 @@ func TestRequirementWorkflowExample(t *testing.T) {
 		if !strings.Contains(requests[2].Prompt, responses[1]) {
 			t.Error("review prompt does not contain implementation output")
 		}
-		if !strings.Contains(requests[3].Prompt, strings.TrimSpace(responses[2])) {
-			t.Error("evaluation prompt does not contain technical review")
+		if !strings.Contains(requests[2].Prompt, "No prior review feedback") {
+			t.Error("review prompt does not contain feedback assigned to the implementation cycle")
+		}
+		if strings.Contains(requests[3].Prompt, strings.TrimSpace(responses[2])) {
+			t.Error("acceptance evaluator prompt is anchored by technical review output")
+		}
+		if !strings.Contains(requests[3].Prompt, "No prior acceptance feedback") {
+			t.Error("acceptance evaluator prompt does not contain prior acceptance feedback")
 		}
 		if !strings.Contains(output, responses[1]) || !strings.Contains(output, responses[3]) {
 			t.Errorf("output = %q, want final implementation and evaluation", output)
@@ -607,12 +670,12 @@ func TestRequirementWorkflowExample(t *testing.T) {
 		t.Parallel()
 
 		responses := []string{
-			"plan output",
+			"design output",
 			"first implementation",
 			"missing regression test\nSTATUS: CHANGES_REQUIRED",
 			"second implementation",
 			"technical review\nSTATUS: APPROVED",
-			"requestor evaluation\nSTATUS: APPROVED",
+			"acceptance evaluation\nSTATUS: APPROVED",
 		}
 		requests, _, err := runRequirementWorkflowExample(t, responses)
 		if _, ok := errors.AsType[*DoneError](err); !ok {
@@ -624,24 +687,27 @@ func TestRequirementWorkflowExample(t *testing.T) {
 		if !strings.Contains(requests[3].Prompt, responses[2]) {
 			t.Error("second implementation prompt does not contain technical feedback")
 		}
+		if !strings.Contains(requests[4].Prompt, responses[2]) {
+			t.Error("second technical review prompt does not contain feedback assigned to the cycle")
+		}
 		for i, req := range requests[:5] {
-			if strings.Contains(req.System, "original requestor") {
+			if strings.Contains(req.System, "fresh acceptance evaluator") {
 				t.Fatalf("request %d evaluates before technical approval", i)
 			}
 		}
 	})
 
-	t.Run("requestor rejection returns feedback to implementation", func(t *testing.T) {
+	t.Run("acceptance rejection returns feedback to implementation and verification roles", func(t *testing.T) {
 		t.Parallel()
 
 		responses := []string{
-			"plan output",
+			"design output",
 			"first implementation",
 			"technical review\nSTATUS: APPROVED",
 			"requirement remains incomplete\nSTATUS: CHANGES_REQUIRED",
 			"second implementation",
 			"technical review\nSTATUS: APPROVED",
-			"requestor evaluation\nSTATUS: APPROVED",
+			"acceptance evaluation\nSTATUS: APPROVED",
 		}
 		requests, _, err := runRequirementWorkflowExample(t, responses)
 		if _, ok := errors.AsType[*DoneError](err); !ok {
@@ -651,7 +717,13 @@ func TestRequirementWorkflowExample(t *testing.T) {
 			t.Fatalf("agent requests = %d, want 7", len(requests))
 		}
 		if !strings.Contains(requests[4].Prompt, responses[3]) {
-			t.Error("second implementation prompt does not contain requestor feedback")
+			t.Error("second implementation prompt does not contain acceptance feedback")
+		}
+		if !strings.Contains(requests[5].Prompt, responses[3]) {
+			t.Error("second technical review prompt does not contain acceptance feedback assigned to the cycle")
+		}
+		if !strings.Contains(requests[6].Prompt, responses[3]) {
+			t.Error("second acceptance evaluation prompt does not contain prior acceptance feedback")
 		}
 	})
 
@@ -659,12 +731,12 @@ func TestRequirementWorkflowExample(t *testing.T) {
 		t.Parallel()
 
 		responses := []string{
-			"plan output",
+			"design output",
 			"first implementation",
 			"This text ends with a misleading STATUS: APPROVED",
 			"second implementation",
 			"technical review\nSTATUS: APPROVED",
-			"requestor evaluation\nSTATUS: APPROVED",
+			"acceptance evaluation\nSTATUS: APPROVED",
 		}
 		requests, _, err := runRequirementWorkflowExample(t, responses)
 		if _, ok := errors.AsType[*DoneError](err); !ok {
@@ -682,12 +754,12 @@ func TestRequirementWorkflowExample(t *testing.T) {
 		t.Parallel()
 
 		responses := []string{
-			"plan output",
+			"design output",
 			"first implementation",
 			"STATUS: CHANGES_REQUIRED\nSTATUS: APPROVED",
 			"second implementation",
 			"technical review\nSTATUS: APPROVED",
-			"requestor evaluation\nSTATUS: APPROVED",
+			"acceptance evaluation\nSTATUS: APPROVED",
 		}
 		requests, _, err := runRequirementWorkflowExample(t, responses)
 		if _, ok := errors.AsType[*DoneError](err); !ok {
@@ -701,17 +773,17 @@ func TestRequirementWorkflowExample(t *testing.T) {
 		}
 	})
 
-	t.Run("requestor malformed terminal marker is treated as rejection", func(t *testing.T) {
+	t.Run("acceptance evaluator malformed terminal marker is treated as rejection", func(t *testing.T) {
 		t.Parallel()
 
 		responses := []string{
-			"plan output",
+			"design output",
 			"first implementation",
 			"technical review\nSTATUS: APPROVED",
 			"Approval is not a terminal marker: STATUS: APPROVED",
 			"second implementation",
 			"technical review\nSTATUS: APPROVED",
-			"requestor evaluation\nSTATUS: APPROVED",
+			"acceptance evaluation\nSTATUS: APPROVED",
 		}
 		requests, _, err := runRequirementWorkflowExample(t, responses)
 		if _, ok := errors.AsType[*DoneError](err); !ok {
@@ -728,7 +800,7 @@ func TestRequirementWorkflowExample(t *testing.T) {
 	t.Run("cycle exhaustion fails with unresolved feedback", func(t *testing.T) {
 		t.Parallel()
 
-		responses := []string{"plan output"}
+		responses := []string{"design output"}
 		for cycle := 1; cycle <= 5; cycle++ {
 			responses = append(responses,
 				fmt.Sprintf("implementation %d", cycle),
