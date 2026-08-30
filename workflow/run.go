@@ -21,6 +21,11 @@ import (
 const controlSignalMarker = "__ronin_workflow_control_signal__"
 const maxReadBytes int64 = 1 << 20
 
+const (
+	approvedMarker = "STATUS: APPROVED"
+	changesMarker  = "STATUS: CHANGES_REQUIRED"
+)
+
 type controlSignal struct {
 	kind    controlSignalKind
 	message string
@@ -191,6 +196,10 @@ func registerRonin(state *lua.State, out io.Writer, signal **controlSignal, agen
 	state.SetField(-2, "run_agent")
 	state.PushGoFunction(readFunction(workingDir))
 	state.SetField(-2, "read")
+	state.PushGoFunction(requireInputFunction(input, signal))
+	state.SetField(-2, "require_input")
+	state.PushGoFunction(approvedFunction())
+	state.SetField(-2, "approved")
 	state.PushGoFunction(doneFunction(signal))
 	state.SetField(-2, "done")
 	state.PushGoFunction(failFunction(signal))
@@ -267,6 +276,54 @@ func readFunction(workingDir string) lua.Function {
 		state.SetField(-2, "content")
 		return 1
 	}
+}
+
+func requireInputFunction(input string, signal **controlSignal) lua.Function {
+	return func(state *lua.State) int {
+		message, err := requiredStringArgument(state, 1, "ronin.require_input", "message")
+		if err != nil {
+			panic(lua.RuntimeError(err.Error()))
+		}
+		if strings.TrimSpace(input) == "" {
+			*signal = &controlSignal{kind: controlSignalFail, message: message}
+			lua.Errorf(state, controlSignalMarker)
+			panic("unreachable")
+		}
+		state.PushString(input)
+		return 1
+	}
+}
+
+func approvedFunction() lua.Function {
+	return func(state *lua.State) int {
+		text, err := requiredStringArgument(state, 1, "ronin.approved", "text")
+		if err != nil {
+			panic(lua.RuntimeError(err.Error()))
+		}
+		state.PushBoolean(approved(text))
+		return 1
+	}
+}
+
+func approved(text string) bool {
+	trimmed := strings.TrimRight(text, " \n\r\t\f\v")
+	if trimmed != approvedMarker && !strings.HasSuffix(trimmed, "\n"+approvedMarker) {
+		return false
+	}
+
+	preceding := strings.TrimSuffix(trimmed, approvedMarker)
+	return !strings.Contains(preceding, approvedMarker) && !strings.Contains(preceding, changesMarker)
+}
+
+func requiredStringArgument(state *lua.State, index int, function, argument string) (string, error) {
+	if state.IsNoneOrNil(index) {
+		return "", fmt.Errorf("%s %s is required", function, argument)
+	}
+	if state.TypeOf(index) != lua.TypeString {
+		return "", fmt.Errorf("%s %s must be a string", function, argument)
+	}
+	value, _ := state.ToString(index)
+	return value, nil
 }
 
 func doneFunction(signal **controlSignal) lua.Function {

@@ -425,6 +425,75 @@ func TestRunFileWithAgentInput(t *testing.T) {
 		}
 	})
 
+	t.Run("require_input returns supplied input", func(t *testing.T) {
+		t.Parallel()
+
+		path := filepath.Join(t.TempDir(), "workflow.lua")
+		if err := os.WriteFile(path, []byte(`ronin.log(ronin.require_input("input required"))`), 0o600); err != nil {
+			t.Fatalf("WriteFile() error = %v", err)
+		}
+		var output strings.Builder
+		if err := RunFileWithAgentInputInWorkingDir(t.Context(), path, t.TempDir(), " supplied input ", &output, nil); err != nil {
+			t.Fatalf("RunFileWithAgentInputInWorkingDir() error = %v", err)
+		}
+		if got, want := output.String(), " supplied input \n"; got != want {
+			t.Fatalf("output = %q, want %q", got, want)
+		}
+	})
+
+	for name, script := range map[string]string{
+		"missing message":    `ronin.require_input()`,
+		"non-string message": `ronin.require_input(42)`,
+	} {
+		t.Run("require_input rejects "+name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := runScript(t, script)
+			if err == nil || !strings.Contains(err.Error(), "ronin.require_input message") {
+				t.Fatalf("RunFile() error = %v, want require_input message error", err)
+			}
+		})
+	}
+
+	for name, tc := range map[string]struct {
+		text string
+		want bool
+	}{
+		"terminal approval":        {text: "review complete\nSTATUS: APPROVED", want: true},
+		"approval with whitespace": {text: "STATUS: APPROVED \t\r\n", want: true},
+		"approval in prose":        {text: "review says STATUS: APPROVED", want: false},
+		"contradictory markers":    {text: "STATUS: CHANGES_REQUIRED\nSTATUS: APPROVED", want: false},
+		"repeated approval":        {text: "STATUS: APPROVED\nSTATUS: APPROVED", want: false},
+		"changes required":         {text: "STATUS: CHANGES_REQUIRED", want: false},
+		"empty":                    {text: "", want: false},
+	} {
+		t.Run("approved handles "+name, func(t *testing.T) {
+			t.Parallel()
+
+			stdout, err := runScriptAtPath(t, t.TempDir(), `ronin.log(ronin.approved(%q))`, tc.text)
+			if err != nil {
+				t.Fatalf("RunFile() error = %v", err)
+			}
+			if got, want := strings.TrimSpace(stdout), fmt.Sprint(tc.want); got != want {
+				t.Fatalf("approved output = %q, want %q", got, want)
+			}
+		})
+	}
+
+	for name, script := range map[string]string{
+		"missing text":    `ronin.approved()`,
+		"non-string text": `ronin.approved(true)`,
+	} {
+		t.Run("approved rejects "+name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := runScript(t, script)
+			if err == nil || !strings.Contains(err.Error(), "ronin.approved text") {
+				t.Fatalf("RunFile() error = %v, want approved text error", err)
+			}
+		})
+	}
+
 	t.Run("existing runners expose empty input", func(t *testing.T) {
 		t.Parallel()
 
