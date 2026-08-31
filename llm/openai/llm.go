@@ -486,14 +486,15 @@ func convertMessages(messages []llm.Message) ([]openAIInput, error) {
 }
 
 type streamState struct {
-	calls        map[string]*partialCall
-	toolEmitted  bool
-	finished     bool
-	blockStarted bool
-	blockKind    llm.BlockKind
-	blockIndex   int
-	text         strings.Builder
-	thinking     strings.Builder
+	calls                    map[string]*partialCall
+	toolEmitted              bool
+	finished                 bool
+	blockStarted             bool
+	blockKind                llm.BlockKind
+	blockIndex               int
+	text                     strings.Builder
+	thinking                 strings.Builder
+	thinkingSeparatorPending bool
 }
 
 type partialCall struct {
@@ -616,6 +617,10 @@ func (s *LLM) handleData(ctx context.Context, data string, state *streamState, e
 		if err := state.startBlock(ctx, events, llm.BlockKindThinking); err != nil {
 			return err
 		}
+		if state.thinkingSeparatorPending && state.thinking.Len() > 0 {
+			delta = "... " + delta
+		}
+		state.thinkingSeparatorPending = false
 		state.thinking.WriteString(delta)
 		return sendEvent(ctx, events, llm.ThinkingDelta{Index: state.blockIndex, Text: delta})
 	}
@@ -628,8 +633,15 @@ func (s *LLM) handleData(ctx context.Context, data string, state *streamState, e
 		return sendEvent(ctx, events, llm.TextDelta{Index: state.blockIndex, Text: delta})
 	}
 
-	if strings.Contains(typeName, "output_text.done") || strings.Contains(typeName, "text.done") {
+	if !strings.Contains(typeName, "reasoning") && (strings.Contains(typeName, "output_text.done") || strings.Contains(typeName, "text.done")) {
 		return state.finishText(ctx, events)
+	}
+
+	if strings.Contains(typeName, "reasoning_summary") && strings.Contains(typeName, "done") {
+		if strings.Contains(typeName, "summary_text.done") && state.thinking.Len() > 0 {
+			state.thinkingSeparatorPending = true
+		}
+		return nil
 	}
 
 	if strings.Contains(typeName, "reasoning") && strings.Contains(typeName, "done") {
@@ -730,6 +742,7 @@ func (state *streamState) finishThinking(ctx context.Context, events chan<- llm.
 	}
 	block := llm.ThinkingBlock{Text: state.thinking.String()}
 	state.thinking.Reset()
+	state.thinkingSeparatorPending = false
 	state.blockStarted = false
 	state.blockKind = ""
 	if err := sendEvent(ctx, events, llm.BlockEnded{Index: state.blockIndex, Block: block}); err != nil {

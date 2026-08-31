@@ -265,6 +265,51 @@ func TestPredictNext(t *testing.T) {
 		}
 	})
 
+	t.Run("separates reasoning summary parts with ellipses", func(t *testing.T) {
+		stream := strings.Join([]string{
+			`data: {"type":"response.reasoning_summary_text.delta","delta":"Planning API design"}`,
+			``,
+			`data: {"type":"response.reasoning_summary_text.done","text":"Planning API design"}`,
+			``,
+			`data: {"type":"response.reasoning_summary_part.done"}`,
+			``,
+			`data: {"type":"response.reasoning_summary_text.delta","delta":"Designing structured output"}`,
+			``,
+			`data: {"type":"response.reasoning_summary_text.done","text":"Designing structured output"}`,
+			``,
+			`data: {"type":"response.completed"}`,
+			``,
+		}, "\n")
+
+		events, err := predictWithStream(t, stream)
+		if err != nil {
+			t.Fatalf("predict: %v", err)
+		}
+
+		var deltas []string
+		var thinkingBlocks []llm.ThinkingBlock
+		for _, event := range events {
+			switch typedEvent := event.(type) {
+			case llm.ThinkingDelta:
+				deltas = append(deltas, typedEvent.Text)
+			case llm.BlockEnded:
+				if block, ok := typedEvent.Block.(llm.ThinkingBlock); ok {
+					thinkingBlocks = append(thinkingBlocks, block)
+				}
+			}
+		}
+
+		if got, want := strings.Join(deltas, ""), "Planning API design... Designing structured output"; got != want {
+			t.Fatalf("thinking deltas = %q, want %q", got, want)
+		}
+		if len(thinkingBlocks) != 1 {
+			t.Fatalf("thinking blocks = %#v, want exactly one", thinkingBlocks)
+		}
+		if got, want := thinkingBlocks[0].Text, "Planning API design... Designing structured output"; got != want {
+			t.Fatalf("thinking block = %q, want %q", got, want)
+		}
+	})
+
 	t.Run("emits fallback finish at EOF", func(t *testing.T) {
 		events, err := predictWithStream(t, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n")
 		if err != nil {
