@@ -389,7 +389,7 @@ func (p statusBar) Lines(width int) []string {
 
 	cost := "$?"
 	if p.ContextUsage.Cost.Available {
-		cost = fmt.Sprintf("$%.2f", p.ContextUsage.Cost.Total)
+		cost = normalForegroundStyle.start() + fmt.Sprintf("$%.2f", p.ContextUsage.Cost.Total) + mutedStyle.start()
 	}
 	usage := fmt.Sprintf(
 		"↑%s ↓%s R%s %s/%s %s",
@@ -402,7 +402,14 @@ func (p statusBar) Lines(width int) []string {
 	)
 	model := normalForegroundStyle.start() + p.Model.String() + mutedStyle.start()
 	details := fmt.Sprintf("%s %s | %s", model, p.ReasoningLevel, usage)
-	return []string{mutedStyle.apply(twoColumnsLine(cwdStatus, details, width))}
+	if width <= 0 {
+		return []string{mutedStyle.apply("")}
+	}
+	if width == 1 {
+		return []string{mutedStyle.apply(" ")}
+	}
+	line := " " + twoColumnsLine(cwdStatus, details, width-2) + " "
+	return []string{mutedStyle.apply(line)}
 }
 
 func statusBarTokenCountText(tokens int) string {

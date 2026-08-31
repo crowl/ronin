@@ -242,9 +242,30 @@ func TestTUIRendering(t *testing.T) {
 		if !strings.Contains(usageLine, wantModel) {
 			t.Fatalf("status bar model style\ngot:  %q\nwant substring: %q", usageLine, wantModel)
 		}
+		if got := text.VisibleLen(usageLine); got != 120 {
+			t.Fatalf("status bar width = %d, want 120", got)
+		}
+		plainUsageLine := text.StripANSI(usageLine)
+		if !strings.HasPrefix(plainUsageLine, " ") || !strings.HasSuffix(plainUsageLine, " ") {
+			t.Fatalf("status bar lacks horizontal padding: %q", plainUsageLine)
+		}
+		wantCost := normalForegroundStyle.start() + "$0.42" + mutedStyle.start()
+		if !strings.Contains(usageLine, wantCost) {
+			t.Fatalf("status bar cost style\ngot:  %q\nwant substring: %q", usageLine, wantCost)
+		}
 		for _, want := range []string{"↑2.3K ↓2.9K R1.0K", "35.8%/14.6K", "$0.42"} {
 			if !strings.Contains(usageLine, want) {
 				t.Fatalf("status usage line missing %q: %q", want, usageLine)
+			}
+		}
+	})
+
+	t.Run("status bar preserves padding at narrow widths", func(t *testing.T) {
+		bar := statusBar{CWDStatus: "cwd", UseCWDStatus: true}
+		for _, width := range []int{0, 1, 2} {
+			line := bar.Lines(width)[0]
+			if got := text.VisibleLen(line); got != width {
+				t.Fatalf("status bar width at %d columns = %d", width, got)
 			}
 		}
 	})
