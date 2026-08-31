@@ -122,6 +122,7 @@ func (s *LLM) PredictNextStructured(ctx context.Context, req llm.PredictNextStru
 
 		httpReq.Header.Set("Authorization", "Bearer "+s.apiKey)
 		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Accept", "text/event-stream")
 		return httpReq, nil
 	})
 	if err != nil {
@@ -138,17 +139,18 @@ func (s *LLM) PredictNextStructured(ctx context.Context, req llm.PredictNextStru
 		return nil, fmt.Errorf("%s structured status %d: %s", s.provider(), resp.StatusCode, strings.TrimSpace(string(data)))
 	}
 
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
+	mediaType := resp.Header.Get("Content-Type")
+	var text string
+	if strings.HasPrefix(strings.ToLower(mediaType), "text/event-stream") {
+		text, err = s.readStructuredStream(resp.Body)
+	} else {
+		text, err = s.readStructuredResponse(resp.Body)
+	}
 	if err != nil {
-		return nil, fmt.Errorf("read %s structured response: %w", s.provider(), err)
+		return nil, err
 	}
 
-	var structuredResp openAIStructuredResponse
-	if err := json.Unmarshal(data, &structuredResp); err != nil {
-		return nil, fmt.Errorf("parse %s structured response: %w", s.provider(), err)
-	}
-
-	text := strings.TrimSpace(structuredResp.OutputText())
+	text = strings.TrimSpace(text)
 	if text == "" {
 		return nil, fmt.Errorf("%s structured response contained no output text", s.provider())
 	}
@@ -156,6 +158,73 @@ func (s *LLM) PredictNextStructured(ctx context.Context, req llm.PredictNextStru
 		return nil, fmt.Errorf("%s structured response output is not valid JSON", s.provider())
 	}
 	return json.RawMessage(text), nil
+}
+
+func (s *LLM) readStructuredResponse(r io.Reader) (string, error) {
+	data, err := io.ReadAll(io.LimitReader(r, 10*1024*1024))
+	if err != nil {
+		return "", fmt.Errorf("read %s structured response: %w", s.provider(), err)
+	}
+
+	var structuredResp openAIStructuredResponse
+	if err := json.Unmarshal(data, &structuredResp); err != nil {
+		return "", fmt.Errorf("parse %s structured response: %w", s.provider(), err)
+	}
+	return structuredResp.OutputText(), nil
+}
+
+func (s *LLM) readStructuredStream(r io.Reader) (string, error) {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 1024), 10*1024*1024)
+
+	var text strings.Builder
+	var dataLines []string
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			if err := s.appendStructuredData(strings.Join(dataLines, "\n"), &text); err != nil {
+				return "", err
+			}
+			dataLines = nil
+			continue
+		}
+		if strings.HasPrefix(line, ":") {
+			continue
+		}
+		if after, ok := strings.CutPrefix(line, "data:"); ok {
+			dataLines = append(dataLines, strings.TrimSpace(after))
+		}
+	}
+	if len(dataLines) > 0 {
+		if err := s.appendStructuredData(strings.Join(dataLines, "\n"), &text); err != nil {
+			return "", err
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("read %s structured stream: %w", s.provider(), err)
+	}
+	return text.String(), nil
+}
+
+func (s *LLM) appendStructuredData(data string, text *strings.Builder) error {
+	if data == "" || data == "[DONE]" {
+		return nil
+	}
+
+	var event struct {
+		Type  string `json:"type"`
+		Delta string `json:"delta"`
+	}
+	if err := json.Unmarshal([]byte(data), &event); err != nil {
+		return fmt.Errorf("parse %s structured event: %w", s.provider(), err)
+	}
+	if strings.Contains(event.Type, "error") {
+		return fmt.Errorf("%s structured error event: %s", s.provider(), data)
+	}
+	if strings.Contains(event.Type, "output_text.delta") {
+		text.WriteString(event.Delta)
+	}
+	return nil
 }
 
 func (s *LLM) stream(ctx context.Context, req llm.PredictNextRequest, events chan<- llm.PredictionEvent) error {
@@ -294,7 +363,7 @@ func (s *LLM) buildStructuredPayload(req llm.PredictNextStructuredRequest) (*ope
 	payload := &openAIRequest{
 		Model:  s.model.Name,
 		Input:  input,
-		Stream: false,
+		Stream: true,
 		Store:  false,
 		Text: &openAITextConfig{Format: openAITextFormat{
 			Type:   "json_schema",

@@ -427,8 +427,8 @@ func TestPredictNextStructured(t *testing.T) {
 			t.Fatalf("structured output = %s, want answer", got)
 		}
 
-		if body["stream"] != false {
-			t.Fatalf("stream = %#v, want false", body["stream"])
+		if body["stream"] != true {
+			t.Fatalf("stream = %#v, want true", body["stream"])
 		}
 		if body["instructions"] != "system" {
 			t.Fatalf("instructions = %#v, want system", body["instructions"])
@@ -450,6 +450,53 @@ func TestPredictNextStructured(t *testing.T) {
 		schema, ok := format["schema"].(map[string]any)
 		if !ok || schema["type"] != "object" {
 			t.Fatalf("schema = %#v, want object schema", format["schema"])
+		}
+	})
+
+	t.Run("returns_streamed_output_text", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+			if body["stream"] != true {
+				t.Fatalf("stream = %#v, want true", body["stream"])
+			}
+			if r.Header.Get("Accept") != "text/event-stream" {
+				t.Fatalf("Accept = %q, want text/event-stream", r.Header.Get("Accept"))
+			}
+
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte(strings.Join([]string{
+				`data: {"type":"response.output_text.delta","delta":"{\"answer\":"}`,
+				``,
+				`data: {"type":"response.output_text.delta","delta":"\"ok\"}"}`,
+				``,
+				`data: {"type":"response.completed"}`,
+				``,
+			}, "\n")))
+		}))
+		defer server.Close()
+
+		client, err := openai.NewLLM(openai.LLMConfig{
+			BaseURL:        server.URL,
+			APIKey:         "key",
+			Model:          llm.Model{Provider: "openai", Name: "test"},
+			ReasoningLevel: llm.ReasoningLevelOff,
+		})
+		if err != nil {
+			t.Fatalf("new llm: %v", err)
+		}
+
+		got, err := client.PredictNextStructured(context.Background(), llm.PredictNextStructuredRequest{
+			Messages: []llm.Message{llm.UserMessage{Text: "prompt"}},
+			Schema:   &jsonschema.Schema{Type: "object"},
+		})
+		if err != nil {
+			t.Fatalf("PredictNextStructured() error = %v", err)
+		}
+		if string(got) != `{"answer":"ok"}` {
+			t.Fatalf("structured output = %s, want answer", got)
 		}
 	})
 
