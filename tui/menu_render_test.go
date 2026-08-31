@@ -23,7 +23,7 @@ func TestMenuPresenterLines(t *testing.T) {
 
 		nameWidth := text.VisibleLen("/reasoning")
 		argumentWidth := text.VisibleLen("openai:gpt-some-long-name")
-		wantArgumentColumn := len(menuItemPrefix) + nameWidth + menuDescriptionGap
+		wantArgumentColumn := text.VisibleLen(menuItemPrefix) + nameWidth + menuDescriptionGap
 		wantDescriptionColumn := wantArgumentColumn + argumentWidth + menuDescriptionGap
 
 		for i, line := range lines {
@@ -61,7 +61,7 @@ func TestMenuPresenterLines(t *testing.T) {
 			t.Fatalf("line count\ngot:  %d\nwant: %d", len(lines), menuMaxVisibleItems)
 		}
 
-		wantArgumentColumn := len(menuItemPrefix) + text.VisibleLen("/widest-command") + menuDescriptionGap
+		wantArgumentColumn := text.VisibleLen(menuItemPrefix) + text.VisibleLen("/widest-command") + menuDescriptionGap
 		wantDescriptionColumn := wantArgumentColumn + text.VisibleLen("widest-argument-value") + menuDescriptionGap
 
 		firstVisibleItem := items[1]
@@ -92,7 +92,7 @@ func TestMenuPresenterLines(t *testing.T) {
 		}
 	})
 
-	t.Run("selected row shows the pointer prefix", func(t *testing.T) {
+	t.Run("selected row shows the padded pointer prefix", func(t *testing.T) {
 		p := menuPresenter{SelectedIndex: 2, Items: items}
 		lines := p.Lines(120)
 		if !strings.HasPrefix(text.StripANSI(lines[2]), menuItemPrefixSelected) {

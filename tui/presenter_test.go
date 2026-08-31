@@ -17,7 +17,7 @@ func TestMinimalConversationRendering(t *testing.T) {
 	}.Lines(80)
 
 	plain := plainLines(lines)
-	if got := strings.Join(plain, "\n"); !strings.Contains(got, " > Explain this function.") ||
+	if got := strings.Join(plain, "\n"); !strings.Contains(got, " › Explain this function.") ||
 		!strings.Contains(got, " • New session started") || !strings.Contains(got, " ! Operation canceled") {
 		t.Fatalf("markers missing from render:\n%s", got)
 	}
@@ -79,10 +79,17 @@ func TestWorkingIndicatorUsesConversationPadding(t *testing.T) {
 	}
 }
 
-func TestPendingSteeringPresenterUsesQueuedToolMarker(t *testing.T) {
+func TestPendingSteeringPresenterUsesQueuedPromptMarker(t *testing.T) {
 	lines := pendingSteeringPresenter{Text: "Refine the tests"}.Lines(80)
-	if got := plainLines(lines)[0]; got != "• (queued) Refine the tests" {
+	if got := plainLines(lines)[0]; got != " » (queued) Refine the tests" {
 		t.Fatalf("queued steering message = %q", got)
+	}
+}
+
+func TestUserMessageUsesPromptMarker(t *testing.T) {
+	lines := renderBoxLines(userMessageBox{Text: "Explain this function."}, 80, false)
+	if got := plainLines(lines)[1]; got != editorPrefix+"Explain this function." {
+		t.Fatalf("user message = %q, want editor prompt prefix %q", got, editorPrefix)
 	}
 }
 
@@ -128,7 +135,7 @@ func TestEditorUsesMutedBorders(t *testing.T) {
 
 func TestEditorPresenterUsesPromptMarkerAndReverseCursor(t *testing.T) {
 	lines := editorPresenter{Text: []rune("abc"), Cursor: 1}.Lines(80)
-	if got := plainLines(lines)[1]; got != " > abc" {
+	if got := plainLines(lines)[1]; got != " › abc" {
 		t.Fatalf("editor line = %q", got)
 	}
 	if !strings.Contains(lines[1], cursorStyle.start()) {

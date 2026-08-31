@@ -16,6 +16,7 @@ import (
 const (
 	maxToolOutputLinesNotExpanded = 10
 	conversationBoxPadding        = " "
+	promptMarker                  = "› "
 	toolMarker                    = "• "
 )
 
@@ -63,7 +64,7 @@ func borderedLines(lines []string, width int) []string {
 func renderBoxContentLinesAt(block box, width int, toolsExpanded bool, now time.Time) []string {
 	switch typedBlock := block.(type) {
 	case userMessageBox:
-		return markedLines("> ", typedBlock.Text, width, style{})
+		return markedLines(promptMarker, typedBlock.Text, width, style{})
 	case assistantMessageBox:
 		return markdownLines(typedBlock.Text, width, defaultTextStyles())
 	case assistantThinkingBox:
@@ -145,13 +146,13 @@ type pendingSteeringPresenter struct {
 }
 
 func (p pendingSteeringPresenter) Lines(width int) []string {
-	return markedLines(toolMarker+"(queued) ", p.Text, width, style{})
+	return markedLines(" » (queued) ", p.Text, width, style{})
 }
 
 // editorPresenter
 
 const (
-	editorPrefix             = " > "
+	editorPrefix             = conversationBoxPadding + promptMarker
 	editorContinuationPrefix = "   "
 )
 
@@ -274,8 +275,8 @@ type menuPresenter struct {
 const (
 	menuMaxVisibleItems = 6
 
-	menuItemPrefix         = "  "
-	menuItemPrefixSelected = "→ "
+	menuItemPrefix         = "   "
+	menuItemPrefixSelected = " → "
 	menuDescriptionGap     = 2
 )
 
