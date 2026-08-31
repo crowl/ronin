@@ -70,7 +70,12 @@ func (r Result) Artifacts() []tool.Artifact {
 }
 
 func New(cwd string) *Tool {
-	return &Tool{cwd: cwd, policy: AllowAll{}}
+	return NewWithPolicy(cwd, AllowAll{})
+}
+
+// NewWithPolicy creates a shell tool that checks policy before each command.
+func NewWithPolicy(cwd string, policy Policy) *Tool {
+	return &Tool{cwd: cwd, policy: policy}
 }
 
 type Tool struct {
