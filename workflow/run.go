@@ -167,22 +167,37 @@ func runFile(ctx context.Context, path, workingDir, input string, out io.Writer,
 	lua.Require(state, "math", lua.MathOpen, true)
 
 	var signal *controlSignal
-	registerRonin(state, out, &signal, newAgentRuntime(ctx, agent, emit), runtimeWorkingDir, input, emit)
+	agentRuntime := newAgentRuntime(ctx, agent, emit)
+	agentRuntime.worktrees.setWorkingDir(runtimeWorkingDir)
+	registerRonin(state, out, &signal, agentRuntime, runtimeWorkingDir, input, emit)
 
 	if err := lua.LoadBuffer(state, string(script), path, ""); err != nil {
 		return fmt.Errorf("parse workflow script %q: %w", path, err)
 	}
 
 	if err := state.ProtectedCall(0, 0, 0); err != nil {
+		agentRuntime.shutdown()
+		recovery := agentRuntime.worktrees.recover()
 		if signal != nil && strings.Contains(err.Error(), controlSignalMarker) {
+			message := signal.message
+			if recovery != "" {
+				message = strings.TrimSpace(message + "\n\n" + recovery)
+			}
 			switch signal.kind {
 			case controlSignalDone:
-				return &DoneError{Message: signal.message}
+				return &DoneError{Message: message}
 			case controlSignalFail:
-				return &FailureError{Message: signal.message}
+				return &FailureError{Message: message}
 			}
 		}
+		if recovery != "" {
+			return fmt.Errorf("run workflow script %q: %w\n\n%s", path, err, recovery)
+		}
 		return fmt.Errorf("run workflow script %q: %w", path, err)
+	}
+	agentRuntime.shutdown()
+	if recovery := agentRuntime.worktrees.recover(); recovery != "" {
+		return fmt.Errorf("workflow ended without promoting its managed integration worktree\n\n%s", recovery)
 	}
 
 	return nil
@@ -194,6 +209,28 @@ func registerRonin(state *lua.State, out io.Writer, signal **controlSignal, agen
 	state.SetField(-2, "log")
 	state.PushGoFunction(runAgentFunction(agent))
 	state.SetField(-2, "run_agent")
+	state.PushGoFunction(startAgentFunction(agent))
+	state.SetField(-2, "start_agent")
+	state.PushGoFunction(waitAnyFunction(agent))
+	state.SetField(-2, "wait_any")
+	state.PushGoFunction(gitPreflightFunction(agent.worktrees))
+	state.SetField(-2, "git_preflight")
+	state.PushGoFunction(gitExecutionGateFunction(agent.worktrees))
+	state.SetField(-2, "git_execution_gate")
+	state.PushGoFunction(createWorktreeFunction(agent.worktrees))
+	state.SetField(-2, "create_worktree")
+	state.PushGoFunction(sealWorktreeFunction(agent.worktrees))
+	state.SetField(-2, "seal_worktree")
+	state.PushGoFunction(squashWorktreeFunction(agent.worktrees))
+	state.SetField(-2, "squash_worktree")
+	state.PushGoFunction(worktreeHeadFunction(agent.worktrees))
+	state.SetField(-2, "worktree_head")
+	state.PushGoFunction(squashRepairsFunction(agent.worktrees))
+	state.SetField(-2, "squash_repairs")
+	state.PushGoFunction(promoteWorktreeFunction(agent.worktrees))
+	state.SetField(-2, "promote_worktree")
+	state.PushGoFunction(validateCommitFunction())
+	state.SetField(-2, "valid_commit")
 	state.PushGoFunction(readFunction(workingDir))
 	state.SetField(-2, "read")
 	state.PushGoFunction(requireInputFunction(input, signal))

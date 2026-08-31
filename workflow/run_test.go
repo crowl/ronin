@@ -508,335 +508,61 @@ ronin.log(ronin.input)`)
 	})
 }
 
-func TestRequirementWorkflowExample(t *testing.T) {
+func TestConcurrentWorkflowExampleRequiresGit(t *testing.T) {
 	t.Parallel()
 
-	t.Run("missing input fails before design", func(t *testing.T) {
+	t.Run("missing input fails before git preflight", func(t *testing.T) {
 		t.Parallel()
-
-		for _, input := range []string{"", " \t\r\n"} {
-			t.Run(fmt.Sprintf("input_%q", input), func(t *testing.T) {
-				var calls int
-				var output strings.Builder
-				err := RunFileWithAgentInputInWorkingDir(
-					t.Context(),
-					filepath.Join("..", "testdata", "workflow.lua"),
-					t.TempDir(),
-					input,
-					&output,
-					func(context.Context, AgentRequest) (AgentResult, error) {
-						calls++
-						return AgentResult{Text: "unexpected"}, nil
-					},
-				)
-				var failureErr *FailureError
-				if !errors.As(err, &failureErr) {
-					t.Fatalf("RunFileWithAgentInputInWorkingDir() error = %v, want FailureError", err)
-				}
-				if !strings.Contains(failureErr.Message, "software requirement is required") {
-					t.Fatalf("FailureError.Message = %q, want requirement guidance", failureErr.Message)
-				}
-				if calls != 0 {
-					t.Fatalf("agent calls = %d, want 0", calls)
-				}
-			})
-		}
-	})
-
-	t.Run("technical and acceptance approval complete the workflow", func(t *testing.T) {
-		t.Parallel()
-
-		responses := []string{
-			"design output",
-			"implementation output",
-			"technical review\nSTATUS: APPROVED\n",
-			"acceptance evaluation\nSTATUS: APPROVED\n",
-		}
-		requests, output, err := runRequirementWorkflowExample(t, responses)
-		var doneErr *DoneError
-		if !errors.As(err, &doneErr) {
-			t.Fatalf("RunFileWithAgentInWorkingDir() error = %v, want DoneError", err)
-		}
-		if doneErr.Message != "Workflow completed after 1 cycle(s). Final implementation report:\nimplementation output" {
-			t.Fatalf("DoneError.Message = %q, want completion summary with implementation report", doneErr.Message)
-		}
-		if len(requests) != 4 {
-			t.Fatalf("agent requests = %d, want 4", len(requests))
-		}
-
-		wantModels := []llm.Model{
-			{Provider: "openai", Name: "gpt-5.6-sol"},
-			{Provider: "openai", Name: "gpt-5.6-terra"},
-			{Provider: "openai", Name: "gpt-5.6-sol"},
-			{Provider: "openai", Name: "gpt-5.6-sol"},
-		}
-		wantReasoning := []llm.ReasoningLevel{
-			llm.ReasoningLevelHigh,
-			llm.ReasoningLevelMedium,
-			llm.ReasoningLevelHigh,
-			llm.ReasoningLevelHigh,
-		}
-		for i, req := range requests {
-			if req.Model != wantModels[i] {
-				t.Errorf("request %d model = %v, want %v", i, req.Model, wantModels[i])
-			}
-			if req.ReasoningLevel != wantReasoning[i] {
-				t.Errorf("request %d reasoning = %q, want %q", i, req.ReasoningLevel, wantReasoning[i])
-			}
-		}
-		promptContracts := []struct {
-			role     string
-			request  int
-			required []string
-		}{
-			{
-				role:    "designer",
-				request: 0,
-				required: []string{
-					"Act as the software designer",
-					"do not modify files",
-					"distinguish verified facts from assumptions",
-					"Scale its depth to the task",
-					"acceptance criteria stated by the user as authoritative",
-					"File-level implementation plan",
-				},
+		var calls int
+		var output strings.Builder
+		err := RunFileWithAgentInputInWorkingDir(
+			t.Context(),
+			filepath.Join("..", "testdata", "workflow.lua"),
+			t.TempDir(),
+			"",
+			&output,
+			func(context.Context, AgentRequest) (AgentResult, error) {
+				calls++
+				return AgentResult{}, nil
 			},
-			{
-				role:    "implementer",
-				request: 1,
-				required: []string{
-					"Act as the implementation engineer",
-					"Preserve unrelated user changes",
-					"informed guidance, not unquestionable truth",
-					"Verification — exact commands run and their outcomes",
-				},
-			},
-			{
-				role:    "reviewer",
-				request: 2,
-				required: []string{
-					"independent technical reviewer",
-					"actual repository state and working-tree diff",
-					"may be challenged",
-					"Report only concrete findings",
-				},
-			},
-			{
-				role:    "acceptance evaluator",
-				request: 3,
-				required: []string{
-					"fresh acceptance evaluator",
-					"source of truth",
-					"Map every acceptance criterion",
-					"observable completeness",
-				},
-			},
-		}
-		for _, contract := range promptContracts {
-			for _, required := range contract.required {
-				if !strings.Contains(requests[contract.request].System, required) {
-					t.Errorf("%s system prompt does not contain %q", contract.role, required)
-				}
-			}
-		}
-		for i, req := range requests[1:] {
-			if !strings.Contains(req.Prompt, responses[0]) {
-				t.Errorf("request %d prompt does not contain proposed design output", i+1)
-			}
-		}
-		for i, req := range requests {
-			if !strings.Contains(req.Prompt, "Implement the requested behavior.") {
-				t.Errorf("request %d prompt does not contain workflow input", i)
-			}
-		}
-		if !strings.Contains(requests[2].Prompt, responses[1]) {
-			t.Error("review prompt does not contain implementation output")
-		}
-		if !strings.Contains(requests[2].Prompt, "No prior review feedback") {
-			t.Error("review prompt does not contain feedback assigned to the implementation cycle")
-		}
-		if strings.Contains(requests[3].Prompt, strings.TrimSpace(responses[2])) {
-			t.Error("acceptance evaluator prompt is anchored by technical review output")
-		}
-		if !strings.Contains(requests[3].Prompt, "No prior acceptance feedback") {
-			t.Error("acceptance evaluator prompt does not contain prior acceptance feedback")
-		}
-		if !strings.Contains(output, responses[1]) || !strings.Contains(output, responses[3]) {
-			t.Errorf("output = %q, want final implementation and evaluation", output)
-		}
-	})
-
-	t.Run("technical rejection returns feedback to implementation", func(t *testing.T) {
-		t.Parallel()
-
-		responses := []string{
-			"design output",
-			"first implementation",
-			"missing regression test\nSTATUS: CHANGES_REQUIRED",
-			"second implementation",
-			"technical review\nSTATUS: APPROVED",
-			"acceptance evaluation\nSTATUS: APPROVED",
-		}
-		requests, _, err := runRequirementWorkflowExample(t, responses)
-		if _, ok := errors.AsType[*DoneError](err); !ok {
-			t.Fatalf("RunFileWithAgentInWorkingDir() error = %v, want DoneError", err)
-		}
-		if len(requests) != 6 {
-			t.Fatalf("agent requests = %d, want 6", len(requests))
-		}
-		if !strings.Contains(requests[3].Prompt, responses[2]) {
-			t.Error("second implementation prompt does not contain technical feedback")
-		}
-		if !strings.Contains(requests[4].Prompt, responses[2]) {
-			t.Error("second technical review prompt does not contain feedback assigned to the cycle")
-		}
-		for i, req := range requests[:5] {
-			if strings.Contains(req.System, "fresh acceptance evaluator") {
-				t.Fatalf("request %d evaluates before technical approval", i)
-			}
-		}
-	})
-
-	t.Run("acceptance rejection returns feedback to implementation and verification roles", func(t *testing.T) {
-		t.Parallel()
-
-		responses := []string{
-			"design output",
-			"first implementation",
-			"technical review\nSTATUS: APPROVED",
-			"requirement remains incomplete\nSTATUS: CHANGES_REQUIRED",
-			"second implementation",
-			"technical review\nSTATUS: APPROVED",
-			"acceptance evaluation\nSTATUS: APPROVED",
-		}
-		requests, _, err := runRequirementWorkflowExample(t, responses)
-		if _, ok := errors.AsType[*DoneError](err); !ok {
-			t.Fatalf("RunFileWithAgentInWorkingDir() error = %v, want DoneError", err)
-		}
-		if len(requests) != 7 {
-			t.Fatalf("agent requests = %d, want 7", len(requests))
-		}
-		if !strings.Contains(requests[4].Prompt, responses[3]) {
-			t.Error("second implementation prompt does not contain acceptance feedback")
-		}
-		if !strings.Contains(requests[5].Prompt, responses[3]) {
-			t.Error("second technical review prompt does not contain acceptance feedback assigned to the cycle")
-		}
-		if !strings.Contains(requests[6].Prompt, responses[3]) {
-			t.Error("second acceptance evaluation prompt does not contain prior acceptance feedback")
-		}
-	})
-
-	t.Run("malformed terminal marker is treated as rejection", func(t *testing.T) {
-		t.Parallel()
-
-		responses := []string{
-			"design output",
-			"first implementation",
-			"This text ends with a misleading STATUS: APPROVED",
-			"second implementation",
-			"technical review\nSTATUS: APPROVED",
-			"acceptance evaluation\nSTATUS: APPROVED",
-		}
-		requests, _, err := runRequirementWorkflowExample(t, responses)
-		if _, ok := errors.AsType[*DoneError](err); !ok {
-			t.Fatalf("RunFileWithAgentInWorkingDir() error = %v, want DoneError", err)
-		}
-		if len(requests) != 6 {
-			t.Fatalf("agent requests = %d, want 6", len(requests))
-		}
-		if !strings.Contains(requests[3].Prompt, responses[2]) {
-			t.Error("malformed review response was not returned as feedback")
-		}
-	})
-
-	t.Run("contradictory terminal markers are treated as rejection", func(t *testing.T) {
-		t.Parallel()
-
-		responses := []string{
-			"design output",
-			"first implementation",
-			"STATUS: CHANGES_REQUIRED\nSTATUS: APPROVED",
-			"second implementation",
-			"technical review\nSTATUS: APPROVED",
-			"acceptance evaluation\nSTATUS: APPROVED",
-		}
-		requests, _, err := runRequirementWorkflowExample(t, responses)
-		if _, ok := errors.AsType[*DoneError](err); !ok {
-			t.Fatalf("RunFileWithAgentInWorkingDir() error = %v, want DoneError", err)
-		}
-		if len(requests) != 6 {
-			t.Fatalf("agent requests = %d, want 6", len(requests))
-		}
-		if !strings.Contains(requests[3].Prompt, responses[2]) {
-			t.Error("contradictory review response was not returned as feedback")
-		}
-	})
-
-	t.Run("acceptance evaluator malformed terminal marker is treated as rejection", func(t *testing.T) {
-		t.Parallel()
-
-		responses := []string{
-			"design output",
-			"first implementation",
-			"technical review\nSTATUS: APPROVED",
-			"Approval is not a terminal marker: STATUS: APPROVED",
-			"second implementation",
-			"technical review\nSTATUS: APPROVED",
-			"acceptance evaluation\nSTATUS: APPROVED",
-		}
-		requests, _, err := runRequirementWorkflowExample(t, responses)
-		if _, ok := errors.AsType[*DoneError](err); !ok {
-			t.Fatalf("RunFileWithAgentInWorkingDir() error = %v, want DoneError", err)
-		}
-		if len(requests) != 7 {
-			t.Fatalf("agent requests = %d, want 7", len(requests))
-		}
-		if !strings.Contains(requests[4].Prompt, responses[3]) {
-			t.Error("malformed evaluator response was not returned as feedback")
-		}
-	})
-
-	t.Run("cycle exhaustion fails with unresolved feedback", func(t *testing.T) {
-		t.Parallel()
-
-		responses := []string{"design output"}
-		for cycle := 1; cycle <= 5; cycle++ {
-			responses = append(responses,
-				fmt.Sprintf("implementation %d", cycle),
-				fmt.Sprintf("unresolved finding %d\nSTATUS: CHANGES_REQUIRED", cycle),
-			)
-		}
-		requests, _, err := runRequirementWorkflowExample(t, responses)
+		)
 		var failureErr *FailureError
 		if !errors.As(err, &failureErr) {
-			t.Fatalf("RunFileWithAgentInWorkingDir() error = %v, want FailureError", err)
+			t.Fatalf("error = %v, want FailureError", err)
 		}
-		if len(requests) != 11 {
-			t.Fatalf("agent requests = %d, want 11", len(requests))
+		if calls != 0 {
+			t.Fatalf("agent calls = %d, want 0", calls)
 		}
-		if !strings.Contains(failureErr.Message, "unresolved finding 5") {
-			t.Fatalf("FailureError.Message = %q, want latest unresolved feedback", failureErr.Message)
+	})
+
+	t.Run("requires a git worktree before design", func(t *testing.T) {
+		t.Parallel()
+		var calls int
+		_, err := runConcurrentWorkflowExample(t, t.TempDir(), func(context.Context, AgentRequest) (AgentResult, error) {
+			calls++
+			return AgentResult{}, nil
+		})
+		if err == nil || !strings.Contains(err.Error(), "not inside a Git worktree") {
+			t.Fatalf("error = %v, want Git worktree error", err)
+		}
+		if calls != 0 {
+			t.Fatalf("agent calls = %d, want 0", calls)
 		}
 	})
 }
 
-func runRequirementWorkflowExample(t *testing.T, responses []string) ([]AgentRequest, string, error) {
+func runConcurrentWorkflowExample(t *testing.T, workingDir string, agent AgentFunc) (string, error) {
 	t.Helper()
-
-	scriptPath := filepath.Join("..", "testdata", "workflow.lua")
-	var requests []AgentRequest
 	var output strings.Builder
-
-	err := RunFileWithAgentInputInWorkingDir(t.Context(), scriptPath, t.TempDir(), "Implement the requested behavior.", &output, func(_ context.Context, req AgentRequest) (AgentResult, error) {
-		if len(requests) >= len(responses) {
-			return AgentResult{}, fmt.Errorf("unexpected agent request %d", len(requests)+1)
-		}
-		response := responses[len(requests)]
-		requests = append(requests, req)
-		return AgentResult{Text: response}, nil
-	})
-	return requests, output.String(), err
+	err := RunFileWithAgentInputInWorkingDir(
+		t.Context(),
+		filepath.Join("..", "testdata", "workflow.lua"),
+		workingDir,
+		"Implement the requested behavior.",
+		&output,
+		agent,
+	)
+	return output.String(), err
 }
 
 func runScript(t *testing.T, script string) (string, error) {

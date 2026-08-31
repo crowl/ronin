@@ -490,8 +490,8 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string, shar
 	var settings config.Settings
 	var defaultModel llm.Model
 	var defaultLevel llm.ReasoningLevel
-	var tools []runtime.Tool
-	var systemPrompt string
+	var defaultTools []runtime.Tool
+	var defaultSystemPrompt string
 	var compactor runtime.Compactor
 	var summarizer runtime.ToolOutputSummarizer
 	var summarizationPolicy runtime.ToolOutputSummarizationPolicy
@@ -546,15 +546,15 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string, shar
 
 		readCache := fsutil.NewReadCache()
 		mutationQueue := fsutil.NewMutationQueue()
-		tools = []runtime.Tool{
+		defaultTools = []runtime.Tool{
 			readfile.New(workingDir, readCache),
 			editfile.New(workingDir, mutationQueue),
 			writefile.New(workingDir, mutationQueue),
 			shell.New(workingDir),
 		}
-		tools = append(tools, mcpClient.Tools()...)
+		defaultTools = append(defaultTools, mcpClient.Tools()...)
 
-		systemPrompt, err = runtime.BuildSystemPrompt(runtime.SystemPromptInput{
+		defaultSystemPrompt, err = runtime.BuildSystemPrompt(runtime.SystemPromptInput{
 			CWD:             workingDir,
 			MCPInstructions: mcpClient.Instructions(),
 		})
@@ -602,7 +602,29 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string, shar
 			return workflow.AgentResult{}, fmt.Errorf("reasoning level %q is not supported by model %s", agentLevel, agentModel)
 		}
 
-		agentSystemPrompt := systemPrompt
+		agentWorkingDir := workingDir
+		agentTools := defaultTools
+		agentSystemPrompt := defaultSystemPrompt
+		if req.Workspace != "" {
+			agentWorkingDir = req.Workspace
+			readCache := fsutil.NewReadCache()
+			if req.ReadOnly {
+				agentTools = []runtime.Tool{readfile.New(agentWorkingDir, readCache)}
+			} else {
+				mutationQueue := fsutil.NewMutationQueue()
+				agentTools = []runtime.Tool{
+					readfile.New(agentWorkingDir, readCache),
+					editfile.New(agentWorkingDir, mutationQueue),
+					writefile.New(agentWorkingDir, mutationQueue),
+					shell.NewWithPolicy(agentWorkingDir, workflow.WorkspaceShellPolicy{}),
+				}
+			}
+			var err error
+			agentSystemPrompt, err = runtime.BuildSystemPrompt(runtime.SystemPromptInput{CWD: agentWorkingDir})
+			if err != nil {
+				return workflow.AgentResult{}, fmt.Errorf("build workspace system prompt: %w", err)
+			}
+		}
 		if strings.TrimSpace(req.System) != "" {
 			agentSystemPrompt += "\n\nWorkflow agent instructions:\n" + strings.TrimSpace(req.System)
 		}
@@ -612,16 +634,16 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string, shar
 			return workflow.AgentResult{}, fmt.Errorf("load model client: %w", err)
 		}
 		conv, err := runtime.NewConversation(runtime.ConversationConfig{
-			CWD:                           workingDir,
+			CWD:                           agentWorkingDir,
 			ModelClient:                   client,
 			Compactor:                     compactor,
 			ToolOutputSummarizer:          summarizer,
 			ToolOutputSummarizationPolicy: summarizationPolicy,
-			Tools:                         tools,
+			Tools:                         agentTools,
 			SystemPrompt:                  agentSystemPrompt,
 			MaxTurns:                      settings.MaxTurns,
 			Now:                           func() time.Time { return time.Now() },
-			Session:                       session.Session{WorkingDir: workingDir},
+			Session:                       session.Session{WorkingDir: agentWorkingDir},
 		})
 		if err != nil {
 			return workflow.AgentResult{}, err
@@ -630,7 +652,22 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string, shar
 		if err != nil {
 			return workflow.AgentResult{}, err
 		}
-		return workflow.AgentResult{Text: text}, nil
+		result := workflow.AgentResult{Text: text}
+		if req.OutputSchema != nil {
+			raw, err := client.PredictNextStructured(ctx, llm.PredictNextStructuredRequest{
+				SystemPrompt: "Convert the supplied agent report into JSON matching the requested schema. Preserve its decisions exactly and do not add new work.",
+				Messages: []llm.Message{llm.UserMessage{
+					Timestamp: time.Now(),
+					Text:      text,
+				}},
+				Schema: req.OutputSchema,
+			})
+			if err != nil {
+				return workflow.AgentResult{}, fmt.Errorf("generate structured workflow agent output: %w", err)
+			}
+			result.Output = raw
+		}
+		return result, nil
 	}
 	closeAgent := func() error {
 		if sharedMCP == nil && mcpClient != nil {
