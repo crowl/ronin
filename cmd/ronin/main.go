@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -54,6 +55,7 @@ func run() (exitCode int) {
 	var reasoningLevelFlag string
 	var contextFileFlags repeatedFlag
 	var skillFlags repeatedFlag
+	var mcpFlags repeatedFlag
 
 	flag.BoolVar(&versionFlag, "version", false, "Print the Ronin version.")
 	flag.BoolVar(&resume, "resume", false, "Load the active session for the working directory instead of starting a fresh session.")
@@ -63,6 +65,7 @@ func run() (exitCode int) {
 	flag.StringVar(&reasoningLevelFlag, "reasoning", "", "Reasoning level to use. Overrides the configured reasoning level.")
 	flag.Var(&contextFileFlags, "context-file", "Context file to include in prompt mode. May be repeated.")
 	flag.Var(&skillFlags, "skill", "Skill name, skill directory, or SKILL.md path to include in prompt mode. May be repeated.")
+	flag.Var(&mcpFlags, "mcp", "Configured MCP server to activate. May be repeated; use all to activate every server.")
 
 	flag.Parse()
 
@@ -84,7 +87,32 @@ func run() (exitCode int) {
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
 		defer cancel()
 
-		workflowAgent, closeWorkflowAgent := newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag, nil)
+		settings, err := config.Load()
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
+			return 1
+		}
+		mcpNames, err := selectMCPServers(settings.MCPServers, mcpFlags)
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "invalid MCP selection: %v\n", err)
+			return 1
+		}
+		mcpRegistry := newMCPRegistry(workingDir, settings.MCPServers)
+		if err := activateMCPServers(ctx, mcpRegistry, mcpNames); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "failed to initialize MCP servers: %v\n", err)
+			_ = mcpRegistry.Close()
+			return 1
+		}
+		defer func() {
+			if err := mcpRegistry.Close(); err != nil {
+				_, _ = fmt.Fprintf(os.Stderr, "failed to close MCP servers: %v\n", err)
+				if exitCode == 0 {
+					exitCode = 1
+				}
+			}
+		}()
+
+		workflowAgent, closeWorkflowAgent := newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag, mcpRegistry)
 		defer func() { _ = closeWorkflowAgent() }()
 		if err := runWorkflow(ctx, workflowCmd.Script, workingDir, workflowCmd.Input, workflowAgent, os.Stdout); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
@@ -178,13 +206,24 @@ func run() (exitCode int) {
 		}
 	}
 
-	mcpClient, err := connectMCPServers(context.Background(), workingDir, settings.MCPServers)
+	mcpNames, err := selectMCPServers(settings.MCPServers, mcpFlags)
 	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "invalid MCP selection: %v\n", err)
+		return 1
+	}
+	if prompt == "" && len(mcpFlags) != 0 {
+		_, _ = fmt.Fprintln(os.Stderr, "--mcp is only supported with --prompt or run; use /mcp:<name> in the TUI")
+		return 1
+	}
+
+	mcpRegistry := newMCPRegistry(workingDir, settings.MCPServers)
+	if err := activateMCPServers(context.Background(), mcpRegistry, mcpNames); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "failed to initialize MCP servers: %v\n", err)
+		_ = mcpRegistry.Close()
 		return 1
 	}
 	defer func() {
-		if err := mcpClient.Close(); err != nil {
+		if err := mcpRegistry.Close(); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "failed to close MCP servers: %v\n", err)
 			if exitCode == 0 {
 				exitCode = 1
@@ -195,25 +234,27 @@ func run() (exitCode int) {
 	readCache := fsutil.NewReadCache()
 	mutationQueue := fsutil.NewMutationQueue()
 
-	tools := []runtime.Tool{
+	baseTools := []runtime.Tool{
 		readfile.New(workingDir, readCache),
 		editfile.New(workingDir, mutationQueue),
 		writefile.New(workingDir, mutationQueue),
 		shell.New(workingDir),
 	}
-	tools = append(tools, mcpClient.Tools()...)
 
-	workflowAgent, _ := newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag, mcpClient)
+	workflowAgent, _ := newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag, mcpRegistry)
 	if len(workflowCatalog.Workflows()) > 0 {
-		tools = append(tools, workflow.NewTool(workflowCatalog, workingDir, workflowAgent))
+		baseTools = append(baseTools, workflow.NewTool(workflowCatalog, workingDir, workflowAgent))
 	}
+	tools := append([]runtime.Tool(nil), baseTools...)
+	tools = append(tools, mcpRegistry.Tools()...)
 
-	systemPrompt, err := runtime.BuildSystemPrompt(runtime.SystemPromptInput{
+	systemPromptInput := runtime.SystemPromptInput{
 		CWD:             workingDir,
 		Skills:          skills,
 		ContextFiles:    contextFiles,
-		MCPInstructions: mcpClient.Instructions(),
-	})
+		MCPInstructions: mcpRegistry.Instructions(),
+	}
+	systemPrompt, err := runtime.BuildSystemPrompt(systemPromptInput)
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "failed to build system prompt: %v\n", err)
 		return 1
@@ -315,12 +356,175 @@ func run() (exitCode int) {
 		return 0
 	}
 
-	if err := runTUI(conv, workflowCatalog, workflowAgent); err != nil {
+	activator := &conversationMCPActivator{
+		registry:          mcpRegistry,
+		conversation:      conv,
+		baseTools:         baseTools,
+		systemPromptInput: systemPromptInput,
+	}
+	if err := runTUI(conv, workflowCatalog, workflowAgent, activator, settings.MCPServers); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
 		return 1
 	}
 
 	return 0
+}
+
+type mcpSource interface {
+	Tools() []runtime.Tool
+	Instructions() []runtime.MCPInstruction
+}
+
+type mcpRegistry struct {
+	workingDir string
+	configured map[string]config.MCPServer
+	clients    map[string]*mcp.Client
+	order      []string
+}
+
+func newMCPRegistry(workingDir string, configured map[string]config.MCPServer) *mcpRegistry {
+	return &mcpRegistry{
+		workingDir: workingDir,
+		configured: configured,
+		clients:    make(map[string]*mcp.Client),
+	}
+}
+
+func (r *mcpRegistry) Activate(ctx context.Context, name string) (bool, error) {
+	client, active, err := r.connect(ctx, name)
+	if err != nil || active {
+		return false, err
+	}
+	r.add(name, client)
+	return true, nil
+}
+
+func (r *mcpRegistry) connect(ctx context.Context, name string) (*mcp.Client, bool, error) {
+	if _, ok := r.clients[name]; ok {
+		return nil, true, nil
+	}
+	server, ok := r.configured[name]
+	if !ok {
+		return nil, false, fmt.Errorf("unknown MCP server %q", name)
+	}
+	client, err := connectMCPServers(ctx, r.workingDir, map[string]config.MCPServer{name: server})
+	if err != nil {
+		return nil, false, err
+	}
+	return client, false, nil
+}
+
+func (r *mcpRegistry) add(name string, client *mcp.Client) {
+	r.clients[name] = client
+	r.order = append(r.order, name)
+}
+
+func (r *mcpRegistry) Tools() []runtime.Tool {
+	var tools []runtime.Tool
+	for _, name := range r.order {
+		tools = append(tools, r.clients[name].Tools()...)
+	}
+	return tools
+}
+
+func (r *mcpRegistry) Instructions() []runtime.MCPInstruction {
+	var instructions []runtime.MCPInstruction
+	for _, name := range r.order {
+		instructions = append(instructions, r.clients[name].Instructions()...)
+	}
+	return instructions
+}
+
+func (r *mcpRegistry) Close() error {
+	var errs []error
+	for _, name := range slices.Backward(r.order) {
+		if err := r.clients[name].Close(); err != nil {
+			errs = append(errs, fmt.Errorf("close MCP server %q: %w", name, err))
+		}
+	}
+	r.clients = make(map[string]*mcp.Client)
+	r.order = nil
+	return errors.Join(errs...)
+}
+
+type conversationMCPActivator struct {
+	registry          *mcpRegistry
+	conversation      *runtime.Conversation
+	baseTools         []runtime.Tool
+	systemPromptInput runtime.SystemPromptInput
+}
+
+func (a *conversationMCPActivator) ActivateMCP(ctx context.Context, name string) (bool, error) {
+	client, active, err := a.registry.connect(ctx, name)
+	if err != nil || active {
+		return false, err
+	}
+
+	tools := append([]runtime.Tool(nil), a.baseTools...)
+	tools = append(tools, a.registry.Tools()...)
+	tools = append(tools, client.Tools()...)
+
+	promptInput := a.systemPromptInput
+	promptInput.MCPInstructions = append(a.registry.Instructions(), client.Instructions()...)
+	systemPrompt, err := runtime.BuildSystemPrompt(promptInput)
+	if err != nil {
+		_ = client.Close()
+		return false, fmt.Errorf("build system prompt: %w", err)
+	}
+	if err := a.conversation.SetToolsAndSystemPrompt(tools, systemPrompt); err != nil {
+		_ = client.Close()
+		return false, fmt.Errorf("update conversation tools: %w", err)
+	}
+
+	a.registry.add(name, client)
+	return true, nil
+}
+
+func selectMCPServers(configured map[string]config.MCPServer, selections []string) ([]string, error) {
+	if len(selections) == 0 {
+		return nil, nil
+	}
+
+	selected := make(map[string]struct{}, len(selections))
+	all := false
+	for _, raw := range selections {
+		name := strings.TrimSpace(raw)
+		if name == "" {
+			return nil, errors.New("--mcp requires a server name or all")
+		}
+		if name == "all" {
+			all = true
+			continue
+		}
+		if _, ok := configured[name]; !ok {
+			return nil, fmt.Errorf("unknown MCP server %q", name)
+		}
+		selected[name] = struct{}{}
+	}
+	if all && len(selected) != 0 {
+		return nil, errors.New("--mcp all cannot be combined with named MCP servers")
+	}
+	if all {
+		for name := range configured {
+			selected[name] = struct{}{}
+		}
+	}
+
+	names := make([]string, 0, len(selected))
+	for name := range selected {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+func activateMCPServers(ctx context.Context, registry *mcpRegistry, names []string) error {
+	for _, name := range names {
+		if _, err := registry.Activate(ctx, name); err != nil {
+			return fmt.Errorf("activate MCP server %q: %w", name, err)
+		}
+	}
+	return nil
 }
 
 func connectMCPServers(ctx context.Context, workingDir string, servers map[string]config.MCPServer) (*mcp.Client, error) {
@@ -484,18 +688,16 @@ func configuredModels(provider string, configured map[string]config.ProviderMode
 	return models
 }
 
-func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string, sharedMCP *mcp.Client) (workflow.AgentFunc, func() error) {
+func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string, mcpTools mcpSource) (workflow.AgentFunc, func() error) {
 	var initOnce sync.Once
 	var initErr error
 	var settings config.Settings
 	var defaultModel llm.Model
 	var defaultLevel llm.ReasoningLevel
 	var defaultTools []runtime.Tool
-	var defaultSystemPrompt string
 	var compactor runtime.Compactor
 	var summarizer runtime.ToolOutputSummarizer
 	var summarizationPolicy runtime.ToolOutputSummarizationPolicy
-	var mcpClient *mcp.Client
 
 	init := func() {
 		settings, initErr = config.Load()
@@ -534,16 +736,6 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string, shar
 			return
 		}
 
-		if sharedMCP != nil {
-			mcpClient = sharedMCP
-		} else {
-			mcpClient, initErr = connectMCPServers(context.Background(), workingDir, settings.MCPServers)
-			if initErr != nil {
-				initErr = fmt.Errorf("failed to initialize MCP servers: %w", initErr)
-				return
-			}
-		}
-
 		readCache := fsutil.NewReadCache()
 		mutationQueue := fsutil.NewMutationQueue()
 		defaultTools = []runtime.Tool{
@@ -551,16 +743,6 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string, shar
 			editfile.New(workingDir, mutationQueue),
 			writefile.New(workingDir, mutationQueue),
 			shell.New(workingDir),
-		}
-		defaultTools = append(defaultTools, mcpClient.Tools()...)
-
-		defaultSystemPrompt, err = runtime.BuildSystemPrompt(runtime.SystemPromptInput{
-			CWD:             workingDir,
-			MCPInstructions: mcpClient.Instructions(),
-		})
-		if err != nil {
-			initErr = fmt.Errorf("failed to build system prompt: %w", err)
-			return
 		}
 
 		compactor, err = runtime.NewDefaultCompactor(runtime.DefaultCompactorConfig{
@@ -603,8 +785,15 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string, shar
 		}
 
 		agentWorkingDir := workingDir
-		agentTools := defaultTools
-		agentSystemPrompt := defaultSystemPrompt
+		agentTools := append([]runtime.Tool(nil), defaultTools...)
+		agentTools = append(agentTools, mcpTools.Tools()...)
+		agentSystemPrompt, err := runtime.BuildSystemPrompt(runtime.SystemPromptInput{
+			CWD:             workingDir,
+			MCPInstructions: mcpTools.Instructions(),
+		})
+		if err != nil {
+			return workflow.AgentResult{}, fmt.Errorf("build MCP system prompt: %w", err)
+		}
 		if req.Workspace != "" {
 			agentWorkingDir = req.Workspace
 			readCache := fsutil.NewReadCache()
@@ -669,12 +858,7 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string, shar
 		}
 		return result, nil
 	}
-	closeAgent := func() error {
-		if sharedMCP == nil && mcpClient != nil {
-			return mcpClient.Close()
-		}
-		return nil
-	}
+	closeAgent := func() error { return nil }
 	return agent, closeAgent
 }
 
@@ -1150,7 +1334,7 @@ func (r workflowRunner) Run(ctx context.Context, item workflow.Workflow, input s
 	return workflow.Run(ctx, item, r.workingDir, input, r.agent, emit)
 }
 
-func runTUI(conv *runtime.Conversation, catalog *workflow.Catalog, agent workflow.AgentFunc) error {
+func runTUI(conv *runtime.Conversation, catalog *workflow.Catalog, agent workflow.AgentFunc, activator tui.MCPActivator, mcpServers map[string]config.MCPServer) error {
 	models := llm.Models()
 
 	cmds := []tui.Command{
@@ -1159,6 +1343,14 @@ func runTUI(conv *runtime.Conversation, catalog *workflow.Catalog, agent workflo
 	}
 	for _, item := range catalog.Workflows() {
 		cmds = append(cmds, tui.InvokeWorkflow{Workflow: item})
+	}
+	mcpNames := make([]string, 0, len(mcpServers))
+	for name := range mcpServers {
+		mcpNames = append(mcpNames, name)
+	}
+	slices.Sort(mcpNames)
+	for _, name := range mcpNames {
+		cmds = append(cmds, tui.ActivateMCP{Name: name})
 	}
 	for _, model := range models {
 		cmds = append(cmds, tui.SwitchModel{Model: model})
@@ -1174,6 +1366,7 @@ func runTUI(conv *runtime.Conversation, catalog *workflow.Catalog, agent workflo
 	if err := tui.Run(ctx, tui.Config{
 		Conversation:   conv,
 		WorkflowRunner: workflowRunner{workingDir: conv.CWD(), agent: agent},
+		MCPActivator:   activator,
 		Commands:       cmds,
 		Input:          os.Stdin,
 		Output:         os.Stdout,

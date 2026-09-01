@@ -167,7 +167,19 @@ For a server managed outside Ronin, configure its SSE endpoint instead:
 }
 ```
 
-Each server must set exactly one of `command` or `url`. MCP tools are namespaced as `<server>__<tool>`, such as `gopls__go_search`. Commands run in Ronin's working directory and inherit its environment; add an `env` object to override environment variables for a command. Remote servers receive Ronin's working directory as an MCP workspace root. Ronin fails startup if a configured server cannot start or connect, initialize, or list its tools.
+Each server must set exactly one of `command` or `url`. Configured MCP servers are opt-in: Ronin does not connect them automatically. In the TUI, activate a server with its generated slash command, such as `/mcp:gopls`. Activation applies to the current process and future sessions started with `/new`; activating an already active server is a no-op.
+
+For non-interactive prompts and workflow runs, use the repeatable `--mcp` flag:
+
+```sh
+ronin --mcp gopls --prompt "inspect this package"
+ronin --mcp gopls --mcp github --prompt "review this repository"
+ronin --mcp all run workflow.lua "input"
+```
+
+With no `--mcp` flag, no MCP servers are connected. `--mcp all` activates every configured server and cannot be combined with named selections. Unknown server names and connection, initialization, or tool-listing failures stop the non-interactive command with an error.
+
+MCP tools are namespaced as `<server>__<tool>`, such as `gopls__go_search`. Commands run in Ronin's working directory and inherit its environment; add an `env` object to override environment variables for a command. Remote servers receive Ronin's working directory as an MCP workspace root.
 
 Server stderr for command-based servers is written to one log per server under `$XDG_DATA_HOME/ronin/logs/mcp`, or `$HOME/.local/share/ronin/logs/mcp` when `XDG_DATA_HOME` is unset. Each log is truncated when Ronin starts and capped at 10 MiB.
 
