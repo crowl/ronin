@@ -65,6 +65,75 @@ func TestNew(t *testing.T) {
 	})
 }
 
+func TestSetToolsAndSystemPrompt(t *testing.T) {
+	t.Run("updates the next request", func(t *testing.T) {
+		modelClient := &fakeModelClient{events: []llm.PredictionEvent{
+			llm.BlockEnded{Block: llm.TextBlock{Text: "done"}},
+			llm.PredictionFinished{},
+		}}
+		conversation, err := runtime.NewConversation(runtime.ConversationConfig{
+			ModelClient:  modelClient,
+			SystemPrompt: "before",
+		})
+		if err != nil {
+			t.Fatalf("NewConversation() error = %v", err)
+		}
+		tool := fakeTool{name: "dynamic"}
+		if err := conversation.SetToolsAndSystemPrompt([]runtime.Tool{tool}, "after"); err != nil {
+			t.Fatalf("SetToolsAndSystemPrompt() error = %v", err)
+		}
+
+		events, errs := conversation.Prompt(t.Context(), "use tools")
+		_ = collectEvents(events)
+		if err := <-errs; err != nil {
+			t.Fatalf("Prompt() error = %v", err)
+		}
+		if len(modelClient.requests) != 1 {
+			t.Fatalf("requests = %d, want 1", len(modelClient.requests))
+		}
+		request := modelClient.requests[0]
+		if request.SystemPrompt != "after" {
+			t.Fatalf("system prompt = %q, want after", request.SystemPrompt)
+		}
+		if len(request.Tools) != 1 || request.Tools[0].Name() != "dynamic" {
+			t.Fatalf("tools = %#v", request.Tools)
+		}
+	})
+
+	t.Run("invalid tools leave the conversation unchanged", func(t *testing.T) {
+		modelClient := &fakeModelClient{events: []llm.PredictionEvent{
+			llm.BlockEnded{Block: llm.TextBlock{Text: "done"}},
+			llm.PredictionFinished{},
+		}}
+		original := fakeTool{name: "original"}
+		conversation, err := runtime.NewConversation(runtime.ConversationConfig{
+			ModelClient:  modelClient,
+			Tools:        []runtime.Tool{original},
+			SystemPrompt: "before",
+		})
+		if err != nil {
+			t.Fatalf("NewConversation() error = %v", err)
+		}
+		duplicate := fakeTool{name: "duplicate"}
+		if err := conversation.SetToolsAndSystemPrompt([]runtime.Tool{duplicate, duplicate}, "after"); err == nil {
+			t.Fatal("SetToolsAndSystemPrompt() error = nil, want duplicate tool error")
+		}
+
+		events, errs := conversation.Prompt(t.Context(), "use tools")
+		_ = collectEvents(events)
+		if err := <-errs; err != nil {
+			t.Fatalf("Prompt() error = %v", err)
+		}
+		request := modelClient.requests[0]
+		if request.SystemPrompt != "before" {
+			t.Fatalf("system prompt = %q, want before", request.SystemPrompt)
+		}
+		if len(request.Tools) != 1 || request.Tools[0].Name() != "original" {
+			t.Fatalf("tools = %#v", request.Tools)
+		}
+	})
+}
+
 func TestPromptLifecycle(t *testing.T) {
 	t.Run("llm error emits processing error and ended", func(t *testing.T) {
 		wantErr := errors.New("boom")

@@ -69,21 +69,9 @@ func NewConversation(cfg ConversationConfig) (*Conversation, error) {
 		maxTurns = defaultMaxTurns
 	}
 
-	toolDefs := make([]llm.Tool, 0, len(cfg.Tools))
-	toolByName := make(map[string]Tool, len(cfg.Tools))
-	for i, t := range cfg.Tools {
-		if t == nil {
-			return nil, fmt.Errorf("tool %d is nil", i)
-		}
-		name := strings.TrimSpace(t.Name())
-		if name == "" {
-			return nil, fmt.Errorf("tool %d has empty name", i)
-		}
-		if _, exists := toolByName[name]; exists {
-			return nil, fmt.Errorf("duplicate tool name %q", name)
-		}
-		toolDefs = append(toolDefs, t)
-		toolByName[name] = t
+	toolDefs, toolByName, err := indexTools(cfg.Tools)
+	if err != nil {
+		return nil, err
 	}
 
 	messages := append([]llm.Message(nil), cfg.Messages...)
@@ -154,6 +142,37 @@ func (c *Conversation) ContextUsage() llm.Usage            { return c.contextUsa
 
 func (c *Conversation) Messages() []llm.Message {
 	return append([]llm.Message(nil), c.messages...)
+}
+
+func (c *Conversation) SetToolsAndSystemPrompt(tools []Tool, systemPrompt string) error {
+	toolDefs, toolByName, err := indexTools(tools)
+	if err != nil {
+		return err
+	}
+	c.toolDefs = toolDefs
+	c.toolByName = toolByName
+	c.systemPrompt = systemPrompt
+	return nil
+}
+
+func indexTools(tools []Tool) ([]llm.Tool, map[string]Tool, error) {
+	toolDefs := make([]llm.Tool, 0, len(tools))
+	toolByName := make(map[string]Tool, len(tools))
+	for i, t := range tools {
+		if t == nil {
+			return nil, nil, fmt.Errorf("tool %d is nil", i)
+		}
+		name := strings.TrimSpace(t.Name())
+		if name == "" {
+			return nil, nil, fmt.Errorf("tool %d has empty name", i)
+		}
+		if _, exists := toolByName[name]; exists {
+			return nil, nil, fmt.Errorf("duplicate tool name %q", name)
+		}
+		toolDefs = append(toolDefs, t)
+		toolByName[name] = t
+	}
+	return toolDefs, toolByName, nil
 }
 
 func (c *Conversation) ToolCallTitle(name string, arguments []byte) string {
