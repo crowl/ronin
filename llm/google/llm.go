@@ -693,6 +693,7 @@ func handleData(ctx context.Context, data string, state *geminiStreamState, even
 			block = llm.ThinkingBlock{
 				Text:      active.accumulated.String(),
 				Signature: active.id,
+				Provider:  "google",
 			}
 		case "model_output":
 			block = llm.TextBlock{

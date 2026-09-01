@@ -762,9 +762,9 @@ func (state *anthropicStreamState) stopBlock(ctx context.Context, index int, eve
 	case llm.BlockKindText:
 		return sendEvent(ctx, events, llm.BlockEnded{Index: index, Block: llm.TextBlock{Text: partial.text.String()}})
 	case llm.BlockKindThinking:
-		return sendEvent(ctx, events, llm.BlockEnded{Index: index, Block: llm.ThinkingBlock{Text: partial.thinking.String(), Signature: partial.signature.String()}})
+		return sendEvent(ctx, events, llm.BlockEnded{Index: index, Block: llm.ThinkingBlock{Text: partial.thinking.String(), Signature: partial.signature.String(), Provider: "anthropic"}})
 	case llm.BlockKindRedactedThinking:
-		return sendEvent(ctx, events, llm.BlockEnded{Index: index, Block: llm.RedactedThinkingBlock{Data: partial.data}})
+		return sendEvent(ctx, events, llm.BlockEnded{Index: index, Block: llm.RedactedThinkingBlock{Data: partial.data, Provider: "anthropic"}})
 	case llm.BlockKindToolCall:
 		args := strings.TrimSpace(partial.input.String())
 		if args == "" {

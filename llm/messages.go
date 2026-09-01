@@ -38,12 +38,14 @@ type TextBlock struct {
 type ThinkingBlock struct {
 	Text      string
 	Signature string
+	Provider  string
 }
 
 // RedactedThinkingBlock contains opaque Anthropic thinking data that must be
 // returned unchanged when continuing a tool-use conversation.
 type RedactedThinkingBlock struct {
-	Data string
+	Data     string
+	Provider string
 }
 
 type ToolCallBlock struct {
@@ -51,6 +53,7 @@ type ToolCallBlock struct {
 	Name             string
 	Arguments        json.RawMessage
 	ThoughtSignature string
+	ThoughtProvider  string
 }
 
 type AssistantBlock interface{ assistantBlock() }
@@ -160,6 +163,44 @@ type ToolErrorMessage struct {
 type ErrorMessage struct {
 	Timestamp time.Time
 	Error     error
+}
+
+func ProjectMessagesForProvider(messages []Message, provider string) []Message {
+	projected := make([]Message, 0, len(messages))
+	for _, message := range messages {
+		assistant, ok := message.(AssistantMessage)
+		if !ok {
+			projected = append(projected, message)
+			continue
+		}
+		blocks := make([]AssistantBlock, 0, len(assistant.Blocks))
+		for _, block := range assistant.Blocks {
+			switch typed := block.(type) {
+			case ThinkingBlock:
+				if typed.Provider == provider && provider != "" {
+					blocks = append(blocks, typed)
+				}
+			case RedactedThinkingBlock:
+				if typed.Provider == provider && provider != "" {
+					blocks = append(blocks, typed)
+				}
+			case ToolCallBlock:
+				if typed.ThoughtProvider != provider || provider == "" {
+					typed.ThoughtSignature = ""
+					typed.ThoughtProvider = ""
+				}
+				blocks = append(blocks, typed)
+			default:
+				blocks = append(blocks, block)
+			}
+		}
+		if len(blocks) == 0 {
+			continue
+		}
+		assistant.Blocks = blocks
+		projected = append(projected, assistant)
+	}
+	return projected
 }
 
 // Message is a sealed interface that marks all LLM messages

@@ -271,7 +271,7 @@ func (s *LLM) stream(ctx context.Context, req llm.PredictNextRequest, events cha
 	scanner.Buffer(make([]byte, 1024), 10*1024*1024)
 
 	var dataLines []string
-	state := newStreamState()
+	state := newStreamState(s.model.Provider)
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -564,6 +564,7 @@ type streamState struct {
 	text                     strings.Builder
 	thinking                 strings.Builder
 	thinkingSeparatorPending bool
+	provider                 string
 }
 
 type partialCall struct {
@@ -574,9 +575,10 @@ type partialCall struct {
 	Emitted       bool
 }
 
-func newStreamState() *streamState {
+func newStreamState(provider string) *streamState {
 	return &streamState{
-		calls: map[string]*partialCall{},
+		calls:    map[string]*partialCall{},
+		provider: provider,
 	}
 }
 
@@ -809,7 +811,7 @@ func (state *streamState) finishThinking(ctx context.Context, events chan<- llm.
 	if state.thinking.Len() == 0 {
 		return nil
 	}
-	block := llm.ThinkingBlock{Text: state.thinking.String()}
+	block := llm.ThinkingBlock{Text: state.thinking.String(), Provider: state.provider}
 	state.thinking.Reset()
 	state.thinkingSeparatorPending = false
 	state.blockStarted = false
