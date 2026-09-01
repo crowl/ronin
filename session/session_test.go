@@ -10,7 +10,7 @@ import (
 
 func TestRedactedThinkingCodec(t *testing.T) {
 	want := llm.AssistantMessage{
-		Blocks: []llm.AssistantBlock{llm.RedactedThinkingBlock{Data: "opaque"}},
+		Blocks: []llm.AssistantBlock{llm.RedactedThinkingBlock{Data: "opaque", Provider: "anthropic"}},
 	}
 	eventType, payload, err := session.EncodeEvent(session.Event{Type: session.EventMessage, Message: want})
 	if err != nil {
@@ -50,6 +50,23 @@ func TestReconstruct(t *testing.T) {
 				{Type: session.EventCompaction, Compacted: []llm.Message{compacted}},
 			},
 			want: []llm.Message{compacted},
+		},
+		{
+			name: "context reset replaces history",
+			events: []session.Event{
+				{Type: session.EventMessage, Message: old},
+				{Type: session.EventContextReset, Compacted: []llm.Message{compacted}, ResetReason: "rewind"},
+			},
+			want: []llm.Message{compacted},
+		},
+		{
+			name: "model change preserves history",
+			events: []session.Event{
+				{Type: session.EventMessage, Message: old},
+				{Type: session.EventModelChanged},
+				{Type: session.EventMessage, Message: newMessage},
+			},
+			want: []llm.Message{old, newMessage},
 		},
 		{
 			name: "messages continue after compaction",

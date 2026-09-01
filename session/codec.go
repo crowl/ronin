@@ -6,8 +6,17 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/crowl/ronin/config"
 	"github.com/crowl/ronin/llm"
 )
+
+type eventJSON struct {
+	Messages       []messageJSON `json:"messages,omitempty"`
+	Reason         string        `json:"reason,omitempty"`
+	PreviousModel  config.Model  `json:"previous_model"`
+	Model          config.Model  `json:"model"`
+	ReasoningLevel string        `json:"reasoning_level,omitempty"`
+}
 
 type messageJSON struct {
 	Type                    string      `json:"type"`
@@ -36,6 +45,8 @@ type blockJSON struct {
 	ID               string          `json:"id,omitempty"`
 	Name             string          `json:"name,omitempty"`
 	Arguments        json.RawMessage `json:"arguments,omitempty"`
+	Provider         string          `json:"provider,omitempty"`
+	ThoughtProvider  string          `json:"thought_provider,omitempty"`
 	ThoughtSignature string          `json:"thought_signature,omitempty"`
 }
 
@@ -44,6 +55,24 @@ type blockJSON struct {
 // for message events, or "compaction" for compaction events.
 func encodeEvent(event Event) (string, []byte, error) {
 	switch event.Type {
+	case EventContextReset:
+		messages, err := encodeMessages(event.Compacted)
+		if err != nil {
+			return "", nil, err
+		}
+		payload, err := json.Marshal(eventJSON{Messages: messages, Reason: event.ResetReason})
+		if err != nil {
+			return "", nil, err
+		}
+		return string(EventContextReset), payload, nil
+	case EventModelChanged:
+		payload, err := json.Marshal(eventJSON{
+			PreviousModel: event.PreviousModel, Model: event.Model, ReasoningLevel: event.ReasoningLevel,
+		})
+		if err != nil {
+			return "", nil, err
+		}
+		return string(EventModelChanged), payload, nil
 	case EventCompaction:
 		payload, err := marshalMessages(event.Compacted)
 		if err != nil {
@@ -67,6 +96,27 @@ func encodeEvent(event Event) (string, []byte, error) {
 
 // decodeEvent reconstructs an event from its stored type tag and payload.
 func decodeEvent(eventType string, payload []byte) (Event, error) {
+	if eventType == string(EventContextReset) {
+		var encoded eventJSON
+		if err := json.Unmarshal(payload, &encoded); err != nil {
+			return Event{}, err
+		}
+		messages, err := decodeMessages(encoded.Messages)
+		if err != nil {
+			return Event{}, err
+		}
+		return Event{Type: EventContextReset, Compacted: messages, ResetReason: encoded.Reason}, nil
+	}
+	if eventType == string(EventModelChanged) {
+		var encoded eventJSON
+		if err := json.Unmarshal(payload, &encoded); err != nil {
+			return Event{}, err
+		}
+		return Event{
+			Type: EventModelChanged, PreviousModel: encoded.PreviousModel,
+			Model: encoded.Model, ReasoningLevel: encoded.ReasoningLevel,
+		}, nil
+	}
 	if eventType == string(EventCompaction) {
 		messages, err := unmarshalMessages(payload)
 		if err != nil {
@@ -138,8 +188,7 @@ func unmarshalMessage(data []byte) (llm.Message, error) {
 	return decodeMessage(encoded)
 }
 
-// marshalMessages encodes a compaction event payload.
-func marshalMessages(messages []llm.Message) ([]byte, error) {
+func encodeMessages(messages []llm.Message) ([]messageJSON, error) {
 	encoded := make([]messageJSON, 0, len(messages))
 	for i, message := range messages {
 		encodedMessage, err := encodeMessage(message)
@@ -147,6 +196,27 @@ func marshalMessages(messages []llm.Message) ([]byte, error) {
 			return nil, fmt.Errorf("encode message %d: %w", i, err)
 		}
 		encoded = append(encoded, encodedMessage)
+	}
+	return encoded, nil
+}
+
+func decodeMessages(encoded []messageJSON) ([]llm.Message, error) {
+	messages := make([]llm.Message, 0, len(encoded))
+	for i, message := range encoded {
+		decoded, err := decodeMessage(message)
+		if err != nil {
+			return nil, fmt.Errorf("decode message %d: %w", i, err)
+		}
+		messages = append(messages, decoded)
+	}
+	return messages, nil
+}
+
+// marshalMessages encodes a compaction event payload.
+func marshalMessages(messages []llm.Message) ([]byte, error) {
+	encoded, err := encodeMessages(messages)
+	if err != nil {
+		return nil, err
 	}
 	return json.Marshal(encoded)
 }
@@ -157,15 +227,7 @@ func unmarshalMessages(data []byte) ([]llm.Message, error) {
 	if err := json.Unmarshal(data, &encoded); err != nil {
 		return nil, err
 	}
-	messages := make([]llm.Message, 0, len(encoded))
-	for i, message := range encoded {
-		decoded, err := decodeMessage(message)
-		if err != nil {
-			return nil, fmt.Errorf("decode message %d: %w", i, err)
-		}
-		messages = append(messages, decoded)
-	}
-	return messages, nil
+	return decodeMessages(encoded)
 }
 
 func encodeMessage(message llm.Message) (messageJSON, error) {
@@ -238,11 +300,11 @@ func encodeBlock(block llm.AssistantBlock) (blockJSON, error) {
 	case llm.TextBlock:
 		return blockJSON{Type: "text", Text: b.Text}, nil
 	case llm.ThinkingBlock:
-		return blockJSON{Type: "thinking", Text: b.Text, Signature: b.Signature}, nil
+		return blockJSON{Type: "thinking", Text: b.Text, Signature: b.Signature, Provider: b.Provider}, nil
 	case llm.RedactedThinkingBlock:
-		return blockJSON{Type: "redacted_thinking", Data: b.Data}, nil
+		return blockJSON{Type: "redacted_thinking", Data: b.Data, Provider: b.Provider}, nil
 	case llm.ToolCallBlock:
-		return blockJSON{Type: "tool_call", ID: b.ID, Name: b.Name, Arguments: cloneRawMessage(b.Arguments), ThoughtSignature: b.ThoughtSignature}, nil
+		return blockJSON{Type: "tool_call", ID: b.ID, Name: b.Name, Arguments: cloneRawMessage(b.Arguments), ThoughtSignature: b.ThoughtSignature, ThoughtProvider: b.ThoughtProvider}, nil
 	default:
 		return blockJSON{}, fmt.Errorf("unsupported assistant block type %T", block)
 	}
@@ -253,11 +315,11 @@ func decodeBlock(encoded blockJSON) (llm.AssistantBlock, error) {
 	case "text":
 		return llm.TextBlock{Text: encoded.Text}, nil
 	case "thinking":
-		return llm.ThinkingBlock{Text: encoded.Text, Signature: encoded.Signature}, nil
+		return llm.ThinkingBlock{Text: encoded.Text, Signature: encoded.Signature, Provider: encoded.Provider}, nil
 	case "redacted_thinking":
-		return llm.RedactedThinkingBlock{Data: encoded.Data}, nil
+		return llm.RedactedThinkingBlock{Data: encoded.Data, Provider: encoded.Provider}, nil
 	case "tool_call":
-		return llm.ToolCallBlock{ID: encoded.ID, Name: encoded.Name, Arguments: cloneRawMessage(encoded.Arguments), ThoughtSignature: encoded.ThoughtSignature}, nil
+		return llm.ToolCallBlock{ID: encoded.ID, Name: encoded.Name, Arguments: cloneRawMessage(encoded.Arguments), ThoughtSignature: encoded.ThoughtSignature, ThoughtProvider: encoded.ThoughtProvider}, nil
 	default:
 		return nil, fmt.Errorf("unsupported assistant block type %q", encoded.Type)
 	}

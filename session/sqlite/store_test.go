@@ -79,6 +79,55 @@ func TestStorePersistsAcrossReopen(t *testing.T) {
 	}
 }
 
+func TestStoreForkAndModelChange(t *testing.T) {
+	clock := &fakeClock{now: time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)}
+	store := openStore(t, clock.Now)
+	ctx := context.Background()
+	parent, err := store.Create(ctx, t.TempDir(), session.Metadata{
+		Title: "Parent", Model: config.Model{Provider: "anthropic", Name: "claude"}, ReasoningLevel: "high",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if err := store.Append(ctx, parent.ID, session.Event{Type: session.EventMessage, Message: llm.UserMessage{Text: "source"}}); err != nil {
+		t.Fatalf("Append() error = %v", err)
+	}
+
+	retained := []llm.Message{llm.UserMessage{Text: "retained"}}
+	child, err := store.Fork(ctx, parent.ID, session.Metadata{
+		Title: "Parent", Model: parent.Model, ReasoningLevel: parent.ReasoningLevel,
+	}, session.Event{Type: session.EventContextReset, Compacted: retained, ResetReason: "fork"})
+	if err != nil {
+		t.Fatalf("Fork() error = %v", err)
+	}
+	loadedChild, messages, ok, err := store.Load(ctx, child.ID)
+	if err != nil || !ok {
+		t.Fatalf("Load(child) ok = %v, error = %v", ok, err)
+	}
+	if loadedChild.ParentID != parent.ID || !reflect.DeepEqual(messages, retained) {
+		t.Fatalf("child = %#v, messages = %#v", loadedChild, messages)
+	}
+	_, parentMessages, ok, err := store.Load(ctx, parent.ID)
+	if err != nil || !ok || len(parentMessages) != 1 || parentMessages[0].(llm.UserMessage).Text != "source" {
+		t.Fatalf("source session changed: ok = %v, error = %v, messages = %#v", ok, err, parentMessages)
+	}
+
+	metadata := session.Metadata{Title: child.Title, Model: config.Model{Provider: "google", Name: "gemini"}, ReasoningLevel: "medium"}
+	err = store.SwitchModel(ctx, child.ID, metadata, session.Event{
+		Type: session.EventModelChanged, PreviousModel: child.Model, Model: metadata.Model, ReasoningLevel: metadata.ReasoningLevel,
+	})
+	if err != nil {
+		t.Fatalf("SwitchModel() error = %v", err)
+	}
+	updated, updatedMessages, ok, err := store.Load(ctx, child.ID)
+	if err != nil || !ok {
+		t.Fatalf("Load(updated child) ok = %v, error = %v", ok, err)
+	}
+	if updated.Model != metadata.Model || updated.ReasoningLevel != metadata.ReasoningLevel || !reflect.DeepEqual(updatedMessages, retained) {
+		t.Fatalf("updated child = %#v, messages = %#v", updated, updatedMessages)
+	}
+}
+
 func TestStoreConcurrentAppendAcrossConnectionsPreservesEveryEvent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ronin.db")
 	ctx := context.Background()

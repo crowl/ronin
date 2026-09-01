@@ -24,12 +24,27 @@ type Store interface {
 	Clear(ctx context.Context, workingDir string) error
 }
 
+// ForkStore atomically creates a child session with its initial journal event.
+type ForkStore interface {
+	Fork(ctx context.Context, parentID string, metadata Metadata, event Event) (Session, error)
+}
+
+// ModelSwitchStore atomically records a model transition and updates metadata.
+type ModelSwitchStore interface {
+	SwitchModel(ctx context.Context, sessionID string, metadata Metadata, event Event) error
+}
+
 // EventType distinguishes journal entries.
 type EventType string
 
 const (
 	// EventMessage carries a single conversation message.
 	EventMessage EventType = "message"
+	// EventContextReset carries the effective message set that replaces prior
+	// history after an operation such as rewind or fork.
+	EventContextReset EventType = "context_reset"
+	// EventModelChanged records a model transition without changing messages.
+	EventModelChanged EventType = "model_changed"
 	// EventCompaction carries the effective message set that replaces prior
 	// history when reconstructing context.
 	EventCompaction EventType = "compaction"
@@ -37,11 +52,15 @@ const (
 
 // Event is a single append-only journal entry for a session.
 type Event struct {
-	Seq       int64
-	Type      EventType
-	CreatedAt time.Time
-	Message   llm.Message
-	Compacted []llm.Message
+	Seq            int64
+	Type           EventType
+	CreatedAt      time.Time
+	Message        llm.Message
+	Compacted      []llm.Message
+	ResetReason    string
+	PreviousModel  config.Model
+	Model          config.Model
+	ReasoningLevel string
 }
 
 // Reconstruct rebuilds the effective message history from an ordered journal.
@@ -54,8 +73,10 @@ func Reconstruct(events []Event) []llm.Message {
 			if event.Message != nil {
 				messages = append(messages, event.Message)
 			}
-		case EventCompaction:
+		case EventCompaction, EventContextReset:
 			messages = append([]llm.Message(nil), event.Compacted...)
+		case EventModelChanged:
+			// Model changes do not affect effective message history.
 		}
 	}
 	return messages

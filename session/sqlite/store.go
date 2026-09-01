@@ -102,6 +102,107 @@ func (s *Store) Create(ctx context.Context, workingDir string, metadata session.
 	return record, nil
 }
 
+func (s *Store) Fork(ctx context.Context, parentID string, metadata session.Metadata, event session.Event) (session.Session, error) {
+	if parentID == "" {
+		return session.Session{}, errors.New("parent session id must not be empty")
+	}
+	parent, found, err := s.loadSession(ctx, `WHERE id = ?`, parentID)
+	if err != nil {
+		return session.Session{}, err
+	}
+	if !found {
+		return session.Session{}, fmt.Errorf("parent session %q not found", parentID)
+	}
+	id, err := newSessionID()
+	if err != nil {
+		return session.Session{}, err
+	}
+	now := s.now().UTC()
+	title := metadata.Title
+	if title == "" {
+		title = parent.Title
+	}
+	record := session.Session{
+		Version: session.Version, ID: id, Title: title, WorkingDir: parent.WorkingDir,
+		ParentID: parentID, CreatedAt: now, UpdatedAt: now, Model: metadata.Model,
+		ReasoningLevel: metadata.ReasoningLevel, Cost: llm.SessionCost{Available: true},
+	}
+	eventType, payload, err := session.EncodeEvent(event)
+	if err != nil {
+		return session.Session{}, fmt.Errorf("encode fork event: %w", err)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return session.Session{}, fmt.Errorf("begin fork session: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO sessions (id, working_dir, title, parent_id, model_provider, model_name, reasoning_level, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, record.ID, record.WorkingDir, record.Title, parentID,
+		nullable(record.Model.Provider), nullable(record.Model.Name), nullable(record.ReasoningLevel),
+		unixTimestamp(now), unixTimestamp(now)); err != nil {
+		return session.Session{}, fmt.Errorf("create fork session %q: %w", id, err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO session_events (session_id, seq, type, payload, created_at)
+		VALUES (?, 1, ?, ?, ?)`, id, eventType, payload, unixTimestamp(now)); err != nil {
+		return session.Session{}, fmt.Errorf("initialize fork session %q: %w", id, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return session.Session{}, fmt.Errorf("commit fork session %q: %w", id, err)
+	}
+	return record, nil
+}
+
+func (s *Store) SwitchModel(ctx context.Context, sessionID string, metadata session.Metadata, event session.Event) error {
+	if sessionID == "" {
+		return errors.New("session id must not be empty")
+	}
+	eventType, payload, err := session.EncodeEvent(event)
+	if err != nil {
+		return fmt.Errorf("encode model change event: %w", err)
+	}
+	now := s.now().UTC()
+	title := metadata.Title
+	if title == "" {
+		title = "New session"
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin model switch: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(ctx, `
+		INSERT INTO session_events (session_id, seq, type, payload, created_at)
+		SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ? FROM session_events WHERE session_id = ?`,
+		sessionID, eventType, payload, unixTimestamp(now), sessionID)
+	if err != nil {
+		return fmt.Errorf("append model change to session %q: %w", sessionID, err)
+	}
+	if n, err := result.RowsAffected(); err != nil || n != 1 {
+		if err != nil {
+			return fmt.Errorf("check model change event: %w", err)
+		}
+		return fmt.Errorf("append model change to session %q: no row inserted", sessionID)
+	}
+	result, err = tx.ExecContext(ctx, `
+		UPDATE sessions SET title = ?, model_provider = ?, model_name = ?, reasoning_level = ?, updated_at = ? WHERE id = ?`,
+		title, nullable(metadata.Model.Provider), nullable(metadata.Model.Name), nullable(metadata.ReasoningLevel), unixTimestamp(now), sessionID)
+	if err != nil {
+		return fmt.Errorf("update session %q model: %w", sessionID, err)
+	}
+	if n, err := result.RowsAffected(); err != nil || n != 1 {
+		if err != nil {
+			return fmt.Errorf("check session model update: %w", err)
+		}
+		return fmt.Errorf("session %q not found", sessionID)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit model switch for session %q: %w", sessionID, err)
+	}
+	return nil
+}
+
 func (s *Store) Append(ctx context.Context, sessionID string, event session.Event) error {
 	if sessionID == "" {
 		return errors.New("session id must not be empty")
