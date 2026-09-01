@@ -140,11 +140,12 @@ func (s *LLM) PredictNextStructured(ctx context.Context, req llm.PredictNextStru
 	}
 
 	mediaType := resp.Header.Get("Content-Type")
+	reader := bufio.NewReader(resp.Body)
 	var text string
-	if strings.HasPrefix(strings.ToLower(mediaType), "text/event-stream") {
-		text, err = s.readStructuredStream(resp.Body)
+	if isStructuredStream(mediaType, reader) {
+		text, err = s.readStructuredStream(reader)
 	} else {
-		text, err = s.readStructuredResponse(resp.Body)
+		text, err = s.readStructuredResponse(reader)
 	}
 	if err != nil {
 		return nil, err
@@ -158,6 +159,34 @@ func (s *LLM) PredictNextStructured(ctx context.Context, req llm.PredictNextStru
 		return nil, fmt.Errorf("%s structured response output is not valid JSON", s.provider())
 	}
 	return json.RawMessage(text), nil
+}
+
+func isStructuredStream(mediaType string, reader *bufio.Reader) bool {
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(mediaType)), "text/event-stream") {
+		return true
+	}
+
+	const maxLeadingWhitespace = 64
+	start := 0
+leadingWhitespace:
+	for start < maxLeadingWhitespace {
+		prefix, _ := reader.Peek(start + 1)
+		if len(prefix) <= start {
+			return false
+		}
+		switch prefix[start] {
+		case ' ', '\t', '\r', '\n':
+			start++
+		default:
+			break leadingWhitespace
+		}
+	}
+
+	prefix, _ := reader.Peek(start + len("event:"))
+	prefix = prefix[start:]
+	return bytes.HasPrefix(prefix, []byte("event:")) ||
+		bytes.HasPrefix(prefix, []byte("data:")) ||
+		bytes.HasPrefix(prefix, []byte(":"))
 }
 
 func (s *LLM) readStructuredResponse(r io.Reader) (string, error) {

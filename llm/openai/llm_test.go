@@ -500,6 +500,42 @@ func TestPredictNextStructured(t *testing.T) {
 		}
 	})
 
+	t.Run("detects_stream_with_json_content_type", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(strings.Join([]string{
+				`event: response.output_text.delta`,
+				`data: {"type":"response.output_text.delta","delta":"{\"answer\":\"ok\"}"}`,
+				``,
+				`event: response.completed`,
+				`data: {"type":"response.completed"}`,
+				``,
+			}, "\n")))
+		}))
+		defer server.Close()
+
+		client, err := openai.NewLLM(openai.LLMConfig{
+			BaseURL:        server.URL,
+			APIKey:         "key",
+			Model:          llm.Model{Provider: "openai", Name: "test"},
+			ReasoningLevel: llm.ReasoningLevelOff,
+		})
+		if err != nil {
+			t.Fatalf("new llm: %v", err)
+		}
+
+		got, err := client.PredictNextStructured(context.Background(), llm.PredictNextStructuredRequest{
+			Messages: []llm.Message{llm.UserMessage{Text: "prompt"}},
+			Schema:   &jsonschema.Schema{Type: "object"},
+		})
+		if err != nil {
+			t.Fatalf("PredictNextStructured() error = %v", err)
+		}
+		if string(got) != `{"answer":"ok"}` {
+			t.Fatalf("structured output = %s, want answer", got)
+		}
+	})
+
 	t.Run("requires_schema", func(t *testing.T) {
 		client, err := openai.NewLLM(openai.LLMConfig{APIKey: "key", Model: llm.Model{Provider: "openai", Name: "test"}, ReasoningLevel: llm.ReasoningLevelOff})
 		if err != nil {
