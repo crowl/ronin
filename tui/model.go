@@ -57,6 +57,9 @@ type appModel struct {
 
 	saveError string
 
+	confirmRewind *confirmRewindAction
+	commandItems  []menuItem
+
 	pendingTextDeltaKind pendingTextDeltaKind
 	pendingTextDelta     strings.Builder
 }
@@ -84,14 +87,21 @@ type runWorkflowAction struct {
 	Input    string
 }
 
+type confirmRewindAction struct {
+	Item         menuItem
+	Point        runtime.RewindPoint
+	RemovedTurns int
+}
+
 type modelAction interface{ modelAction() }
 
-func (noAction) modelAction()           {}
-func (exitAction) modelAction()         {}
-func (cancelPromptAction) modelAction() {}
-func (submitPromptAction) modelAction() {}
-func (runCommandAction) modelAction()   {}
-func (runWorkflowAction) modelAction()  {}
+func (noAction) modelAction()            {}
+func (exitAction) modelAction()          {}
+func (cancelPromptAction) modelAction()  {}
+func (submitPromptAction) modelAction()  {}
+func (runCommandAction) modelAction()    {}
+func (runWorkflowAction) modelAction()   {}
+func (confirmRewindAction) modelAction() {}
 
 func newAppModel(commands []Command) (*appModel, error) {
 	appMenu, err := newMenu(commands)
@@ -172,8 +182,22 @@ func (m *appModel) populateInitialBoxes(conversation Conversation) {
 }
 
 func (m *appModel) handleKey(key terminal.Key) (modelUpdate, error) {
+	if m.confirmRewind != nil {
+		switch {
+		case key.Type == terminal.KeyEscape || key.Type == terminal.KeyRune && (key.Rune == 'n' || key.Rune == 'N'):
+			m.confirmRewind = nil
+			return modelUpdate{Render: true}, nil
+		case key.Type == terminal.KeyRune && (key.Rune == 'y' || key.Rune == 'Y'):
+			confirmation := *m.confirmRewind
+			m.confirmRewind = nil
+			return modelUpdate{Render: true, Action: confirmation}, nil
+		default:
+			return modelUpdate{}, nil
+		}
+	}
+
 	if key.Type == terminal.KeyEscape && m.menu.Shown() {
-		m.menu.Hide()
+		m.restoreCommandMenu()
 		m.editor.Clear()
 		return modelUpdate{Render: true}, nil
 	}
@@ -250,6 +274,34 @@ func (m *appModel) handleKey(key terminal.Key) (modelUpdate, error) {
 	}
 
 	return modelUpdate{}, nil
+}
+
+func (m *appModel) showRewindPoints(points []runtime.RewindPoint, fork bool) {
+	if m.commandItems == nil {
+		m.commandItems = append([]menuItem(nil), m.menu.items...)
+	}
+	m.editor.SetText("/")
+	m.menu.ReplaceItems(rewindMenuItems(points, fork))
+}
+
+func (m *appModel) restoreCommandMenu() {
+	if m.commandItems != nil {
+		m.menu.items = m.commandItems
+		m.commandItems = nil
+	}
+	m.menu.Hide()
+}
+
+func (m *appModel) applyHistoryChange(conversation Conversation, prompt, message string) {
+	m.restoreCommandMenu()
+	m.pendingTextDelta.Reset()
+	m.pendingTextDeltaKind = pendingTextDeltaNone
+	m.boxes = nil
+	m.populateInitialBoxes(conversation)
+	m.boxes = append(m.boxes, systemMessageBox{Text: message})
+	m.boxLineCache.Reset()
+	m.statusBarCache.Reset()
+	m.editor.SetText(prompt)
 }
 
 func (m *appModel) startPrompt(prompt string) {
@@ -617,6 +669,13 @@ func (m *appModel) lines(width int, conversation Conversation, now time.Time) ([
 		lines = append(lines, workingIndicator{
 			Frame: m.indicatorFrame,
 			Label: m.workingLabel,
+		}.Lines(width)...)
+	}
+
+	if m.confirmRewind != nil {
+		appendBlankLine()
+		lines = append(lines, rewindConfirmationPresenter{
+			Point: m.confirmRewind.Point, RemovedTurns: m.confirmRewind.RemovedTurns,
 		}.Lines(width)...)
 	}
 

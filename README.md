@@ -73,6 +73,14 @@ Use `Ctrl+O` to expand tool output in the TUI. Press Escape to cancel an active 
 
 Ronin stores sessions in a local SQLite database. `--resume` selects the most recently updated session whose working directory matches the current project.
 
+The TUI provides these session-history commands:
+
+- `/rewind` — choose a prior prompt, confirm, and rewind the current session to immediately before it.
+- `/fork` — create a child session from immediately before a selected prior prompt.
+- `/compact` — compact the current conversation context.
+
+Rewind and fork change conversation history only. They do not restore files or modify the Git working tree. After either operation, the selected prompt is placed back in the editor for revision.
+
 The database is stored at:
 
 - `$XDG_DATA_HOME/ronin/ronin.db` when `XDG_DATA_HOME` is set;

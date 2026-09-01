@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/crowl/ronin/llm"
+	"github.com/crowl/ronin/runtime"
 	"github.com/crowl/ronin/tui/internal/text"
 )
 
@@ -147,6 +148,21 @@ type pendingSteeringPresenter struct {
 
 func (p pendingSteeringPresenter) Lines(width int) []string {
 	return markedLines(" » (queued) ", p.Text, width, style{})
+}
+
+type rewindConfirmationPresenter struct {
+	Point        runtime.RewindPoint
+	RemovedTurns int
+}
+
+func (p rewindConfirmationPresenter) Lines(width int) []string {
+	preview := strings.Join(strings.Fields(p.Point.Prompt), " ")
+	turns := "turn"
+	if p.RemovedTurns != 1 {
+		turns = "turns"
+	}
+	message := fmt.Sprintf("Rewind before %q and remove %d %s? This cannot be undone in the UI. [y/N]", preview, p.RemovedTurns, turns)
+	return markedLines("? ", message, width, strongStyle)
 }
 
 // editorPresenter

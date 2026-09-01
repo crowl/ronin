@@ -8,6 +8,17 @@ import (
 
 type StartNewConversation struct{}
 
+type RewindConversation struct{}
+
+type ForkConversation struct{}
+
+type rewindConversationAt struct {
+	Point        runtime.RewindPoint
+	RemovedTurns int
+}
+
+type forkConversationAt struct{ Point runtime.RewindPoint }
+
 type CompactConversation struct{}
 
 type SwitchModel struct{ Model llm.Model }
@@ -26,6 +37,10 @@ type Exit struct{}
 type Command interface{ command() }
 
 func (StartNewConversation) command() {}
+func (RewindConversation) command()   {}
+func (ForkConversation) command()     {}
+func (rewindConversationAt) command() {}
+func (forkConversationAt) command()   {}
 func (CompactConversation) command()  {}
 func (SwitchModel) command()          {}
 func (SwitchReasoningLevel) command() {}

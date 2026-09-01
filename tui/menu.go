@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/crowl/ronin/runtime"
 	"github.com/crowl/ronin/tui/internal/terminal"
 )
 
@@ -15,6 +16,16 @@ func newMenu(commands []Command) (*menuState, error) {
 	items := make([]menuItem, 0, len(commands))
 	for i, command := range commands {
 		switch typedCommand := command.(type) {
+		case RewindConversation:
+			items = append(items, menuItem{
+				Index: i, Name: "/rewind", Value: "/rewind",
+				Description: "rewind to a prior prompt", Command: typedCommand,
+			})
+		case ForkConversation:
+			items = append(items, menuItem{
+				Index: i, Name: "/fork", Value: "/fork",
+				Description: "fork from a prior prompt", Command: typedCommand,
+			})
 		case CompactConversation:
 			items = append(items, menuItem{
 				Index:       i,
@@ -119,6 +130,31 @@ type menuState struct {
 	selectedIndex int
 	items         []menuItem
 	query         string
+}
+
+func rewindMenuItems(points []runtime.RewindPoint, fork bool) []menuItem {
+	items := make([]menuItem, 0, len(points))
+	for i := len(points) - 1; i >= 0; i-- {
+		point := points[i]
+		name := "rewind"
+		var command Command = rewindConversationAt{Point: point, RemovedTurns: i + 1}
+		if fork {
+			name = "fork"
+			command = forkConversationAt{Point: point}
+		}
+		items = append(items, menuItem{
+			Index: len(items), Name: point.Prompt, Value: point.Prompt,
+			Description: name + " to before this prompt", Command: command,
+		})
+	}
+	return items
+}
+
+func (m *menuState) ReplaceItems(items []menuItem) {
+	m.items = items
+	m.selectedIndex = 0
+	m.query = "/"
+	m.shown = true
 }
 
 func (m *menuState) Shown() bool {

@@ -1339,6 +1339,8 @@ func runTUI(conv *runtime.Conversation, catalog *workflow.Catalog, agent workflo
 
 	cmds := []tui.Command{
 		tui.StartNewConversation{},
+		tui.RewindConversation{},
+		tui.ForkConversation{},
 		tui.CompactConversation{},
 	}
 	for _, item := range catalog.Workflows() {

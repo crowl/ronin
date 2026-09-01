@@ -32,6 +32,12 @@ type Conversation interface {
 	ToolCallTitle(name string, arguments []byte) string
 }
 
+type HistoryConversation interface {
+	RewindPoints() []runtime.RewindPoint
+	Rewind(context.Context, runtime.RewindPoint) error
+	Fork(context.Context, runtime.RewindPoint) error
+}
+
 type MCPActivator interface {
 	ActivateMCP(context.Context, string) (bool, error)
 }

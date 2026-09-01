@@ -222,6 +222,17 @@ func (app *app) applyUpdate(ctx context.Context, update modelUpdate) error {
 		}
 	case runWorkflowAction:
 		app.runWorkflow(ctx, action.Workflow, action.Input)
+	case confirmRewindAction:
+		history, ok := app.conversation.(HistoryConversation)
+		if !ok {
+			app.model.recordCommand(action.Item, errors.New("conversation history changes are not supported"))
+			break
+		}
+		if err := history.Rewind(ctx, action.Point); err != nil {
+			app.model.recordCommand(action.Item, fmt.Errorf("failed to rewind conversation: %w", err))
+			break
+		}
+		app.model.applyHistoryChange(app.conversation, action.Point.Prompt, "Conversation rewound")
 	}
 
 	if update.Render {
@@ -280,6 +291,54 @@ func (app *app) submitPrompt(ctx context.Context, prompt string) {
 func (app *app) runCommand(ctx context.Context, item menuItem, command Command) error {
 	var err error
 	switch typedCommand := command.(type) {
+	case RewindConversation:
+		history, ok := app.conversation.(HistoryConversation)
+		if !ok {
+			app.model.recordCommand(item, errors.New("conversation history changes are not supported"))
+			return nil
+		}
+		points := history.RewindPoints()
+		if len(points) == 0 {
+			app.model.recordCommand(item, errors.New("no prompts are available to rewind"))
+			return nil
+		}
+		app.model.showRewindPoints(points, false)
+		return nil
+	case ForkConversation:
+		history, ok := app.conversation.(HistoryConversation)
+		if !ok {
+			app.model.recordCommand(item, errors.New("conversation history changes are not supported"))
+			return nil
+		}
+		points := history.RewindPoints()
+		if len(points) == 0 {
+			app.model.recordCommand(item, errors.New("no prompts are available to fork"))
+			return nil
+		}
+		app.model.showRewindPoints(points, true)
+		return nil
+	case rewindConversationAt:
+		app.model.restoreCommandMenu()
+		item = menuItem{Value: "/rewind", Command: typedCommand}
+		app.model.confirmRewind = &confirmRewindAction{
+			Item: item, Point: typedCommand.Point, RemovedTurns: typedCommand.RemovedTurns,
+		}
+		return nil
+	case forkConversationAt:
+		app.model.restoreCommandMenu()
+		item = menuItem{Value: "/fork", Command: typedCommand}
+		history, ok := app.conversation.(HistoryConversation)
+		if !ok {
+			err = errors.New("conversation history changes are not supported")
+			break
+		}
+		err = history.Fork(ctx, typedCommand.Point)
+		if err != nil {
+			err = fmt.Errorf("failed to fork conversation: %w", err)
+			break
+		}
+		app.model.applyHistoryChange(app.conversation, typedCommand.Point.Prompt, "Conversation forked")
+		return nil
 	case CompactConversation:
 		app.compactConversation(ctx, item)
 		return nil
