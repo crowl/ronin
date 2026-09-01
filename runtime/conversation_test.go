@@ -699,6 +699,55 @@ func TestSessionMutationTransactions(t *testing.T) {
 	})
 }
 
+func TestRewindAndFork(t *testing.T) {
+	store := &fakeSessionStore{
+		sessions: map[string]session.Session{
+			"source": {ID: "source", Title: "Source", WorkingDir: t.TempDir(), Model: config.Model{Provider: "test", Name: "model"}, ReasoningLevel: "high"},
+		},
+		messages: map[string][]llm.Message{}, activeID: "source",
+	}
+	messages := []llm.Message{
+		llm.UserMessage{Text: "<compacted_context>summary</compacted_context>"},
+		llm.UserMessage{Text: "first"},
+		llm.AssistantMessage{Blocks: []llm.AssistantBlock{llm.TextBlock{Text: "answer"}}},
+		llm.UserMessage{Text: "second"},
+	}
+	store.messages["source"] = append([]llm.Message(nil), messages...)
+	conversation, err := runtime.NewConversation(runtime.ConversationConfig{
+		ModelClient: &fakeModelClient{}, SessionStore: store, Session: store.sessions["source"], Messages: messages,
+		SessionCost: llm.SessionCost{Total: 1.25, Available: true},
+	})
+	if err != nil {
+		t.Fatalf("NewConversation() error = %v", err)
+	}
+
+	points := conversation.RewindPoints()
+	if len(points) != 2 || points[0].Prompt != "first" || points[1].Prompt != "second" {
+		t.Fatalf("RewindPoints() = %#v", points)
+	}
+	if err := conversation.Fork(t.Context(), points[1]); err != nil {
+		t.Fatalf("Fork() error = %v", err)
+	}
+	if got := conversation.SessionID(); got != "fork-sess-123" {
+		t.Fatalf("SessionID() = %q, want fork-sess-123", got)
+	}
+	if got := conversation.Messages(); len(got) != 3 {
+		t.Fatalf("fork messages = %#v, want retained prefix", got)
+	}
+	if source := store.messages["source"]; len(source) != 4 {
+		t.Fatalf("fork changed source messages: %#v", source)
+	}
+
+	forkPoints := conversation.RewindPoints()
+	if err := conversation.Rewind(t.Context(), forkPoints[0]); err != nil {
+		t.Fatalf("Rewind() error = %v", err)
+	}
+	got := conversation.Messages()
+	if len(got) != 1 || got[0].(llm.UserMessage).Text != "<compacted_context>summary</compacted_context>" {
+		t.Fatalf("rewound messages = %#v", got)
+	}
+}
+
 func TestCompactConversation(t *testing.T) {
 	t.Run("updates_messages_on_success", func(t *testing.T) {
 		compacted := []llm.Message{llm.UserMessage{Text: "compacted"}}
@@ -1043,7 +1092,7 @@ func (f *fakeSessionStore) Append(_ context.Context, id string, event session.Ev
 	if f.messages == nil {
 		f.messages = make(map[string][]llm.Message)
 	}
-	if event.Type == session.EventCompaction {
+	if event.Type == session.EventCompaction || event.Type == session.EventContextReset {
 		f.messages[id] = append([]llm.Message(nil), event.Compacted...)
 	} else {
 		f.messages[id] = append(f.messages[id], event.Message)
@@ -1053,6 +1102,21 @@ func (f *fakeSessionStore) Append(_ context.Context, id string, event session.Ev
 		f.cancelOnAppend = nil
 	}
 	return nil
+}
+
+func (f *fakeSessionStore) Fork(_ context.Context, parentID string, metadata session.Metadata, event session.Event) (session.Session, error) {
+	if f.saveErr != nil {
+		return session.Session{}, f.saveErr
+	}
+	parent := f.sessions[parentID]
+	child := session.Session{
+		ID: "fork-sess-123", ParentID: parentID, WorkingDir: parent.WorkingDir, Title: metadata.Title,
+		Model: metadata.Model, ReasoningLevel: metadata.ReasoningLevel, Cost: llm.SessionCost{Available: true},
+	}
+	f.sessions[child.ID] = child
+	f.messages[child.ID] = append([]llm.Message(nil), event.Compacted...)
+	f.activeID = child.ID
+	return child, nil
 }
 
 func (f *fakeSessionStore) UpdateMetadata(ctx context.Context, id string, metadata session.Metadata) error {

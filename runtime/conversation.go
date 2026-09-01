@@ -205,8 +205,20 @@ func (c *Conversation) SwitchModel(model llm.Model) error {
 	updated.Model = config.Model{Provider: model.Provider, Name: model.Name}
 	updated.ReasoningLevel = string(level)
 	updated.UpdatedAt = c.now().UTC()
-	if err := c.updateMetadata(context.Background(), updated); err != nil {
-		return fmt.Errorf("save session model: %w", err)
+	if c.sessionStore != nil && c.session.ID != "" {
+		if switchStore, ok := c.sessionStore.(session.ModelSwitchStore); ok {
+			event := session.Event{
+				Type: session.EventModelChanged, CreatedAt: c.now(), PreviousModel: c.session.Model,
+				Model: updated.Model, ReasoningLevel: updated.ReasoningLevel,
+			}
+			if err := switchStore.SwitchModel(context.Background(), c.session.ID, session.Metadata{
+				Title: updated.Title, Model: updated.Model, ReasoningLevel: updated.ReasoningLevel,
+			}, event); err != nil {
+				return fmt.Errorf("save session model: %w", err)
+			}
+		} else if err := c.updateMetadata(context.Background(), updated); err != nil {
+			return fmt.Errorf("save session model: %w", err)
+		}
 	}
 	c.modelClient = newModelClient
 	if compactor, ok := c.compactor.(*DefaultCompactor); ok {
@@ -265,6 +277,93 @@ func (c *Conversation) RecordWorkflowResult(message llm.WorkflowResultMessage) e
 	return nil
 }
 
+type RewindPoint struct {
+	MessageIndex int
+	Prompt       string
+}
+
+func (c *Conversation) RewindPoints() []RewindPoint {
+	var points []RewindPoint
+	for i, message := range c.messages {
+		user, ok := message.(llm.UserMessage)
+		if !ok || isCompactedContext(user.Text) {
+			continue
+		}
+		points = append(points, RewindPoint{MessageIndex: i, Prompt: user.Text})
+	}
+	return points
+}
+
+func (c *Conversation) Rewind(ctx context.Context, point RewindPoint) error {
+	if c.sessionStore == nil || c.session.ID == "" {
+		return errors.New("session store is not configured")
+	}
+	messages, err := c.messagesBefore(point)
+	if err != nil {
+		return err
+	}
+	event := session.Event{Type: session.EventContextReset, CreatedAt: c.now(), Compacted: messages, ResetReason: "rewind"}
+	if err := c.sessionStore.Append(ctx, c.session.ID, event); err != nil {
+		return fmt.Errorf("save rewind: %w", err)
+	}
+	c.session.UpdatedAt = c.now().UTC()
+	c.messages = messages
+	c.recalculateContextUsage()
+	return nil
+}
+
+func (c *Conversation) Fork(ctx context.Context, point RewindPoint) error {
+	messages, err := c.messagesBefore(point)
+	if err != nil {
+		return err
+	}
+	if c.sessionStore == nil || c.session.ID == "" {
+		return errors.New("session store is not configured")
+	}
+	forkStore, ok := c.sessionStore.(session.ForkStore)
+	if !ok {
+		return errors.New("session store does not support forks")
+	}
+	forked, err := forkStore.Fork(ctx, c.session.ID, session.Metadata{
+		Title: c.session.Title, Model: c.session.Model, ReasoningLevel: c.session.ReasoningLevel,
+	}, session.Event{Type: session.EventContextReset, CreatedAt: c.now(), Compacted: messages, ResetReason: "fork"})
+	if err != nil {
+		return fmt.Errorf("create session fork: %w", err)
+	}
+	c.session = forked
+	c.sessionCost = llm.SessionCost{Available: true}
+	c.messages = messages
+	c.recalculateContextUsage()
+	return nil
+}
+
+func (c *Conversation) messagesBefore(point RewindPoint) ([]llm.Message, error) {
+	if point.MessageIndex < 0 || point.MessageIndex >= len(c.messages) {
+		return nil, errors.New("rewind point is no longer valid")
+	}
+	user, ok := c.messages[point.MessageIndex].(llm.UserMessage)
+	if !ok || user.Text != point.Prompt || isCompactedContext(user.Text) {
+		return nil, errors.New("rewind point is no longer valid")
+	}
+	return append([]llm.Message(nil), c.messages[:point.MessageIndex]...), nil
+}
+
+func isCompactedContext(text string) bool {
+	return strings.HasPrefix(strings.TrimSpace(text), "<compacted_context>")
+}
+
+func (c *Conversation) recalculateContextUsage() {
+	var usage llm.Usage
+	for _, message := range slices.Backward(c.messages) {
+		if assistant, ok := message.(llm.AssistantMessage); ok {
+			usage = assistant.Usage
+			break
+		}
+	}
+	usage.Cost = llm.Cost{Total: c.sessionCost.Total, Available: c.sessionCost.Available}
+	c.contextUsage = usage
+}
+
 func (c *Conversation) NewConversation() error {
 	if c.sessionStore != nil && c.session.ID != "" {
 		model := c.modelClient.Model()
@@ -320,6 +419,28 @@ func (c *Conversation) Prompt(ctx context.Context, prompt string) (<-chan Event,
 		}
 	}()
 	return events, errs
+}
+
+func tagProviderArtifacts(blocks []llm.AssistantBlock, provider string) []llm.AssistantBlock {
+	tagged := make([]llm.AssistantBlock, len(blocks))
+	for i, block := range blocks {
+		switch typed := block.(type) {
+		case llm.ThinkingBlock:
+			typed.Provider = provider
+			tagged[i] = typed
+		case llm.RedactedThinkingBlock:
+			typed.Provider = provider
+			tagged[i] = typed
+		case llm.ToolCallBlock:
+			if typed.ThoughtSignature != "" {
+				typed.ThoughtProvider = provider
+			}
+			tagged[i] = typed
+		default:
+			tagged[i] = block
+		}
+	}
+	return tagged
 }
 
 func (c *Conversation) reportSaveFailure(ctx context.Context, events chan<- Event, runErr, saveErr error) error {
@@ -509,7 +630,8 @@ func (c *Conversation) run(ctx context.Context, prompt string, events chan<- Eve
 		var usage llm.Usage
 		var stopReason llm.StopReason
 		predictionFinished := false
-		request := llm.PredictNextRequest{SystemPrompt: c.systemPrompt, Tools: append([]llm.Tool(nil), c.toolDefs...), Messages: append([]llm.Message(nil), c.messages...)}
+		requestMessages := llm.ProjectMessagesForProvider(c.messages, c.modelClient.Model().Provider)
+		request := llm.PredictNextRequest{SystemPrompt: c.systemPrompt, Tools: append([]llm.Tool(nil), c.toolDefs...), Messages: requestMessages}
 		predictionEventsCh, predictionErrCh := c.modelClient.PredictNext(ctx, request)
 		for event := range predictionEventsCh {
 			switch typed := event.(type) {
@@ -552,6 +674,7 @@ func (c *Conversation) run(ctx context.Context, prompt string, events chan<- Eve
 		if !predictionFinished {
 			return finish(errors.New("llm prediction ended without a completion event"))
 		}
+		blocks = tagProviderArtifacts(blocks, c.modelClient.Model().Provider)
 		message := llm.AssistantMessage{Timestamp: c.now(), Blocks: blocks, StopReason: stopReason, Usage: usage}
 		if err := completionError(stopReason); err != nil {
 			if appendErr := c.appendMessage(ctx, message); appendErr != nil {
