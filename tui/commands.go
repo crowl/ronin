@@ -18,6 +18,8 @@ type InvokeSkill struct{ Skill runtime.Skill }
 
 type InvokeWorkflow struct{ Workflow workflow.Workflow }
 
+type ActivateMCP struct{ Name string }
+
 type Exit struct{}
 
 // Command is a sealed interface to mark all application commands
@@ -29,4 +31,5 @@ func (SwitchModel) command()          {}
 func (SwitchReasoningLevel) command() {}
 func (InvokeSkill) command()          {}
 func (InvokeWorkflow) command()       {}
+func (ActivateMCP) command()          {}
 func (Exit) command()                 {}

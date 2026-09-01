@@ -27,6 +27,7 @@ func TestMenu(t *testing.T) {
 			SwitchReasoningLevel{Level: llm.ReasoningLevelHigh},
 			InvokeSkill{Skill: runtime.Skill{Name: "go", Description: "Go help"}},
 			InvokeWorkflow{Workflow: workflow.Workflow{Name: "implement", Path: "/workflows/implement.lua"}},
+			ActivateMCP{Name: "gopls"},
 			Exit{},
 		})
 		if err != nil {
@@ -34,7 +35,7 @@ func TestMenu(t *testing.T) {
 		}
 
 		got := menu.Items()
-		wantValues := []string{"/new", "/compact", "/model test:model", "/reasoning high", "/skill:go", "/workflow:implement", "/exit"}
+		wantValues := []string{"/new", "/compact", "/model test:model", "/reasoning high", "/skill:go", "/workflow:implement", "/mcp:gopls", "/exit"}
 		if len(got) != len(wantValues) {
 			t.Fatalf("item count\ngot:  %d %#v\nwant: %d", len(got), got, len(wantValues))
 		}
@@ -44,8 +45,8 @@ func TestMenu(t *testing.T) {
 			}
 		}
 
-		wantNames := []string{"/new", "/compact", "/model", "/reasoning", "/skill:go", "/workflow:implement", "/exit"}
-		wantArguments := []string{"", "", "test:model", "high", "", "", ""}
+		wantNames := []string{"/new", "/compact", "/model", "/reasoning", "/skill:go", "/workflow:implement", "/mcp:gopls", "/exit"}
+		wantArguments := []string{"", "", "test:model", "high", "", "", "", ""}
 		for i := range got {
 			if got[i].Name != wantNames[i] {
 				t.Fatalf("item %d name\ngot:  %q\nwant: %q", i, got[i].Name, wantNames[i])

@@ -28,6 +28,7 @@ type appConfig struct {
 	Terminal       terminalIO
 	Conversation   Conversation
 	WorkflowRunner WorkflowRunner
+	MCPActivator   MCPActivator
 	Renderer       renderTarget
 	Commands       []Command
 }
@@ -48,6 +49,7 @@ func newApp(cfg appConfig) (*app, error) {
 	return &app{
 		conversation:   cfg.Conversation,
 		workflowRunner: cfg.WorkflowRunner,
+		mcpActivator:   cfg.MCPActivator,
 		events:         make(chan event, defaultEventsBufferLen),
 		terminal:       cfg.Terminal,
 		renderer:       cfg.Renderer,
@@ -58,6 +60,7 @@ func newApp(cfg appConfig) (*app, error) {
 type app struct {
 	conversation   Conversation
 	workflowRunner WorkflowRunner
+	mcpActivator   MCPActivator
 	events         chan event
 
 	terminal terminalIO
@@ -148,11 +151,7 @@ func (app *app) startWorkingTicker(ctx context.Context) {
 func (app *app) handleAppEvent(ctx context.Context, event event) error {
 	switch typedEvent := event.(type) {
 	case terminalKeyRead:
-		update, err := app.model.handleKey(typedEvent.Key)
-		if err != nil {
-			return err
-		}
-		return app.applyUpdate(ctx, update)
+		return app.handleKey(ctx, typedEvent.Key)
 	case terminalReadFailed:
 		return typedEvent.Err
 	case terminalResized:
@@ -182,6 +181,9 @@ func (app *app) handleAppEvent(ctx context.Context, event event) error {
 	case conversationCompactionDone:
 		app.cancelFunc = nil
 		return app.applyUpdate(ctx, app.model.finishCompaction(typedEvent.Err))
+	case mcpActivationDone:
+		app.cancelFunc = nil
+		return app.applyUpdate(ctx, app.model.finishMCPActivation(typedEvent.Item, typedEvent.Activated, typedEvent.Err))
 	case workflowEventReceived:
 		return app.applyUpdate(ctx, app.model.handleWorkflowEvent(typedEvent.Event, time.Now()))
 	case workflowDone:
@@ -311,12 +313,45 @@ func (app *app) runCommand(ctx context.Context, item menuItem, command Command) 
 		_ = typedCommand.Skill
 	case InvokeWorkflow:
 		app.model.enterWorkflowInput(typedCommand.Workflow)
+	case ActivateMCP:
+		if app.model.working {
+			err = errors.New("cannot activate an MCP server while another operation is active")
+			break
+		}
+		app.activateMCP(ctx, item, typedCommand.Name)
+		return nil
 	case Exit:
 		return errExitRequested
 	}
 
 	app.model.recordCommand(item, err)
 	return nil
+}
+
+func (app *app) activateMCP(ctx context.Context, item menuItem, name string) {
+	app.model.startMCPActivation(item, name)
+
+	activateCtx, cancel := context.WithCancel(ctx)
+	app.cancelFunc = cancel
+	app.requestRender()
+
+	go func() {
+		defer cancel()
+		activated := false
+		var err error
+		if app.mcpActivator == nil {
+			err = errors.New("MCP activation is not configured")
+		} else {
+			activated, err = app.mcpActivator.ActivateMCP(activateCtx, name)
+		}
+		if err != nil {
+			err = fmt.Errorf("failed to activate MCP server %q: %w", name, err)
+		}
+		select {
+		case app.events <- mcpActivationDone{Item: item, Activated: activated, Err: err}:
+		case <-ctx.Done():
+		}
+	}()
 }
 
 func (app *app) runWorkflow(ctx context.Context, item workflow.Workflow, input string) {

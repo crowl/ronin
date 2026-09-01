@@ -24,6 +24,12 @@ type conversationPromptDone struct{}
 
 type conversationCompactionDone struct{ Err error }
 
+type mcpActivationDone struct {
+	Item      menuItem
+	Activated bool
+	Err       error
+}
+
 type workflowEventReceived struct{ Event workflow.Event }
 
 type workflowDone struct{ Err error }
@@ -40,5 +46,6 @@ func (conversationEventReceived) event()  {}
 func (conversationErrorReceived) event()  {}
 func (conversationPromptDone) event()     {}
 func (conversationCompactionDone) event() {}
+func (mcpActivationDone) event()          {}
 func (workflowEventReceived) event()      {}
 func (workflowDone) event()               {}

@@ -733,6 +733,64 @@ func TestTUIKeyHandling(t *testing.T) {
 	})
 }
 
+func TestMCPActivationCommand(t *testing.T) {
+	t.Run("activates asynchronously", func(t *testing.T) {
+		activator := &fakeMCPActivator{activated: true}
+		app := newTestApp(t, testAppConfig{MCPActivator: activator})
+		item := menuItem{Value: "/mcp:gopls", Command: ActivateMCP{Name: "gopls"}}
+
+		if err := app.runCommand(t.Context(), item, item.Command); err != nil {
+			t.Fatalf("runCommand: %v", err)
+		}
+		if !app.model.working || app.model.workingLabel != "Activating MCP gopls" {
+			t.Fatalf("working=%v label=%q", app.model.working, app.model.workingLabel)
+		}
+
+		done := receiveMCPActivationDone(t, app.events, time.Second)
+		if done.Err != nil || !done.Activated {
+			t.Fatalf("activation done = %#v", done)
+		}
+		app.model.finishMCPActivation(done.Item, done.Activated, done.Err)
+		if app.model.working {
+			t.Fatal("working still true after activation")
+		}
+		if activator.name != "gopls" {
+			t.Fatalf("activated name = %q, want gopls", activator.name)
+		}
+	})
+
+	t.Run("already active is informational", func(t *testing.T) {
+		activator := &fakeMCPActivator{}
+		app := newTestApp(t, testAppConfig{MCPActivator: activator})
+		item := menuItem{Value: "/mcp:gopls", Command: ActivateMCP{Name: "gopls"}}
+		if err := app.runCommand(t.Context(), item, item.Command); err != nil {
+			t.Fatalf("runCommand: %v", err)
+		}
+		done := receiveMCPActivationDone(t, app.events, time.Second)
+		app.model.finishMCPActivation(done.Item, done.Activated, done.Err)
+		last, ok := app.model.boxes[len(app.model.boxes)-1].(systemMessageBox)
+		if !ok || !strings.Contains(last.Text, "already active") {
+			t.Fatalf("last box = %#v", app.model.boxes[len(app.model.boxes)-1])
+		}
+	})
+}
+
+func receiveMCPActivationDone(t *testing.T, events <-chan event, timeout time.Duration) mcpActivationDone {
+	t.Helper()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for {
+		select {
+		case ev := <-events:
+			if done, ok := ev.(mcpActivationDone); ok {
+				return done
+			}
+		case <-timer.C:
+			t.Fatalf("mcpActivationDone not received within %s", timeout)
+		}
+	}
+}
+
 func TestCompactConversationCommand(t *testing.T) {
 	t.Run("runs asynchronously and finishes via event", func(t *testing.T) {
 		app := newTestApp(t, testAppConfig{})
@@ -904,6 +962,7 @@ type testAppConfig struct {
 	Terminal     *fakeTerminal
 	Conversation *fakeConversation
 	Renderer     *fakeRenderer
+	MCPActivator MCPActivator
 }
 
 func newTestApp(t *testing.T, cfg testAppConfig) *app {
@@ -925,6 +984,7 @@ func newTestApp(t *testing.T, cfg testAppConfig) *app {
 	app, err := newApp(appConfig{
 		Terminal:     term,
 		Conversation: conv,
+		MCPActivator: cfg.MCPActivator,
 		Renderer:     renderer,
 		Commands:     []Command{StartNewConversation{}, CompactConversation{}, Exit{}},
 	})
@@ -932,6 +992,17 @@ func newTestApp(t *testing.T, cfg testAppConfig) *app {
 		t.Fatalf("create app: %v", err)
 	}
 	return app
+}
+
+type fakeMCPActivator struct {
+	name      string
+	activated bool
+	err       error
+}
+
+func (a *fakeMCPActivator) ActivateMCP(_ context.Context, name string) (bool, error) {
+	a.name = name
+	return a.activated, a.err
 }
 
 type fakeRenderer struct {

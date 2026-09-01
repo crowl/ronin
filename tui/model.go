@@ -365,6 +365,36 @@ func (m *appModel) finishWorkflow(err error) modelUpdate {
 	return update
 }
 
+func (m *appModel) startMCPActivation(item menuItem, name string) {
+	m.boxes = append(m.boxes, systemMessageBox{Text: item.Value})
+	m.working = true
+	m.workingLabel = "Activating MCP " + name
+	m.indicatorFrame = 0
+}
+
+func (m *appModel) finishMCPActivation(item menuItem, activated bool, err error) modelUpdate {
+	m.working = false
+	m.statusBarCache.Reset()
+
+	if err != nil {
+		if !errors.Is(err, context.Canceled) {
+			m.boxes = append(m.boxes, errorMessageBox{Text: err.Error()})
+		}
+	} else if !activated {
+		m.boxes = append(m.boxes, systemMessageBox{Text: item.Value + " is already active"})
+	} else {
+		m.boxes = append(m.boxes, systemMessageBox{Text: item.Value + " activated"})
+	}
+
+	nextPrompt := m.steeringPrompt
+	m.steeringPrompt = ""
+	update := modelUpdate{Render: true}
+	if nextPrompt != "" {
+		update.Action = submitPromptAction{Prompt: nextPrompt}
+	}
+	return update
+}
+
 func (m *appModel) startCompaction(item menuItem) {
 	m.boxes = append(m.boxes, systemMessageBox{Text: item.Value})
 	m.working = true

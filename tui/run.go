@@ -32,9 +32,14 @@ type Conversation interface {
 	ToolCallTitle(name string, arguments []byte) string
 }
 
+type MCPActivator interface {
+	ActivateMCP(context.Context, string) (bool, error)
+}
+
 type Config struct {
 	Conversation   Conversation
 	WorkflowRunner WorkflowRunner
+	MCPActivator   MCPActivator
 	Commands       []Command
 	Input          *os.File
 	Output         *os.File
@@ -68,6 +73,7 @@ func Run(ctx context.Context, cfg Config) error {
 		Terminal:       term,
 		Conversation:   cfg.Conversation,
 		WorkflowRunner: cfg.WorkflowRunner,
+		MCPActivator:   cfg.MCPActivator,
 		Renderer:       renderer,
 		Commands:       cfg.Commands,
 	})
