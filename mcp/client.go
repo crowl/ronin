@@ -319,10 +319,31 @@ func (t *stdioTransport) WriteMessage(ctx context.Context, data []byte) error {
 		return err
 	}
 	data = append(append([]byte(nil), data...), '\n')
-	if _, err := t.stdin.Write(data); err != nil {
-		return fmt.Errorf("write MCP message: %w", err)
+	result := make(chan error, 1)
+	go func() {
+		_, err := t.stdin.Write(data)
+		result <- err
+	}()
+
+	select {
+	case err := <-result:
+		if err != nil {
+			return fmt.Errorf("write MCP message: %w", err)
+		}
+		return nil
+	case <-ctx.Done():
+		select {
+		case err := <-result:
+			if err != nil {
+				return fmt.Errorf("write MCP message: %w", err)
+			}
+			return nil
+		default:
+		}
+		_ = t.stdin.Close()
+		<-result
+		return ctx.Err()
 	}
-	return nil
 }
 
 func (t *stdioTransport) Close() error {

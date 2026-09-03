@@ -287,6 +287,27 @@ func TestCallSendsCancellationNotification(t *testing.T) {
 	}
 }
 
+func TestStdioTransportWriteHonorsCancellation(t *testing.T) {
+	writer := newBlockingWriteCloser()
+	transport := &stdioTransport{stdin: writer}
+	ctx, cancel := context.WithCancel(t.Context())
+	result := make(chan error, 1)
+	go func() {
+		result <- transport.WriteMessage(ctx, []byte(`{"jsonrpc":"2.0"}`))
+	}()
+
+	<-writer.started
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("WriteMessage() error = %v, want context canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("WriteMessage() did not return after cancellation")
+	}
+}
+
 func TestBoundedWriter(t *testing.T) {
 	var output bytes.Buffer
 	writer := &boundedWriter{writer: &output, remaining: 5}
@@ -405,6 +426,31 @@ func TestMCPHelperProcess(t *testing.T) {
 	if scanner.Err() != nil {
 		os.Exit(2)
 	}
+}
+
+type blockingWriteCloser struct {
+	started chan struct{}
+	closed  chan struct{}
+	once    sync.Once
+}
+
+func newBlockingWriteCloser() *blockingWriteCloser {
+	return &blockingWriteCloser{started: make(chan struct{}), closed: make(chan struct{})}
+}
+
+func (w *blockingWriteCloser) Write([]byte) (int, error) {
+	w.once.Do(func() { close(w.started) })
+	<-w.closed
+	return 0, os.ErrClosed
+}
+
+func (w *blockingWriteCloser) Close() error {
+	select {
+	case <-w.closed:
+	default:
+		close(w.closed)
+	}
+	return nil
 }
 
 type testSSEServer struct {
