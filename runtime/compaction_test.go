@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -78,7 +79,7 @@ func TestDefaultCompactor(t *testing.T) {
 	})
 
 	t.Run("keeps_tool_call_with_recent_tool_result", func(t *testing.T) {
-		modelClient := &fakeStructuredModelClient{raw: json.RawMessage(`{"current_goal":"goal"}`)}
+		modelClient := &fakeStructuredModelClient{raw: validCompactionSummary("goal")}
 		compactor, err := NewDefaultCompactor(DefaultCompactorConfig{ModelClient: modelClient})
 		if err != nil {
 			t.Fatalf("NewDefaultCompactor() error = %v", err)
@@ -104,6 +105,19 @@ func TestDefaultCompactor(t *testing.T) {
 		}
 		if got[len(got)-1] != result {
 			t.Fatalf("last recent message = %#v, want tool result", got[len(got)-1])
+		}
+	})
+
+	t.Run("rejects structured output that does not match the schema", func(t *testing.T) {
+		modelClient := &fakeStructuredModelClient{raw: json.RawMessage(`{"current_goal":"goal"}`)}
+		compactor, err := NewDefaultCompactor(DefaultCompactorConfig{ModelClient: modelClient})
+		if err != nil {
+			t.Fatalf("NewDefaultCompactor() error = %v", err)
+		}
+
+		_, err = compactor.Compact(context.Background(), makeCompactionMessages(14))
+		if err == nil || !strings.Contains(err.Error(), "validate structured compaction summary") || !strings.Contains(err.Error(), "user_preferences") {
+			t.Fatalf("Compact() error = %v, want schema validation error", err)
 		}
 	})
 
@@ -133,6 +147,10 @@ func TestDefaultCompactor(t *testing.T) {
 			t.Fatalf("Compact() error = %v, want wrapped structured error", err)
 		}
 	})
+}
+
+func validCompactionSummary(goal string) json.RawMessage {
+	return json.RawMessage(`{"current_goal":` + strconv.Quote(goal) + `,"user_preferences":[],"decisions":[],"files_and_code_state":[],"tests_and_tool_results":[],"open_tasks":[],"recovery":[]}`)
 }
 
 func makeCompactionMessages(count int) []llm.Message {

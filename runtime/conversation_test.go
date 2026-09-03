@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -736,8 +737,8 @@ func TestCompactConversation(t *testing.T) {
 	})
 
 	t.Run("default compactor follows switched model", func(t *testing.T) {
-		originalClient := &fakeModelClient{structuredRaw: json.RawMessage(`{"current_goal":"wrong model"}`)}
-		switchedClient := &fakeModelClient{structuredRaw: json.RawMessage(`{"current_goal":"switched model"}`)}
+		originalClient := &fakeModelClient{structuredRaw: completeCompactionSummary("wrong model")}
+		switchedClient := &fakeModelClient{structuredRaw: completeCompactionSummary("switched model")}
 		switchedModel := llm.Model{Provider: "test", Name: "compactor-switch"}
 		if err := llm.RegisterModel(switchedModel, func(llm.ReasoningLevel) (llm.ModelClient, error) {
 			return switchedClient, nil
@@ -786,6 +787,10 @@ func TestCompactConversation(t *testing.T) {
 			t.Fatalf("CompactConversation() error = %v, want compactor error", err)
 		}
 	})
+}
+
+func completeCompactionSummary(goal string) json.RawMessage {
+	return json.RawMessage(`{"current_goal":` + strconv.Quote(goal) + `,"user_preferences":[],"decisions":[],"files_and_code_state":[],"tests_and_tool_results":[],"open_tasks":[],"recovery":[]}`)
 }
 
 func collectEvents(events <-chan runtime.Event) []runtime.Event {

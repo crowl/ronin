@@ -116,6 +116,10 @@ func (c *DefaultCompactor) generateCompactionSummary(ctx context.Context, factSh
 		return compactionSummary{}, fmt.Errorf("generate structured compaction summary: %w", err)
 	}
 
+	if err := jsonschema.Validate(jsonschema.FromType[compactionSummary](), raw); err != nil {
+		return compactionSummary{}, fmt.Errorf("validate structured compaction summary: %w", err)
+	}
+
 	var summary compactionSummary
 	if err := json.Unmarshal(raw, &summary); err != nil {
 		return compactionSummary{}, fmt.Errorf("decode structured compaction summary: %w", err)
