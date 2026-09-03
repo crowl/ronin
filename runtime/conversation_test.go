@@ -316,6 +316,37 @@ func TestPromptLifecycle(t *testing.T) {
 		}
 	})
 
+	t.Run("records pending tool calls immediately when prediction fails", func(t *testing.T) {
+		store := &fakeSessionStore{sessions: map[string]session.Session{"sess-1": {ID: "sess-1"}}, activeID: "sess-1"}
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{
+			ModelClient: &fakeModelClient{
+				events: []llm.PredictionEvent{
+					llm.BlockEnded{Block: llm.ToolCallBlock{ID: "call-1", Name: "shell", Arguments: json.RawMessage(`{}`)}},
+					llm.PredictionFinished{StopReason: llm.StopReasonMaxTokens},
+				},
+			},
+			SessionStore: store,
+			Session:      store.sessions[store.activeID],
+		})
+		if err != nil {
+			t.Fatalf("NewConversation() error = %v", err)
+		}
+
+		events, errs := agt.Prompt(t.Context(), "run")
+		_ = collectEvents(events)
+		if err := <-errs; err == nil {
+			t.Fatal("Prompt() error = nil")
+		}
+		messages := agt.Messages()
+		if len(messages) != 3 {
+			t.Fatalf("Messages() length = %d, want 3", len(messages))
+		}
+		repair, ok := messages[2].(llm.ToolErrorMessage)
+		if !ok || repair.ToolCallID != "call-1" || !strings.Contains(repair.Error.Error(), "interrupted") {
+			t.Fatalf("repair message = %#v", messages[2])
+		}
+	})
+
 	t.Run("persists prediction stop reason", func(t *testing.T) {
 		agt, err := runtime.NewConversation(runtime.ConversationConfig{
 			ModelClient: &fakeModelClient{events: []llm.PredictionEvent{

@@ -50,6 +50,7 @@ type ConversationConfig struct {
 const (
 	defaultMaxTurns              = 512
 	metadataSaveTimeout          = 5 * time.Second
+	persistenceTimeout           = 5 * time.Second
 	autoCompactionUsagePercent   = 80
 	defaultSessionTitle          = "New session"
 	interruptedToolCallErrorText = "tool call interrupted before completion"
@@ -205,13 +206,19 @@ func (c *Conversation) SwitchModel(model llm.Model) error {
 				Type: session.EventModelChanged, CreatedAt: c.now(), PreviousModel: c.session.Model,
 				Model: updated.Model, ReasoningLevel: updated.ReasoningLevel,
 			}
-			if err := switchStore.SwitchModel(context.Background(), c.session.ID, session.Metadata{
+			ctx, cancel := detachedPersistenceContext()
+			defer cancel()
+			if err := switchStore.SwitchModel(ctx, c.session.ID, session.Metadata{
 				Title: updated.Title, Model: updated.Model, ReasoningLevel: updated.ReasoningLevel,
 			}, event); err != nil {
 				return fmt.Errorf("save session model: %w", err)
 			}
-		} else if err := c.updateMetadata(context.Background(), updated); err != nil {
-			return fmt.Errorf("save session model: %w", err)
+		} else {
+			ctx, cancel := detachedPersistenceContext()
+			defer cancel()
+			if err := c.updateMetadata(ctx, updated); err != nil {
+				return fmt.Errorf("save session model: %w", err)
+			}
 		}
 	}
 	c.modelClient = newModelClient
@@ -233,7 +240,9 @@ func (c *Conversation) SwitchReasoningLevel(lvl llm.ReasoningLevel) error {
 	updated := c.session
 	updated.ReasoningLevel = string(lvl)
 	updated.UpdatedAt = c.now().UTC()
-	if err := c.updateMetadata(context.Background(), updated); err != nil {
+	ctx, cancel := detachedPersistenceContext()
+	defer cancel()
+	if err := c.updateMetadata(ctx, updated); err != nil {
 		if rollbackErr := c.modelClient.SetReasoningLevel(prevLevel); rollbackErr != nil {
 			return errors.Join(fmt.Errorf("save session reasoning level: %w", err), fmt.Errorf("rollback reasoning level: %w", rollbackErr))
 		}
@@ -276,7 +285,9 @@ func (c *Conversation) RecordWorkflowResult(message llm.WorkflowResultMessage) e
 	if message.Timestamp.IsZero() {
 		message.Timestamp = c.now()
 	}
-	if err := c.appendMessage(context.Background(), message); err != nil {
+	ctx, cancel := detachedPersistenceContext()
+	defer cancel()
+	if err := c.appendMessage(ctx, message); err != nil {
 		return fmt.Errorf("save workflow result: %w", err)
 	}
 	return nil
@@ -372,7 +383,9 @@ func (c *Conversation) recalculateContextUsage() {
 func (c *Conversation) NewConversation() error {
 	if c.sessionStore != nil && c.session.ID != "" {
 		model := c.modelClient.Model()
-		newSession, err := c.sessionStore.Create(context.Background(), c.cwd, session.Metadata{
+		ctx, cancel := detachedPersistenceContext()
+		defer cancel()
+		newSession, err := c.sessionStore.Create(ctx, c.cwd, session.Metadata{
 			Model:          config.Model{Provider: model.Provider, Name: model.Name},
 			ReasoningLevel: string(c.modelClient.ReasoningLevel()),
 		})
@@ -385,6 +398,10 @@ func (c *Conversation) NewConversation() error {
 	c.sessionCost = llm.SessionCost{Available: true}
 	c.messages = nil
 	return nil
+}
+
+func detachedPersistenceContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), persistenceTimeout)
 }
 
 const maxTitleRunes = 60
@@ -420,6 +437,9 @@ func (c *Conversation) Prompt(ctx context.Context, prompt string) (<-chan Event,
 		defer close(events)
 		defer close(errs)
 		if err := c.run(ctx, prompt, events); err != nil {
+			if repairErr := c.persistInterruptedToolCalls(); repairErr != nil {
+				err = errors.Join(err, repairErr)
+			}
 			errs <- err
 		}
 	}()
@@ -763,6 +783,48 @@ func (c *Conversation) recordUsage(usage llm.Usage) {
 	}
 	c.contextUsage = usage
 	c.contextUsage.Cost = llm.Cost{Total: c.sessionCost.Total, Available: c.sessionCost.Available}
+}
+
+func pendingToolCalls(messages []llm.Message) []llm.ToolCallBlock {
+	var pending []llm.ToolCallBlock
+	for _, message := range messages {
+		switch typed := message.(type) {
+		case llm.AssistantMessage:
+			pending = nil
+			for _, block := range typed.Blocks {
+				if call, ok := block.(llm.ToolCallBlock); ok {
+					pending = append(pending, call)
+				}
+			}
+		case llm.ToolOutputMessage:
+			removePendingToolCall(&pending, typed.ToolCallID)
+		case llm.ToolErrorMessage:
+			removePendingToolCall(&pending, typed.ToolCallID)
+		default:
+			pending = nil
+		}
+	}
+	return pending
+}
+
+func (c *Conversation) persistInterruptedToolCalls() error {
+	pending := pendingToolCalls(c.messages)
+	if len(pending) == 0 {
+		return nil
+	}
+	ctx, cancel := detachedPersistenceContext()
+	defer cancel()
+	var errs []error
+	for _, call := range pending {
+		message := llm.ToolErrorMessage{
+			Timestamp: c.now(), ToolName: call.Name, ToolCallID: call.ID,
+			Error: errors.New(interruptedToolCallErrorText),
+		}
+		if err := c.appendMessage(ctx, message); err != nil {
+			errs = append(errs, fmt.Errorf("record interrupted tool call %q: %w", call.ID, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func completionError(reason llm.StopReason) error {
