@@ -30,17 +30,29 @@ local task_plan_schema = [[
         "additionalProperties": false,
         "required": ["id", "objective", "acceptance", "depends_on", "ownership", "verification", "commit_message"],
         "properties": {
-          "id": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$" },
-          "objective": { "type": "string" },
-          "acceptance": { "type": "array", "items": { "type": "string" } },
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$",
+            "description": "Concrete lowercase kebab-case task identifier derived from the design."
+          },
+          "objective": { "type": "string", "description": "Concrete implementation objective derived from the approved design." },
+          "acceptance": { "type": "array", "minItems": 1, "items": { "type": "string" } },
           "depends_on": { "type": "array", "items": { "type": "string" } },
-          "ownership": { "type": "array", "items": { "type": "string" } },
-          "verification": { "type": "array", "items": { "type": "string" } },
-          "commit_message": { "type": "string" }
+          "ownership": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+          "verification": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+          "commit_message": {
+            "type": "string",
+            "pattern": "^(feat|fix|refactor|test|docs|build|ci|perf|chore)(\\([a-z0-9][a-z0-9._/-]*\\))?: ([a-z]|[a-z][^\\n]*[^\\n.])$",
+            "description": "Valid non-breaking Conventional Commit subject with a lowercase description and no trailing period."
+          }
         }
       }
     },
-    "integration_commit_message": { "type": "string" }
+    "integration_commit_message": {
+      "type": "string",
+      "pattern": "^(feat|fix|refactor|test|docs|build|ci|perf|chore)(\\([a-z0-9][a-z0-9._/-]*\\))?: ([a-z]|[a-z][^\\n]*[^\\n.])$",
+      "description": "Valid non-breaking Conventional Commit subject for integration repairs with a lowercase description and no trailing period."
+    }
   }
 }
 ]]
@@ -82,21 +94,35 @@ lowercase scope, a lowercase description, and no trailing period.
         "\n\nApproved design:\n\n" .. design.text,
 })
 
-    if not planned.ok or planned.output == nil or planned.output.tasks == nil then
-        ronin.fail("Planner did not produce a structured task plan.")
-    end
+if not planned.ok or planned.output == nil or planned.output.tasks == nil then
+    ronin.fail("Planner did not produce a structured task plan.")
+end
 
 local plan = planned.output
 local tasks = plan.tasks
+if #tasks == 0 or #tasks > 8 then
+    ronin.fail("Planner must produce between 1 and 8 tasks.")
+end
 local by_id = {}
 for index, task in ipairs(tasks) do
+    if not string.match(task.id, "^[a-z0-9][a-z0-9-]*[a-z0-9]$") and not string.match(task.id, "^[a-z0-9]$") then
+        ronin.fail("Planner produced an invalid task id: " .. task.id)
+    end
+    if #task.acceptance == 0 or #task.ownership == 0 or #task.verification == 0 then
+        ronin.fail("Planner produced an incomplete task: " .. task.id)
+    end
     if by_id[task.id] ~= nil then
         ronin.fail("Planner produced duplicate task id: " .. task.id)
     end
     if not ronin.valid_commit(task.commit_message) then
         ronin.fail("Planner produced an invalid Conventional Commit for task " .. task.id .. ": " .. task.commit_message)
     end
+    local dependencies = {}
     for _, dependency in ipairs(task.depends_on) do
+        if dependencies[dependency] then
+            ronin.fail("Task " .. task.id .. " repeats dependency " .. dependency)
+        end
+        dependencies[dependency] = true
         if by_id[dependency] == nil then
             ronin.fail("Task " .. task.id .. " depends on unknown or later task " .. dependency)
         end
