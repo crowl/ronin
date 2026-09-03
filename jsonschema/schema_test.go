@@ -31,6 +31,63 @@ func TestFromRawRejectsInvalidSchema(t *testing.T) {
 	}
 }
 
+func TestValidateDefinition(t *testing.T) {
+	schema, err := jsonschema.FromRaw([]byte(`{"type":"object","properties":{"value":{"type":"string","pattern":"["}}}`))
+	if err != nil {
+		t.Fatalf("FromRaw() error = %v", err)
+	}
+	if err := jsonschema.ValidateDefinition(schema); err == nil || !strings.Contains(err.Error(), "$.properties.value.pattern") {
+		t.Fatalf("ValidateDefinition() error = %v", err)
+	}
+}
+
+func TestValidate(t *testing.T) {
+	schema, err := jsonschema.FromRaw([]byte(`{
+		"type":"object",
+		"additionalProperties":false,
+		"required":["tasks"],
+		"properties":{
+			"tasks":{
+				"type":"array",
+				"minItems":1,
+				"items":{
+					"type":"object",
+					"required":["id","commit_message"],
+					"properties":{
+						"id":{"type":"string","pattern":"^[a-z]+-[a-z-]+$"},
+						"commit_message":{"type":"string","pattern":"^(feat|fix): [a-z].+[^.]$"}
+					}
+				}
+			}
+		}
+	}`))
+	if err != nil {
+		t.Fatalf("FromRaw() error = %v", err)
+	}
+
+	if err := jsonschema.Validate(schema, []byte(`{"tasks":[{"id":"runtime-validation","commit_message":"fix: validate plans"}]}`)); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+
+	for name, tc := range map[string]struct {
+		document string
+		want     string
+	}{
+		"placeholder":  {document: `{"tasks":[{"id":"string","commit_message":"string"}]}`, want: "$.tasks[0].id"},
+		"pattern":      {document: `{"tasks":[{"id":"runtime-validation","commit_message":"Fix: Invalid."}]}`, want: "$.tasks[0].commit_message"},
+		"missing":      {document: `{}`, want: "$.tasks: is required"},
+		"extra":        {document: `{"tasks":[{"id":"runtime-validation","commit_message":"fix: validate plans"}],"extra":true}`, want: "$.extra: additional property"},
+		"invalid JSON": {document: `{`, want: "decode JSON document"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := jsonschema.Validate(schema, []byte(tc.document))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Validate() error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestFromType(t *testing.T) {
 	t.Run("struct fields include required optional skipped and unexported", func(t *testing.T) {
 		type args struct {
