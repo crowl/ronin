@@ -48,6 +48,21 @@ func TestWorkflowAgentTools(t *testing.T) {
 			t.Fatalf("tool names = %v, want %v", got, want)
 		}
 	})
+
+	t.Run("managed writable agent has file tools without shell", func(t *testing.T) {
+		tools := managedWorkflowAgentTools(t.TempDir(), false)
+		want := []string{"read_file", "edit_file", "write_file"}
+		if got := toolNames(tools); !reflect.DeepEqual(got, want) {
+			t.Fatalf("tool names = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("managed read-only agent receives only read_file", func(t *testing.T) {
+		tools := managedWorkflowAgentTools(t.TempDir(), true)
+		if got := toolNames(tools); !reflect.DeepEqual(got, []string{"read_file"}) {
+			t.Fatalf("tool names = %v, want [read_file]", got)
+		}
+	})
 }
 
 func toolNames(tools []runtime.Tool) []string {

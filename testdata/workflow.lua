@@ -212,9 +212,9 @@ local function start_implementation(task)
 Act as the implementation engineer for one isolated task lane. You own changes
 in this worktree. Inspect repository state before editing. Implement only the
 assigned task while honoring the overall design and integration contracts.
-Commit as often as useful; lane history will be squashed later. Preserve sound
-changes from prior cycles. Run the assigned verification and report changes,
-design deviations, exact verification outcomes, and remaining issues.
+Apply the assigned task while honoring the overall design and integration
+contracts. Preserve sound changes from prior cycles. Shell commands are not
+available in managed worktrees; report verification that remains to be run.
 ]],
         prompt = implementation_prompt(task),
     })
@@ -231,8 +231,8 @@ local function start_repair(task)
         system = [[
 Act as the implementation engineer for one isolated task lane. Resolve every
 item in the supplied review feedback. Inspect the current lane state before
-editing, preserve sound prior work, run the assigned verification, and report
-changes and exact verification outcomes. Commit as often as useful.
+editing, preserve sound prior work, and report changes plus verification that
+remains to be run. Shell commands are not available in managed worktrees.
 ]],
         prompt = implementation_prompt(task),
     })
@@ -353,10 +353,9 @@ local initial_integration = ronin.run_agent({
     reasoning = roles.integrator.reasoning,
     system = [[
 Act as the integration engineer in the combined integration worktree. Inspect
-all integrated lane changes, run appropriate repository-wide verification, and
-fix concrete cross-lane defects or regressions. Do not perform optional cleanup.
-Commit as often as useful. Report changes, exact commands and outcomes, and any
-remaining issues.
+all integrated lane changes and fix concrete cross-lane defects or regressions.
+Do not perform optional cleanup. Shell commands are not available in managed
+worktrees; report verification that remains to be run.
 ]],
     prompt = "Original requirement:\n\n" .. requirement ..
         "\n\nOverall design:\n\n" .. design.text ..
@@ -423,8 +422,8 @@ STATUS: CHANGES_REQUIRED
             system = [[
 Act as the integration engineer in the combined integration worktree. Resolve
 only the concrete cross-lane review or acceptance findings. Inspect before
-editing, preserve approved behavior, run focused and repository-wide checks, and
-commit as often as useful. Report changes and exact verification outcomes.
+editing and preserve approved behavior. Shell commands are not available in
+managed worktrees; report changes and verification that remains to be run.
 ]],
             prompt = "Original requirement:\n\n" .. requirement ..
                 "\n\nOverall design:\n\n" .. design.text ..

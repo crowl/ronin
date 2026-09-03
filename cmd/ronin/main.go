@@ -785,18 +785,7 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string, mcpT
 		}
 		if req.Workspace != "" {
 			agentWorkingDir = req.Workspace
-			if req.ReadOnly {
-				agentTools = workflowAgentTools(agentWorkingDir, true, nil, nil)
-			} else {
-				readCache := fsutil.NewReadCache()
-				mutationQueue := fsutil.NewMutationQueue()
-				agentTools = []runtime.Tool{
-					readfile.New(agentWorkingDir, readCache),
-					editfile.New(agentWorkingDir, mutationQueue),
-					writefile.New(agentWorkingDir, mutationQueue),
-					shell.NewWithPolicy(agentWorkingDir, workflow.WorkspaceShellPolicy{}),
-				}
-			}
+			agentTools = managedWorkflowAgentTools(agentWorkingDir, req.ReadOnly)
 			var err error
 			agentSystemPrompt, err = runtime.BuildSystemPrompt(runtime.SystemPromptInput{CWD: agentWorkingDir})
 			if err != nil {
@@ -848,6 +837,18 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string, mcpT
 	}
 	closeAgent := func() error { return nil }
 	return agent, closeAgent
+}
+
+func managedWorkflowAgentTools(workingDir string, readOnly bool) []runtime.Tool {
+	if readOnly {
+		return []runtime.Tool{readfile.NewRestricted(workingDir, fsutil.NewReadCache())}
+	}
+	mutationQueue := fsutil.NewMutationQueue()
+	return []runtime.Tool{
+		readfile.NewRestricted(workingDir, fsutil.NewReadCache()),
+		editfile.NewRestricted(workingDir, mutationQueue),
+		writefile.NewRestricted(workingDir, mutationQueue),
+	}
 }
 
 func workflowAgentTools(workingDir string, readOnly bool, defaultTools, mcpTools []runtime.Tool) []runtime.Tool {
