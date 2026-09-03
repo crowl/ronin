@@ -29,6 +29,9 @@ const (
 	cancellationNotificationTimeout = 5 * time.Second
 	maxMessageBytes                 = 16 << 20
 	maxServerLogBytes               = 10 << 20
+	maxToolListPages                = 100
+	maxToolDefinitions              = 1_000
+	maxToolDefinitionBytes          = 16 << 20
 	protocolVersion                 = "2025-06-18"
 )
 
@@ -456,9 +459,15 @@ type toolDefinition struct {
 }
 
 func (s *session) listTools(ctx context.Context) ([]toolDefinition, error) {
-	var tools []toolDefinition
+	tools := make([]toolDefinition, 0)
+	seenCursors := make(map[string]struct{})
+	seenNames := make(map[string]struct{})
+	totalBytes := 0
 	cursor := ""
-	for {
+	for page := 1; ; page++ {
+		if page > maxToolListPages {
+			return nil, fmt.Errorf("tools/list exceeds %d pages", maxToolListPages)
+		}
 		params := map[string]any{}
 		if cursor != "" {
 			params["cursor"] = cursor
@@ -470,13 +479,30 @@ func (s *session) listTools(ctx context.Context) ([]toolDefinition, error) {
 		if err := s.call(ctx, "tools/list", params, &result); err != nil {
 			return nil, err
 		}
-		tools = append(tools, result.Tools...)
+		for _, definition := range result.Tools {
+			if _, exists := seenNames[definition.Name]; exists {
+				return nil, fmt.Errorf("server returned duplicate tool name %q", definition.Name)
+			}
+			seenNames[definition.Name] = struct{}{}
+			totalBytes += len(definition.Name) + len(definition.Description) + len(definition.InputSchema)
+			if len(tools) >= maxToolDefinitions {
+				return nil, fmt.Errorf("tools/list exceeds %d tools", maxToolDefinitions)
+			}
+			if totalBytes > maxToolDefinitionBytes {
+				return nil, fmt.Errorf("tools/list definitions exceed %d bytes", maxToolDefinitionBytes)
+			}
+			tools = append(tools, definition)
+		}
 		if result.NextCursor == "" {
 			return tools, nil
 		}
 		if result.NextCursor == cursor {
-			return nil, fmt.Errorf("server repeated tools/list cursor %q", cursor)
+			return nil, fmt.Errorf("server repeated tools/list cursor %q", result.NextCursor)
 		}
+		if _, exists := seenCursors[result.NextCursor]; exists {
+			return nil, fmt.Errorf("server repeated tools/list cursor %q", result.NextCursor)
+		}
+		seenCursors[cursor] = struct{}{}
 		cursor = result.NextCursor
 	}
 }

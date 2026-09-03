@@ -619,6 +619,75 @@ func TestMCPErrorResult(t *testing.T) {
 	}
 }
 
+func TestListToolsRejectsCursorCycle(t *testing.T) {
+	transport := newRecordingTransport()
+	session := newSession(transport, nil, "")
+	defer session.Close()
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := session.listTools(t.Context())
+		result <- err
+	}()
+
+	for _, nextCursor := range []string{"a", "b", "a"} {
+		request := <-transport.writes
+		var sent rpcRequest
+		if err := json.Unmarshal(request, &sent); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		response, err := json.Marshal(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      sent.ID,
+			"result":  map[string]any{"tools": []any{}, "nextCursor": nextCursor},
+		})
+		if err != nil {
+			t.Fatalf("marshal response: %v", err)
+		}
+		transport.responses <- response
+	}
+
+	if err := <-result; err == nil || !strings.Contains(err.Error(), "repeated tools/list cursor") {
+		t.Fatalf("listTools() error = %v, want cursor cycle error", err)
+	}
+}
+
+func TestListToolsRejectsDuplicateToolNames(t *testing.T) {
+	transport := newRecordingTransport()
+	session := newSession(transport, nil, "")
+	defer session.Close()
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := session.listTools(t.Context())
+		result <- err
+	}()
+
+	for page, nextCursor := range []string{"next", ""} {
+		request := <-transport.writes
+		var sent rpcRequest
+		if err := json.Unmarshal(request, &sent); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		response, err := json.Marshal(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      sent.ID,
+			"result": map[string]any{
+				"tools":      []any{map[string]any{"name": "duplicate", "inputSchema": map[string]any{"type": "object"}}},
+				"nextCursor": nextCursor,
+			},
+		})
+		if err != nil {
+			t.Fatalf("marshal page %d response: %v", page, err)
+		}
+		transport.responses <- response
+	}
+
+	if err := <-result; err == nil || !strings.Contains(err.Error(), "duplicate tool name") {
+		t.Fatalf("listTools() error = %v, want duplicate tool error", err)
+	}
+}
+
 func TestInitializeRejectsUnsupportedProtocolVersion(t *testing.T) {
 	transport := newRecordingTransport()
 	session := newSession(transport, nil, "")
