@@ -104,6 +104,9 @@ func (s *LLM) PredictNext(ctx context.Context, req llm.PredictNextRequest) (<-ch
 }
 
 func (s *LLM) PredictNextStructured(ctx context.Context, req llm.PredictNextStructuredRequest) (json.RawMessage, error) {
+	if err := s.ValidateStructuredOutputSchema(req.Schema); err != nil {
+		return nil, err
+	}
 	payload, err := s.buildStructuredPayload(req)
 	if err != nil {
 		return nil, err
@@ -159,6 +162,93 @@ func (s *LLM) PredictNextStructured(ctx context.Context, req llm.PredictNextStru
 		return nil, fmt.Errorf("%s structured response output is not valid JSON", s.provider())
 	}
 	return json.RawMessage(text), nil
+}
+
+func (s *LLM) ValidateStructuredOutputSchema(schema *jsonschema.Schema) error {
+	if schema == nil {
+		return errors.New("structured output schema is required")
+	}
+
+	if err := jsonschema.ValidateDefinition(schema); err != nil {
+		return fmt.Errorf("OpenAI structured output schema is invalid: %w", err)
+	}
+
+	data, err := json.Marshal(schema)
+	if err != nil {
+		return fmt.Errorf("encode OpenAI structured output schema: %w", err)
+	}
+	var definition any
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&definition); err != nil {
+		return fmt.Errorf("decode OpenAI structured output schema: %w", err)
+	}
+	if err := validateOpenAIStructuredOutputSchema(definition, "$"); err != nil {
+		return fmt.Errorf("OpenAI structured output schema is unsupported: %w", err)
+	}
+	return nil
+}
+
+var openAIStructuredOutputSchemaKeywords = map[string]bool{
+	"$defs":                true,
+	"$ref":                 true,
+	"type":                 true,
+	"title":                true,
+	"description":          true,
+	"enum":                 true,
+	"anyOf":                true,
+	"properties":           true,
+	"required":             true,
+	"additionalProperties": true,
+	"items":                true,
+	"minItems":             true,
+	"maxItems":             true,
+	"pattern":              true,
+	"format":               true,
+	"multipleOf":           true,
+	"minimum":              true,
+	"maximum":              true,
+	"exclusiveMinimum":     true,
+	"exclusiveMaximum":     true,
+}
+
+func validateOpenAIStructuredOutputSchema(value any, path string) error {
+	schema, ok := value.(map[string]any)
+	if !ok {
+		return fmt.Errorf("%s must be an object", path)
+	}
+	for keyword := range schema {
+		if !openAIStructuredOutputSchemaKeywords[keyword] {
+			return fmt.Errorf("%s.%s is not permitted", path, keyword)
+		}
+	}
+	if properties, ok := schema["properties"].(map[string]any); ok {
+		for name, property := range properties {
+			if err := validateOpenAIStructuredOutputSchema(property, path+".properties."+name); err != nil {
+				return err
+			}
+		}
+	}
+	if definitions, ok := schema["$defs"].(map[string]any); ok {
+		for name, definition := range definitions {
+			if err := validateOpenAIStructuredOutputSchema(definition, path+".$defs."+name); err != nil {
+				return err
+			}
+		}
+	}
+	if alternatives, ok := schema["anyOf"].([]any); ok {
+		for index, alternative := range alternatives {
+			if err := validateOpenAIStructuredOutputSchema(alternative, fmt.Sprintf("%s.anyOf[%d]", path, index)); err != nil {
+				return err
+			}
+		}
+	}
+	if items, ok := schema["items"]; ok {
+		if err := validateOpenAIStructuredOutputSchema(items, path+".items"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func isStructuredStream(mediaType string, reader *bufio.Reader) bool {

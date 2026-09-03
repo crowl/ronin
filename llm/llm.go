@@ -15,6 +15,10 @@ type ModelClient interface {
 	PredictNextStructured(context.Context, PredictNextStructuredRequest) (json.RawMessage, error)
 }
 
+type StructuredOutputSchemaValidator interface {
+	ValidateStructuredOutputSchema(*jsonschema.Schema) error
+}
+
 type PredictNextRequest struct {
 	SystemPrompt string
 	Messages     []Message

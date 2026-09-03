@@ -536,6 +536,55 @@ func TestPredictNextStructured(t *testing.T) {
 		}
 	})
 
+	t.Run("validates_supported_schema_without_request", func(t *testing.T) {
+		client, err := openai.NewLLM(openai.LLMConfig{
+			APIKey:         "key",
+			Model:          llm.Model{Provider: "openai", Name: "test"},
+			ReasoningLevel: llm.ReasoningLevelOff,
+		})
+		if err != nil {
+			t.Fatalf("new llm: %v", err)
+		}
+		schema, err := jsonschema.FromRaw([]byte(`{"type":"object","properties":{"tasks":{"type":"array","minItems":1,"maxItems":8,"items":{"type":"string","pattern":"^[a-z]+$"}}},"required":["tasks"],"additionalProperties":false}`))
+		if err != nil {
+			t.Fatalf("FromRaw() error = %v", err)
+		}
+		if err := client.ValidateStructuredOutputSchema(schema); err != nil {
+			t.Fatalf("ValidateStructuredOutputSchema() error = %v", err)
+		}
+	})
+
+	t.Run("rejects_unsupported_schema_before_request", func(t *testing.T) {
+		var requests int
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			requests++
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		defer server.Close()
+
+		client, err := openai.NewLLM(openai.LLMConfig{
+			BaseURL:        server.URL,
+			APIKey:         "key",
+			Model:          llm.Model{Provider: "openai", Name: "test"},
+			ReasoningLevel: llm.ReasoningLevelOff,
+		})
+		if err != nil {
+			t.Fatalf("new llm: %v", err)
+		}
+		schema, err := jsonschema.FromRaw([]byte(`{"type":"object","properties":{"tasks":{"type":"array","uniqueItems":true,"items":{"type":"string"}}}}`))
+		if err != nil {
+			t.Fatalf("FromRaw() error = %v", err)
+		}
+
+		_, err = client.PredictNextStructured(t.Context(), llm.PredictNextStructuredRequest{Schema: schema})
+		if err == nil || !strings.Contains(err.Error(), "$.properties.tasks.uniqueItems is not permitted") {
+			t.Fatalf("PredictNextStructured() error = %v, want unsupported uniqueItems error", err)
+		}
+		if requests != 0 {
+			t.Fatalf("HTTP requests = %d, want 0", requests)
+		}
+	})
+
 	t.Run("requires_schema", func(t *testing.T) {
 		client, err := openai.NewLLM(openai.LLMConfig{APIKey: "key", Model: llm.Model{Provider: "openai", Name: "test"}, ReasoningLevel: llm.ReasoningLevelOff})
 		if err != nil {
