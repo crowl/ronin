@@ -771,21 +771,24 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string, mcpT
 		}
 
 		agentWorkingDir := workingDir
-		agentTools := append([]runtime.Tool(nil), defaultTools...)
-		agentTools = append(agentTools, mcpTools.Tools()...)
+		agentTools := workflowAgentTools(agentWorkingDir, req.ReadOnly, defaultTools, mcpTools.Tools())
+		var agentMCPInstructions []runtime.MCPInstruction
+		if !req.ReadOnly {
+			agentMCPInstructions = mcpTools.Instructions()
+		}
 		agentSystemPrompt, err := runtime.BuildSystemPrompt(runtime.SystemPromptInput{
 			CWD:             workingDir,
-			MCPInstructions: mcpTools.Instructions(),
+			MCPInstructions: agentMCPInstructions,
 		})
 		if err != nil {
 			return workflow.AgentResult{}, fmt.Errorf("build MCP system prompt: %w", err)
 		}
 		if req.Workspace != "" {
 			agentWorkingDir = req.Workspace
-			readCache := fsutil.NewReadCache()
 			if req.ReadOnly {
-				agentTools = []runtime.Tool{readfile.New(agentWorkingDir, readCache)}
+				agentTools = workflowAgentTools(agentWorkingDir, true, nil, nil)
 			} else {
+				readCache := fsutil.NewReadCache()
 				mutationQueue := fsutil.NewMutationQueue()
 				agentTools = []runtime.Tool{
 					readfile.New(agentWorkingDir, readCache),
@@ -799,6 +802,9 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string, mcpT
 			if err != nil {
 				return workflow.AgentResult{}, fmt.Errorf("build workspace system prompt: %w", err)
 			}
+		}
+		if req.ReadOnly {
+			agentSystemPrompt += "\n\nThis agent is read-only. Do not modify files, run commands, or otherwise change repository or external state."
 		}
 		if strings.TrimSpace(req.System) != "" {
 			agentSystemPrompt += "\n\nWorkflow agent instructions:\n" + strings.TrimSpace(req.System)
@@ -842,6 +848,14 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string, mcpT
 	}
 	closeAgent := func() error { return nil }
 	return agent, closeAgent
+}
+
+func workflowAgentTools(workingDir string, readOnly bool, defaultTools, mcpTools []runtime.Tool) []runtime.Tool {
+	if readOnly {
+		return []runtime.Tool{readfile.New(workingDir, fsutil.NewReadCache())}
+	}
+	tools := append([]runtime.Tool(nil), defaultTools...)
+	return append(tools, mcpTools...)
 }
 
 type workflowCommand struct {

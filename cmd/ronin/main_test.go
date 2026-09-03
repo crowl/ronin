@@ -25,6 +25,39 @@ import (
 	"github.com/crowl/ronin/session"
 )
 
+func TestWorkflowAgentTools(t *testing.T) {
+	defaultTools := []runtime.Tool{
+		fakePromptTool{name: "read_file"},
+		fakePromptTool{name: "edit_file"},
+		fakePromptTool{name: "write_file"},
+		fakePromptTool{name: "shell"},
+	}
+	mcpTools := []runtime.Tool{fakePromptTool{name: "mcp__tool"}}
+
+	t.Run("read-only agent receives only read_file", func(t *testing.T) {
+		tools := workflowAgentTools(t.TempDir(), true, defaultTools, mcpTools)
+		if got := toolNames(tools); !reflect.DeepEqual(got, []string{"read_file"}) {
+			t.Fatalf("tool names = %v, want [read_file]", got)
+		}
+	})
+
+	t.Run("writable agent receives default and MCP tools", func(t *testing.T) {
+		tools := workflowAgentTools(t.TempDir(), false, defaultTools, mcpTools)
+		want := []string{"read_file", "edit_file", "write_file", "shell", "mcp__tool"}
+		if got := toolNames(tools); !reflect.DeepEqual(got, want) {
+			t.Fatalf("tool names = %v, want %v", got, want)
+		}
+	})
+}
+
+func toolNames(tools []runtime.Tool) []string {
+	names := make([]string, len(tools))
+	for i, tool := range tools {
+		names[i] = tool.Name()
+	}
+	return names
+}
+
 func TestValidateWorkflowAgentOutputSchema(t *testing.T) {
 	client := &fakeStructuredClient{schemaValidationErr: errors.New("uniqueItems is not permitted")}
 	if err := validateWorkflowAgentOutputSchema(client, &jsonschema.Schema{Type: "object"}); err == nil || !strings.Contains(err.Error(), "uniqueItems") {
