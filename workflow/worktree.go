@@ -14,14 +14,22 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	lua "github.com/Shopify/go-lua"
+	basefsutil "github.com/crowl/ronin/fsutil"
 )
 
 var (
 	workspaceIDPattern       = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$`)
 	conventionalCommitHeader = regexp.MustCompile(`^(feat|fix|refactor|test|docs|build|ci|perf|chore)(\([a-z0-9][a-z0-9._/-]*\))?(!)?: (.+)$`)
+)
+
+const (
+	gitCommandTimeout         = 2 * time.Minute
+	gitRecoveryCommandTimeout = 15 * time.Second
+	gitOutputLimit            = 1 << 20
 )
 
 type gitPreflight struct {
@@ -761,21 +769,62 @@ func (rt *worktreeRuntime) git(path string, args ...string) (string, error) {
 }
 
 func (rt *worktreeRuntime) recoveryGit(path string, args ...string) (string, error) {
-	return rt.runGit(context.Background(), path, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), gitRecoveryCommandTimeout)
+	defer cancel()
+	return rt.runGit(ctx, path, args...)
 }
 
 func (rt *worktreeRuntime) runGit(ctx context.Context, path string, args ...string) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	ctx, cancel := context.WithTimeout(ctx, gitCommandTimeout)
+	defer cancel()
 	commandArgs := append([]string{"-C", path}, args...)
 	cmd := exec.CommandContext(ctx, "git", commandArgs...)
-	output, err := cmd.CombinedOutput()
-	text := string(output)
+	cmd.WaitDelay = 5 * time.Second
+	output := &boundedGitOutput{limit: gitOutputLimit}
+	cmd.Stdout = output
+	cmd.Stderr = output
+	err := cmd.Run()
+	text, truncated := output.String()
 	if err != nil {
+		if truncated {
+			text += "\n[git output truncated]"
+		}
 		return text, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(text))
 	}
 	return text, nil
+}
+
+type boundedGitOutput struct {
+	mu        sync.Mutex
+	data      []byte
+	limit     int
+	truncated bool
+}
+
+func (w *boundedGitOutput) Write(data []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	original := len(data)
+	remaining := w.limit - len(w.data)
+	if remaining <= 0 {
+		w.truncated = w.truncated || original > 0
+		return original, nil
+	}
+	if len(data) > remaining {
+		data = data[:remaining]
+		w.truncated = true
+	}
+	w.data = append(w.data, data...)
+	return original, nil
+}
+
+func (w *boundedGitOutput) String() (string, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return string(w.data), w.truncated
 }
 
 func (rt *worktreeRuntime) writeManifest() error {
@@ -783,11 +832,7 @@ func (rt *worktreeRuntime) writeManifest() error {
 	if err != nil {
 		return fmt.Errorf("encode workflow manifest: %w", err)
 	}
-	temporary := rt.manifestPath + ".tmp"
-	if err := os.WriteFile(temporary, append(data, '\n'), 0o600); err != nil {
-		return fmt.Errorf("write workflow manifest: %w", err)
-	}
-	if err := os.Rename(temporary, rt.manifestPath); err != nil {
+	if err := basefsutil.WriteFileAtomic(rt.manifestPath, append(data, '\n'), 0o600); err != nil {
 		return fmt.Errorf("publish workflow manifest: %w", err)
 	}
 	return nil
