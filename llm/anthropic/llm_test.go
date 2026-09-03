@@ -449,7 +449,7 @@ func TestPredictNextStructured(t *testing.T) {
 		}
 	})
 
-	t.Run("retries status before structured response", func(t *testing.T) {
+	t.Run("does not retry status before structured response", func(t *testing.T) {
 		attempts := 0
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			attempts++
@@ -473,11 +473,11 @@ func TestPredictNextStructured(t *testing.T) {
 			t.Fatalf("new llm: %v", err)
 		}
 		_, err = client.PredictNextStructured(context.Background(), llm.PredictNextStructuredRequest{Schema: &jsonschema.Schema{Type: "object"}})
-		if err != nil {
-			t.Fatalf("PredictNextStructured() error = %v", err)
+		if err == nil || !strings.Contains(err.Error(), "status 502") {
+			t.Fatalf("PredictNextStructured() error = %v, want status 502", err)
 		}
-		if attempts != 2 {
-			t.Fatalf("attempts = %d, want 2", attempts)
+		if attempts != 1 {
+			t.Fatalf("attempts = %d, want 1", attempts)
 		}
 	})
 

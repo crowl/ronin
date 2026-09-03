@@ -43,16 +43,11 @@ func TestDo(t *testing.T) {
 		}
 	})
 
-	t.Run("retries 500 then succeeds", func(t *testing.T) {
+	t.Run("does not retry 500", func(t *testing.T) {
 		attempts := 0
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			attempts++
-			if attempts == 1 {
-				w.Header().Set("Retry-After", "0")
-				http.Error(w, "temporary", http.StatusInternalServerError)
-				return
-			}
-			_, _ = w.Write([]byte("ok"))
+			http.Error(w, "temporary", http.StatusInternalServerError)
 		}))
 		defer server.Close()
 
@@ -63,8 +58,11 @@ func TestDo(t *testing.T) {
 			t.Fatalf("Do() error = %v", err)
 		}
 		defer resp.Body.Close()
-		if attempts != 2 {
-			t.Fatalf("attempts = %d, want 2", attempts)
+		if resp.StatusCode != http.StatusInternalServerError {
+			t.Fatalf("status = %d, want 500", resp.StatusCode)
+		}
+		if attempts != 1 {
+			t.Fatalf("attempts = %d, want 1", attempts)
 		}
 	})
 
@@ -91,7 +89,7 @@ func TestDo(t *testing.T) {
 		}
 	})
 
-	t.Run("stops after 5 total status attempts", func(t *testing.T) {
+	t.Run("does not retry 503", func(t *testing.T) {
 		attempts := 0
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			attempts++
@@ -110,53 +108,26 @@ func TestDo(t *testing.T) {
 		if resp.StatusCode != http.StatusServiceUnavailable {
 			t.Fatalf("status = %d, want 503", resp.StatusCode)
 		}
-		if attempts != 5 {
-			t.Fatalf("attempts = %d, want 5", attempts)
+		if attempts != 1 {
+			t.Fatalf("attempts = %d, want 1", attempts)
 		}
 	})
 
-	t.Run("retries transport errors", func(t *testing.T) {
-		attempts := 0
-		client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			attempts++
-			if attempts == 1 {
-				return nil, errors.New("temporary network failure")
-			}
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Body:       io.NopCloser(strings.NewReader("ok")),
-				Header:     make(http.Header),
-				Request:    req,
-			}, nil
-		})}
-
-		resp, err := httpretry.Do(context.Background(), client, func() (*http.Request, error) {
-			return http.NewRequest(http.MethodPost, "https://example.test", nil)
-		})
-		if err != nil {
-			t.Fatalf("Do() error = %v", err)
-		}
-		defer resp.Body.Close()
-		if attempts != 2 {
-			t.Fatalf("attempts = %d, want 2", attempts)
-		}
-	})
-
-	t.Run("returns transport error after 5 total attempts", func(t *testing.T) {
+	t.Run("does not retry transport errors", func(t *testing.T) {
 		attempts := 0
 		client := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 			attempts++
-			return nil, errors.New("network down")
+			return nil, errors.New("temporary network failure")
 		})}
 
 		_, err := httpretry.Do(context.Background(), client, func() (*http.Request, error) {
 			return http.NewRequest(http.MethodPost, "https://example.test", nil)
 		})
-		if err == nil || !strings.Contains(err.Error(), "after 5 attempts") || !strings.Contains(err.Error(), "network down") {
-			t.Fatalf("error = %v, want attempts and transport error", err)
+		if err == nil || !strings.Contains(err.Error(), "temporary network failure") {
+			t.Fatalf("Do() error = %v, want transport error", err)
 		}
-		if attempts != 5 {
-			t.Fatalf("attempts = %d, want 5", attempts)
+		if attempts != 1 {
+			t.Fatalf("attempts = %d, want 1", attempts)
 		}
 	})
 

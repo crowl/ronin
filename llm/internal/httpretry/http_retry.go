@@ -2,7 +2,6 @@ package httpretry
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -26,7 +25,6 @@ func Do(ctx context.Context, client *http.Client, newRequest func() (*http.Reque
 		client = http.DefaultClient
 	}
 
-	var lastErr error
 	for attempt := 1; attempt <= httpRetryMaxAttempts; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -42,17 +40,10 @@ func Do(ctx context.Context, client *http.Client, newRequest func() (*http.Reque
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return nil, ctxErr
 			}
-			lastErr = err
-			if attempt == httpRetryMaxAttempts {
-				break
-			}
-			if err := sleepHTTPRetry(ctx, retryDelay(attempt, nil)); err != nil {
-				return nil, err
-			}
-			continue
+			return nil, err
 		}
 
-		if !isRetryableHTTPStatus(resp.StatusCode) || attempt == httpRetryMaxAttempts {
+		if resp.StatusCode != http.StatusTooManyRequests || attempt == httpRetryMaxAttempts {
 			return resp, nil
 		}
 
@@ -63,23 +54,7 @@ func Do(ctx context.Context, client *http.Client, newRequest func() (*http.Reque
 		}
 	}
 
-	if lastErr == nil {
-		lastErr = errors.New("request failed")
-	}
-	return nil, fmt.Errorf("after %d attempts: %w", httpRetryMaxAttempts, lastErr)
-}
-
-func isRetryableHTTPStatus(status int) bool {
-	switch status {
-	case http.StatusTooManyRequests,
-		http.StatusInternalServerError,
-		http.StatusBadGateway,
-		http.StatusServiceUnavailable,
-		http.StatusGatewayTimeout:
-		return true
-	default:
-		return false
-	}
+	return nil, fmt.Errorf("request failed after %d attempts", httpRetryMaxAttempts)
 }
 
 func retryDelay(attempt int, resp *http.Response) time.Duration {
