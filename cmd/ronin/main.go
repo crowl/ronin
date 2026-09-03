@@ -689,7 +689,6 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string, mcpT
 	var defaultModel llm.Model
 	var defaultLevel llm.ReasoningLevel
 	var defaultTools []runtime.Tool
-	var compactor runtime.Compactor
 
 	init := func() {
 		settings, initErr = config.Load()
@@ -722,12 +721,6 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string, mcpT
 		if initErr != nil {
 			return
 		}
-		defaultClient, err := llm.LoadModelClient(defaultModel, defaultLevel)
-		if err != nil {
-			initErr = fmt.Errorf("failed to load LLM model client: %w", err)
-			return
-		}
-
 		readCache := fsutil.NewReadCache()
 		mutationQueue := fsutil.NewMutationQueue()
 		defaultTools = []runtime.Tool{
@@ -735,15 +728,6 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string, mcpT
 			editfile.New(workingDir, mutationQueue),
 			writefile.New(workingDir, mutationQueue),
 			shell.New(workingDir),
-		}
-
-		compactor, err = runtime.NewDefaultCompactor(runtime.DefaultCompactorConfig{
-			ModelClient: defaultClient,
-			Now:         func() time.Time { return time.Now() },
-		})
-		if err != nil {
-			initErr = fmt.Errorf("failed to initialize compactor: %w", err)
-			return
 		}
 	}
 
@@ -807,6 +791,13 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string, mcpT
 			if err := validateWorkflowAgentOutputSchema(client, req.OutputSchema); err != nil {
 				return workflow.AgentResult{}, fmt.Errorf("validate structured workflow agent output schema before running agent: %w", err)
 			}
+		}
+		compactor, err := runtime.NewDefaultCompactor(runtime.DefaultCompactorConfig{
+			ModelClient: client,
+			Now:         time.Now,
+		})
+		if err != nil {
+			return workflow.AgentResult{}, fmt.Errorf("initialize compactor: %w", err)
 		}
 		conv, err := runtime.NewConversation(runtime.ConversationConfig{
 			CWD:          agentWorkingDir,

@@ -50,6 +50,7 @@ type ConversationConfig struct {
 const (
 	defaultMaxTurns              = 512
 	metadataSaveTimeout          = 5 * time.Second
+	autoCompactionUsagePercent   = 80
 	defaultSessionTitle          = "New session"
 	interruptedToolCallErrorText = "tool call interrupted before completion"
 )
@@ -242,7 +243,13 @@ func (c *Conversation) SwitchReasoningLevel(lvl llm.ReasoningLevel) error {
 	return nil
 }
 
-func (c *Conversation) CompactConversation(ctx context.Context) error {
+func (c *Conversation) shouldCompact() bool {
+	contextWindow := c.modelClient.Model().ContextWindow
+	return c.compactor != nil && len(c.messages) > defaultCompactKeepMessages && contextWindow > 0 && c.contextUsage.InputTokens > 0 &&
+		uint64(c.contextUsage.InputTokens)*100 >= uint64(contextWindow)*autoCompactionUsagePercent
+}
+
+func (c *Conversation) compact(ctx context.Context) error {
 	if c.compactor == nil {
 		return errors.New("compactor is not configured")
 	}
@@ -257,7 +264,12 @@ func (c *Conversation) CompactConversation(ctx context.Context) error {
 		c.session.UpdatedAt = c.now().UTC()
 	}
 	c.messages = append([]llm.Message(nil), messages...)
+	c.contextUsage = llm.Usage{Cost: llm.Cost{Total: c.sessionCost.Total, Available: c.sessionCost.Available}}
 	return nil
+}
+
+func (c *Conversation) CompactConversation(ctx context.Context) error {
+	return c.compact(ctx)
 }
 
 func (c *Conversation) RecordWorkflowResult(message llm.WorkflowResultMessage) error {
@@ -612,7 +624,13 @@ func (c *Conversation) run(ctx context.Context, prompt string, events chan<- Eve
 		return finish(c.reportSaveFailure(ctx, events, nil, err))
 	}
 
-	for turn := range c.maxTurns {
+	contextRetryUsed := false
+	for turn := 0; turn < c.maxTurns; {
+		if c.shouldCompact() {
+			if err := c.compact(ctx); err != nil {
+				return finish(fmt.Errorf("automatic context compaction: %w", err))
+			}
+		}
 		select {
 		case <-ctx.Done():
 			return finish(ctx.Err())
@@ -669,6 +687,25 @@ func (c *Conversation) run(ctx context.Context, prompt string, events chan<- Eve
 		}
 		blocks = tagProviderArtifacts(blocks, c.modelClient.Model().Provider)
 		message := llm.AssistantMessage{Timestamp: c.now(), Blocks: blocks, StopReason: stopReason, Usage: usage}
+		if stopReason == llm.StopReasonModelContextWindowExceeded && !contextRetryUsed && c.compactor != nil {
+			if len(c.messages) <= defaultCompactKeepMessages {
+				return finish(completionError(stopReason))
+			}
+			if appendErr := c.appendMessage(ctx, message); appendErr != nil {
+				return finish(c.reportSaveFailure(ctx, events, completionError(stopReason), appendErr))
+			}
+			c.recordUsage(usage)
+			select {
+			case <-ctx.Done():
+				return finish(ctx.Err())
+			case events <- AssistantMessageEnded{Message: message}:
+			}
+			if err := c.compact(ctx); err != nil {
+				return finish(fmt.Errorf("compact after context window exhaustion: %w", err))
+			}
+			contextRetryUsed = true
+			continue
+		}
 		if err := completionError(stopReason); err != nil {
 			if appendErr := c.appendMessage(ctx, message); appendErr != nil {
 				return finish(c.reportSaveFailure(ctx, events, err, appendErr))
@@ -708,6 +745,7 @@ func (c *Conversation) run(ctx context.Context, prompt string, events chan<- Eve
 			return finish(ctx.Err())
 		case events <- ConversationTurnEnded{Turn: turn}:
 		}
+		turn++
 	}
 	err := fmt.Errorf("max turns reached (%d)", c.maxTurns)
 	message := llm.ErrorMessage{Timestamp: c.now(), Error: err}
@@ -729,8 +767,10 @@ func (c *Conversation) recordUsage(usage llm.Usage) {
 
 func completionError(reason llm.StopReason) error {
 	switch reason {
-	case llm.StopReasonMaxTokens, llm.StopReasonModelContextWindowExceeded:
+	case llm.StopReasonMaxTokens:
 		return fmt.Errorf("llm response was truncated (%s)", reason)
+	case llm.StopReasonModelContextWindowExceeded:
+		return errors.New("llm context window was exceeded")
 	case llm.StopReasonRefusal:
 		return errors.New("llm response was refused")
 	case llm.StopReasonPauseTurn:

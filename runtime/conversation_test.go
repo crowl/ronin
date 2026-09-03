@@ -338,6 +338,72 @@ func TestPromptLifecycle(t *testing.T) {
 		}
 	})
 
+	t.Run("automatically compacts before a prompt near the context limit", func(t *testing.T) {
+		modelClient := &fakeModelClient{
+			model:  llm.Model{Provider: "test", Name: "bounded", ContextWindow: 100},
+			events: []llm.PredictionEvent{llm.BlockEnded{Block: llm.TextBlock{Text: "done"}}, llm.PredictionFinished{}},
+		}
+		compactor := &fakeCompactor{messages: []llm.Message{llm.UserMessage{Text: "compacted"}}}
+		messages := make([]llm.Message, 13)
+		for i := range messages {
+			messages[i] = llm.UserMessage{Text: fmt.Sprintf("old %d", i)}
+		}
+		messages = append(messages, llm.AssistantMessage{Usage: llm.Usage{InputTokens: 80}})
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{
+			ModelClient: modelClient,
+			Compactor:   compactor,
+			Messages:    messages,
+		})
+		if err != nil {
+			t.Fatalf("NewConversation() error = %v", err)
+		}
+
+		events, errs := agt.Prompt(t.Context(), "continue")
+		_ = collectEvents(events)
+		if err := <-errs; err != nil {
+			t.Fatalf("Prompt() error = %v", err)
+		}
+		if len(compactor.input) != 15 {
+			t.Fatalf("compactor input length = %d, want 15", len(compactor.input))
+		}
+		if len(modelClient.requests) != 1 || len(modelClient.requests[0].Messages) != 1 {
+			t.Fatalf("prediction messages = %#v, want compacted context", modelClient.requests)
+		}
+	})
+
+	t.Run("compacts and retries once after context window exhaustion", func(t *testing.T) {
+		messages := make([]llm.Message, 13)
+		for i := range messages {
+			messages[i] = llm.UserMessage{Text: fmt.Sprintf("old %d", i)}
+		}
+		modelClient := &fakeModelClient{
+			model: llm.Model{Provider: "test", Name: "bounded", ContextWindow: 100},
+			eventBatches: [][]llm.PredictionEvent{
+				{llm.PredictionFinished{StopReason: llm.StopReasonModelContextWindowExceeded}},
+				{llm.BlockEnded{Block: llm.TextBlock{Text: "done"}}, llm.PredictionFinished{}},
+			},
+		}
+		compactor := &fakeCompactor{messages: []llm.Message{llm.UserMessage{Text: "compacted"}}}
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{
+			ModelClient: modelClient, Compactor: compactor, Messages: messages,
+		})
+		if err != nil {
+			t.Fatalf("NewConversation() error = %v", err)
+		}
+
+		events, errs := agt.Prompt(t.Context(), "continue")
+		_ = collectEvents(events)
+		if err := <-errs; err != nil {
+			t.Fatalf("Prompt() error = %v", err)
+		}
+		if modelClient.predictCalls != 2 {
+			t.Fatalf("PredictNext() calls = %d, want 2", modelClient.predictCalls)
+		}
+		if len(compactor.input) != 15 {
+			t.Fatalf("compactor input length = %d, want 15", len(compactor.input))
+		}
+	})
+
 	t.Run("returns truncation error after persisting partial response", func(t *testing.T) {
 		agt, err := runtime.NewConversation(runtime.ConversationConfig{
 			ModelClient: &fakeModelClient{events: []llm.PredictionEvent{
