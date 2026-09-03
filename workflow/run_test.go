@@ -6,10 +6,12 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/crowl/ronin/llm"
 )
@@ -155,6 +157,41 @@ ronin.done()`)
 			t.Fatalf("RunFile() error = %v, want original runtime error", err)
 		}
 	})
+
+	t.Run("cancels CPU-only Lua loop", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "workflow.lua")
+		if err := os.WriteFile(path, []byte(`while true do end`), 0o600); err != nil {
+			t.Fatalf("WriteFile() error = %v", err)
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+		defer cancel()
+		started := time.Now()
+		err := RunFileWithAgent(ctx, path, io.Discard, nil)
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("RunFileWithAgent() error = %v, want deadline exceeded", err)
+		}
+		if elapsed := time.Since(started); elapsed > time.Second {
+			t.Fatalf("cancellation took %v", elapsed)
+		}
+	})
+
+	t.Run("returns log writer errors", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "workflow.lua")
+		if err := os.WriteFile(path, []byte(`ronin.log("hello")`), 0o600); err != nil {
+			t.Fatalf("WriteFile() error = %v", err)
+		}
+		wantErr := errors.New("write failed")
+		err := RunFileWithAgent(t.Context(), path, failingWriter{err: wantErr}, nil)
+		if !errors.Is(err, wantErr) || !strings.Contains(err.Error(), "write workflow log") {
+			t.Fatalf("RunFileWithAgent() error = %v, want wrapped writer error", err)
+		}
+	})
+}
+
+type failingWriter struct{ err error }
+
+func (w failingWriter) Write([]byte) (int, error) {
+	return 0, w.err
 }
 
 func TestRunFileWithAgent(t *testing.T) {

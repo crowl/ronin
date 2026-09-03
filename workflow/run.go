@@ -20,6 +20,7 @@ import (
 
 const controlSignalMarker = "__ronin_workflow_control_signal__"
 const maxReadBytes int64 = 1 << 20
+const contextCheckInstructionCount = 10_000
 
 const (
 	approvedMarker = "STATUS: APPROVED"
@@ -167,17 +168,30 @@ func runFile(ctx context.Context, path, workingDir, input string, out io.Writer,
 	lua.Require(state, "math", lua.MathOpen, true)
 
 	var signal *controlSignal
+	var outputErr error
 	agentRuntime := newAgentRuntime(ctx, agent, emit)
 	agentRuntime.worktrees.setWorkingDir(runtimeWorkingDir)
-	registerRonin(state, out, &signal, agentRuntime, runtimeWorkingDir, input, emit)
+	registerRonin(state, out, &outputErr, &signal, agentRuntime, runtimeWorkingDir, input, emit)
 
 	if err := lua.LoadBuffer(state, string(script), path, ""); err != nil {
 		return fmt.Errorf("parse workflow script %q: %w", path, err)
 	}
 
+	lua.SetDebugHook(state, func(_ *lua.State, _ lua.Debug) {
+		if err := ctx.Err(); err != nil {
+			panic(lua.RuntimeError(err.Error()))
+		}
+	}, lua.MaskCount, contextCheckInstructionCount)
+
 	if err := state.ProtectedCall(0, 0, 0); err != nil {
 		agentRuntime.shutdown()
 		recovery := agentRuntime.worktrees.recover()
+		if outputErr != nil {
+			return workflowErrorWithRecovery(fmt.Errorf("write workflow log: %w", outputErr), recovery)
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return workflowErrorWithRecovery(ctxErr, recovery)
+		}
 		if signal != nil && strings.Contains(err.Error(), controlSignalMarker) {
 			message := signal.message
 			if recovery != "" {
@@ -203,9 +217,16 @@ func runFile(ctx context.Context, path, workingDir, input string, out io.Writer,
 	return nil
 }
 
-func registerRonin(state *lua.State, out io.Writer, signal **controlSignal, agent *agentRuntime, workingDir, input string, emit func(Event)) {
+func workflowErrorWithRecovery(err error, recovery string) error {
+	if recovery == "" {
+		return err
+	}
+	return fmt.Errorf("%w\n\n%s", err, recovery)
+}
+
+func registerRonin(state *lua.State, out io.Writer, outputErr *error, signal **controlSignal, agent *agentRuntime, workingDir, input string, emit func(Event)) {
 	state.NewTable()
-	state.PushGoFunction(logFunction(out, emit))
+	state.PushGoFunction(logFunction(out, outputErr, emit))
 	state.SetField(-2, "log")
 	state.PushGoFunction(runAgentFunction(agent))
 	state.SetField(-2, "run_agent")
@@ -277,10 +298,15 @@ func workflowNewIndexFunction() lua.Function {
 	}
 }
 
-func logFunction(out io.Writer, emit func(Event)) lua.Function {
+func logFunction(out io.Writer, outputErr *error, emit func(Event)) lua.Function {
 	return func(state *lua.State) int {
 		text := formatLogValue(state, 1, map[any]bool{})
-		_, _ = fmt.Fprintln(out, text)
+		if _, err := fmt.Fprintln(out, text); err != nil {
+			if *outputErr == nil {
+				*outputErr = err
+			}
+			panic(lua.RuntimeError("ronin.log: " + err.Error()))
+		}
 		if emit != nil {
 			emit(Log{Text: text})
 		}
