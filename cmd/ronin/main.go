@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/crowl/ronin/config"
+	"github.com/crowl/ronin/jsonschema"
 	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/llm/anthropic"
 	"github.com/crowl/ronin/llm/google"
@@ -822,6 +824,11 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string, mcpT
 		if err != nil {
 			return workflow.AgentResult{}, fmt.Errorf("load model client: %w", err)
 		}
+		if req.OutputSchema != nil {
+			if err := validateWorkflowAgentOutputSchema(client, req.OutputSchema); err != nil {
+				return workflow.AgentResult{}, fmt.Errorf("validate structured workflow agent output schema before running agent: %w", err)
+			}
+		}
 		conv, err := runtime.NewConversation(runtime.ConversationConfig{
 			CWD:                           agentWorkingDir,
 			ModelClient:                   client,
@@ -843,14 +850,7 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string, mcpT
 		}
 		result := workflow.AgentResult{Text: text}
 		if req.OutputSchema != nil {
-			raw, err := client.PredictNextStructured(ctx, llm.PredictNextStructuredRequest{
-				SystemPrompt: "Convert the supplied agent report into JSON matching the requested schema. Preserve its decisions exactly and do not add new work.",
-				Messages: []llm.Message{llm.UserMessage{
-					Timestamp: time.Now(),
-					Text:      text,
-				}},
-				Schema: req.OutputSchema,
-			})
+			raw, err := structureWorkflowAgentOutput(ctx, client, text, req.OutputSchema)
 			if err != nil {
 				return workflow.AgentResult{}, fmt.Errorf("generate structured workflow agent output: %w", err)
 			}
@@ -1238,6 +1238,67 @@ func loadExplicitSkillPath(value string) (runtime.Skill, error) {
 	abs = filepath.Clean(abs)
 
 	return runtime.LoadSkillFile(abs)
+}
+
+func validateWorkflowAgentOutputSchema(client llm.ModelClient, schema *jsonschema.Schema) error {
+	if validator, ok := client.(llm.StructuredOutputSchemaValidator); ok {
+		return validator.ValidateStructuredOutputSchema(schema)
+	}
+	return nil
+}
+
+const maxStructuredOutputCorrectionAttempts = 2
+const maxInvalidStructuredOutputBytes = 4096
+
+func structureWorkflowAgentOutput(ctx context.Context, client llm.ModelClient, report string, schema *jsonschema.Schema) (json.RawMessage, error) {
+	prompt := report
+	var lastOutput json.RawMessage
+	var lastValidationErr error
+
+	for attempt := 0; attempt <= maxStructuredOutputCorrectionAttempts; attempt++ {
+		raw, err := client.PredictNextStructured(ctx, llm.PredictNextStructuredRequest{
+			SystemPrompt: "Convert the supplied agent report into JSON matching the requested schema. Preserve its decisions exactly and do not add new work. Return substantive values from the report, never schema examples or placeholders.",
+			Messages: []llm.Message{llm.UserMessage{
+				Timestamp: time.Now(),
+				Text:      prompt,
+			}},
+			Schema: schema,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if err := jsonschema.Validate(schema, raw); err == nil {
+			return raw, nil
+		} else {
+			lastOutput = append(lastOutput[:0], raw...)
+			lastValidationErr = err
+		}
+		if attempt < maxStructuredOutputCorrectionAttempts {
+			prompt = structuredOutputCorrectionPrompt(report, raw, lastValidationErr)
+		}
+	}
+
+	return nil, fmt.Errorf(
+		"structured conversion remained invalid after %d correction attempts: %v; invalid output: %s; original agent report (the agent was not rerun): %s",
+		maxStructuredOutputCorrectionAttempts,
+		lastValidationErr,
+		boundedStructuredOutput(lastOutput),
+		boundedStructuredOutput([]byte(report)),
+	)
+}
+
+func structuredOutputCorrectionPrompt(report string, invalid json.RawMessage, validationErr error) string {
+	return "Original agent report (authoritative; preserve its decisions):\n\n" + report +
+		"\n\nThe prior JSON conversion was invalid:\n\n" + boundedStructuredOutput(invalid) +
+		"\n\nValidation failures:\n\n" + validationErr.Error() +
+		"\n\nCorrect only the JSON conversion. Use substantive values from the original report; do not use placeholder values such as `string`, and do not add new work."
+}
+
+func boundedStructuredOutput(raw []byte) string {
+	if len(raw) <= maxInvalidStructuredOutputBytes {
+		return string(raw)
+	}
+	return string(raw[:maxInvalidStructuredOutputBytes]) + fmt.Sprintf("... [truncated %d bytes]", len(raw)-maxInvalidStructuredOutputBytes)
 }
 
 type prompter interface {
