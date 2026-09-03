@@ -58,8 +58,47 @@ func Validate(schema *Schema, document []byte) error {
 	return nil
 }
 
+var supportedSchemaKeywords = map[string]bool{
+	"type":                 true,
+	"title":                true,
+	"description":          true,
+	"properties":           true,
+	"required":             true,
+	"additionalProperties": true,
+	"items":                true,
+	"enum":                 true,
+	"minItems":             true,
+	"maxItems":             true,
+	"minLength":            true,
+	"pattern":              true,
+	"uniqueItems":          true,
+}
+
 func validateSchemaDefinition(schema map[string]any, path string) error {
-	if pattern, ok := schema["pattern"].(string); ok {
+	for keyword := range schema {
+		if !supportedSchemaKeywords[keyword] {
+			return fmt.Errorf("%s.%s is not supported", path, keyword)
+		}
+	}
+
+	if value, ok := schema["type"]; ok {
+		typeName, ok := value.(string)
+		if !ok || !supportedType(typeName) {
+			return fmt.Errorf("%s.type must be one of object, array, string, boolean, number, integer, or null", path)
+		}
+	}
+	for _, keyword := range []string{"title", "description"} {
+		if value, ok := schema[keyword]; ok {
+			if _, ok := value.(string); !ok {
+				return fmt.Errorf("%s.%s must be a string", path, keyword)
+			}
+		}
+	}
+	if value, ok := schema["pattern"]; ok {
+		pattern, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("%s.pattern must be a string", path)
+		}
 		if _, err := regexp.Compile(pattern); err != nil {
 			return fmt.Errorf("%s.pattern is invalid: %w", path, err)
 		}
@@ -69,13 +108,49 @@ func validateSchemaDefinition(schema map[string]any, path string) error {
 			return fmt.Errorf("%s.%s: %w", path, keyword, err)
 		}
 	}
-	if properties, ok := schema["properties"].(map[string]any); ok {
+	minimum, hasMinimum, _ := nonNegativeInteger(schema, "minItems")
+	maximum, hasMaximum, _ := nonNegativeInteger(schema, "maxItems")
+	if hasMinimum && hasMaximum && minimum > maximum {
+		return fmt.Errorf("%s.minItems must not exceed maxItems", path)
+	}
+	if value, ok := schema["uniqueItems"]; ok {
+		if _, ok := value.(bool); !ok {
+			return fmt.Errorf("%s.uniqueItems must be a boolean", path)
+		}
+	}
+	if value, ok := schema["enum"]; ok {
+		values, ok := value.([]any)
+		if !ok || len(values) == 0 {
+			return fmt.Errorf("%s.enum must be a non-empty array", path)
+		}
+	}
+	if value, ok := schema["required"]; ok {
+		required, ok := value.([]any)
+		if !ok {
+			return fmt.Errorf("%s.required must be an array of strings", path)
+		}
+		for _, item := range required {
+			if _, ok := item.(string); !ok {
+				return fmt.Errorf("%s.required must be an array of strings", path)
+			}
+		}
+	}
+	if value, ok := schema["additionalProperties"]; ok {
+		if _, ok := value.(bool); !ok {
+			return fmt.Errorf("%s.additionalProperties must be a boolean", path)
+		}
+	}
+	if value, ok := schema["properties"]; ok {
+		properties, ok := value.(map[string]any)
+		if !ok {
+			return fmt.Errorf("%s.properties must be an object", path)
+		}
 		for name, property := range properties {
 			definition, ok := property.(map[string]any)
 			if !ok {
 				return fmt.Errorf("%s.properties.%s must be an object", path, name)
 			}
-			if err := validateSchemaDefinition(definition, path+".properties."+name); err != nil {
+			if err := validateSchemaDefinition(definition, childPath(path+".properties", name)); err != nil {
 				return err
 			}
 		}
@@ -90,6 +165,15 @@ func validateSchemaDefinition(schema map[string]any, path string) error {
 		}
 	}
 	return nil
+}
+
+func supportedType(typeName string) bool {
+	switch typeName {
+	case "object", "array", "string", "boolean", "number", "integer", "null":
+		return true
+	default:
+		return false
+	}
 }
 
 func decodeJSON(data []byte, target any) error {

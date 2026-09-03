@@ -32,13 +32,34 @@ func TestFromRawRejectsInvalidSchema(t *testing.T) {
 }
 
 func TestValidateDefinition(t *testing.T) {
-	schema, err := jsonschema.FromRaw([]byte(`{"type":"object","properties":{"value":{"type":"string","pattern":"["}}}`))
-	if err != nil {
-		t.Fatalf("FromRaw() error = %v", err)
-	}
-	if err := jsonschema.ValidateDefinition(schema); err == nil || !strings.Contains(err.Error(), "$.properties.value.pattern") {
-		t.Fatalf("ValidateDefinition() error = %v", err)
-	}
+	t.Run("rejects unsupported keywords", func(t *testing.T) {
+		schema, err := jsonschema.FromRaw([]byte(`{"type":"object","properties":{"value":{"anyOf":[{"type":"string"},{"type":"number"}]}}}`))
+		if err != nil {
+			t.Fatalf("FromRaw() error = %v", err)
+		}
+		if err := jsonschema.ValidateDefinition(schema); err == nil || !strings.Contains(err.Error(), "$.properties.value.anyOf is not supported") {
+			t.Fatalf("ValidateDefinition() error = %v", err)
+		}
+	})
+
+	t.Run("rejects invalid supported keyword values", func(t *testing.T) {
+		for name, input := range map[string]string{
+			"type":                  `{"type":"date"}`,
+			"required":              `{"type":"object","required":[1]}`,
+			"additional properties": `{"type":"object","additionalProperties":{"type":"string"}}`,
+			"unique items":          `{"type":"array","uniqueItems":"yes"}`,
+		} {
+			t.Run(name, func(t *testing.T) {
+				schema, err := jsonschema.FromRaw([]byte(input))
+				if err != nil {
+					t.Fatalf("FromRaw() error = %v", err)
+				}
+				if err := jsonschema.ValidateDefinition(schema); err == nil {
+					t.Fatal("ValidateDefinition() error = nil")
+				}
+			})
+		}
+	})
 }
 
 func TestValidate(t *testing.T) {
@@ -50,6 +71,7 @@ func TestValidate(t *testing.T) {
 			"tasks":{
 				"type":"array",
 				"minItems":1,
+				"uniqueItems":true,
 				"items":{
 					"type":"object",
 					"required":["id","commit_message"],
@@ -77,6 +99,7 @@ func TestValidate(t *testing.T) {
 		"pattern":      {document: `{"tasks":[{"id":"runtime-validation","commit_message":"Fix: Invalid."}]}`, want: "$.tasks[0].commit_message"},
 		"missing":      {document: `{}`, want: "$.tasks: is required"},
 		"extra":        {document: `{"tasks":[{"id":"runtime-validation","commit_message":"fix: validate plans"}],"extra":true}`, want: "$.extra: additional property"},
+		"duplicate":    {document: `{"tasks":[{"id":"runtime-validation","commit_message":"fix: validate plans"},{"id":"runtime-validation","commit_message":"fix: validate plans"}]}`, want: "must be unique"},
 		"invalid JSON": {document: `{`, want: "decode JSON document"},
 	} {
 		t.Run(name, func(t *testing.T) {
