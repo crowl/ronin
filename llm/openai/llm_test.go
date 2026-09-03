@@ -310,17 +310,10 @@ func TestPredictNext(t *testing.T) {
 		}
 	})
 
-	t.Run("emits fallback finish at EOF", func(t *testing.T) {
-		events, err := predictWithStream(t, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n")
-		if err != nil {
-			t.Fatalf("predict: %v", err)
-		}
-		last, ok := events[len(events)-1].(llm.PredictionFinished)
-		if !ok {
-			t.Fatalf("last event = %#v, want PredictionFinished", events[len(events)-1])
-		}
-		if last.StopReason != llm.StopReasonFinished {
-			t.Fatalf("stop reason = %q, want finished", last.StopReason)
+	t.Run("rejects premature EOF", func(t *testing.T) {
+		_, err := predictWithStream(t, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n")
+		if err == nil || !strings.Contains(err.Error(), "before response.completed") {
+			t.Fatalf("predict error = %v, want premature EOF error", err)
 		}
 	})
 
@@ -497,6 +490,23 @@ func TestPredictNextStructured(t *testing.T) {
 		}
 		if string(got) != `{"answer":"ok"}` {
 			t.Fatalf("structured output = %s, want answer", got)
+		}
+	})
+
+	t.Run("rejects_stream_that_ends_before_completion", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"{\\\"answer\\\":\\\"partial\\\"}\"}\n\n"))
+		}))
+		defer server.Close()
+
+		client, err := openai.NewLLM(openai.LLMConfig{BaseURL: server.URL, APIKey: "key", Model: llm.Model{Provider: "openai", Name: "test"}, ReasoningLevel: llm.ReasoningLevelOff})
+		if err != nil {
+			t.Fatalf("new llm: %v", err)
+		}
+		_, err = client.PredictNextStructured(context.Background(), llm.PredictNextStructuredRequest{Schema: &jsonschema.Schema{Type: "object"}})
+		if err == nil || !strings.Contains(err.Error(), "before response.completed") {
+			t.Fatalf("error = %v, want premature EOF error", err)
 		}
 	})
 

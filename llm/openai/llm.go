@@ -298,12 +298,15 @@ func (s *LLM) readStructuredStream(r io.Reader) (string, error) {
 
 	var text strings.Builder
 	var dataLines []string
+	finished := false
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
-			if err := s.appendStructuredData(strings.Join(dataLines, "\n"), &text); err != nil {
+			terminal, err := s.appendStructuredData(strings.Join(dataLines, "\n"), &text)
+			if err != nil {
 				return "", err
 			}
+			finished = finished || terminal
 			dataLines = nil
 			continue
 		}
@@ -315,19 +318,24 @@ func (s *LLM) readStructuredStream(r io.Reader) (string, error) {
 		}
 	}
 	if len(dataLines) > 0 {
-		if err := s.appendStructuredData(strings.Join(dataLines, "\n"), &text); err != nil {
+		terminal, err := s.appendStructuredData(strings.Join(dataLines, "\n"), &text)
+		if err != nil {
 			return "", err
 		}
+		finished = finished || terminal
 	}
 	if err := scanner.Err(); err != nil {
 		return "", fmt.Errorf("read %s structured stream: %w", s.provider(), err)
 	}
+	if !finished {
+		return "", fmt.Errorf("%s structured stream ended before response.completed", s.provider())
+	}
 	return text.String(), nil
 }
 
-func (s *LLM) appendStructuredData(data string, text *strings.Builder) error {
+func (s *LLM) appendStructuredData(data string, text *strings.Builder) (bool, error) {
 	if data == "" || data == "[DONE]" {
-		return nil
+		return false, nil
 	}
 
 	var event struct {
@@ -335,15 +343,15 @@ func (s *LLM) appendStructuredData(data string, text *strings.Builder) error {
 		Delta string `json:"delta"`
 	}
 	if err := json.Unmarshal([]byte(data), &event); err != nil {
-		return fmt.Errorf("parse %s structured event: %w", s.provider(), err)
+		return false, fmt.Errorf("parse %s structured event: %w", s.provider(), err)
 	}
 	if strings.Contains(event.Type, "error") {
-		return fmt.Errorf("%s structured error event: %s", s.provider(), data)
+		return false, fmt.Errorf("%s structured error event: %s", s.provider(), data)
 	}
 	if strings.Contains(event.Type, "output_text.delta") {
 		text.WriteString(event.Delta)
 	}
-	return nil
+	return event.Type == "response.completed", nil
 }
 
 func (s *LLM) stream(ctx context.Context, req llm.PredictNextRequest, events chan<- llm.PredictionEvent) error {
@@ -420,10 +428,7 @@ func (s *LLM) stream(ctx context.Context, req llm.PredictNextRequest, events cha
 	}
 
 	if !state.finished {
-		if err := state.finishOpenBlock(ctx, events); err != nil {
-			return err
-		}
-		return sendEvent(ctx, events, llm.PredictionFinished{StopReason: state.stopReason()})
+		return fmt.Errorf("%s stream ended before response.completed", s.provider())
 	}
 	return nil
 }

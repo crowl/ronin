@@ -245,10 +245,10 @@ func (s *LLM) stream(ctx context.Context, req llm.PredictNextRequest, events cha
 		return fmt.Errorf("read gemini stream: %w", err)
 	}
 
-	return sendEvent(ctx, events, llm.PredictionFinished{
-		Usage:      state.usage,
-		StopReason: state.stopReason(),
-	})
+	if !state.finished {
+		return errors.New("gemini stream ended before interaction completion")
+	}
+	return nil
 }
 
 func (s *LLM) buildPayload(req llm.PredictNextRequest) (*geminiInteractionRequest, error) {
@@ -605,6 +605,10 @@ func handleData(ctx context.Context, data string, state *geminiStreamState, even
 	switch event.Type {
 	case "interaction.completed", "interaction.requires_action":
 		state.finished = true
+		return sendEvent(ctx, events, llm.PredictionFinished{
+			Usage:      state.usage,
+			StopReason: state.stopReason(),
+		})
 
 	case "step.start":
 		if event.Step == nil {

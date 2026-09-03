@@ -52,6 +52,8 @@ func TestPredictNext(t *testing.T) {
 			``,
 			`data: {"event_type":"step.stop","index":2,"metadata":{"total_usage":{"total_input_tokens":3,"total_output_tokens":4,"total_thought_tokens":5,"total_cached_tokens":2,"total_tokens":12}}}`,
 			``,
+			`data: {"event_type":"interaction.requires_action"}`,
+			``,
 		}, "\n")
 
 		events, err := predictWithStream(t, stream)
@@ -105,6 +107,8 @@ func TestPredictNext(t *testing.T) {
 			``,
 			`data: {"event_type":"step.stop","index":1}`,
 			``,
+			`data: {"event_type":"interaction.completed"}`,
+			``,
 		}, "\n")
 
 		events, err := predictWithStream(t, stream)
@@ -126,17 +130,10 @@ func TestPredictNext(t *testing.T) {
 		}
 	})
 
-	t.Run("emits fallback finish at EOF", func(t *testing.T) {
-		events, err := predictWithStream(t, "data: {\"type\":\"step.start\",\"index\":0,\"step\":{\"type\":\"model_output\"}}\n\ndata: {\"type\":\"step.delta\",\"index\":0,\"delta\":{\"type\":\"text\",\"text\":\"hello\"}}\n\ndata: {\"type\":\"step.stop\",\"index\":0}\n\n")
-		if err != nil {
-			t.Fatalf("predict: %v", err)
-		}
-		last, ok := events[len(events)-1].(llm.PredictionFinished)
-		if !ok {
-			t.Fatalf("last event = %#v, want PredictionFinished", events[len(events)-1])
-		}
-		if last.StopReason != llm.StopReasonFinished {
-			t.Fatalf("stop reason = %q, want finished", last.StopReason)
+	t.Run("rejects premature EOF", func(t *testing.T) {
+		_, err := predictWithStream(t, "data: {\"event_type\":\"step.start\",\"index\":0,\"step\":{\"type\":\"model_output\"}}\n\ndata: {\"event_type\":\"step.delta\",\"index\":0,\"delta\":{\"type\":\"text\",\"text\":\"hello\"}}\n\ndata: {\"event_type\":\"step.stop\",\"index\":0}\n\n")
+		if err == nil || !strings.Contains(err.Error(), "before interaction completion") {
+			t.Fatalf("predict error = %v, want premature EOF error", err)
 		}
 	})
 
@@ -161,6 +158,8 @@ func TestPredictNext(t *testing.T) {
 			`data: {"event_type":"step.delta","index":1,"delta":{"type":"arguments","partial_arguments":"{}"}}`,
 			``,
 			`data: {"event_type":"step.stop","index":1}`,
+			``,
+			`data: {"event_type":"interaction.requires_action"}`,
 			``,
 		}, "\n")
 
@@ -191,7 +190,7 @@ func TestPredictNext(t *testing.T) {
 				t.Fatalf("decode request: %v", err)
 			}
 			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = w.Write([]byte("data: {\"type\":\"step.stop\",\"index\":0,\"metadata\":{\"total_usage\":{\"total_tokens\":1}}}\n\n"))
+			_, _ = w.Write([]byte("data: {\"event_type\":\"interaction.completed\",\"metadata\":{\"total_usage\":{\"total_tokens\":1}}}\n\n"))
 		}))
 		defer server.Close()
 

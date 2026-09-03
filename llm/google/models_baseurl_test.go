@@ -99,6 +99,7 @@ func TestSetupWithBaseURLRoutesRequests(t *testing.T) {
 			paths = append(paths, r.URL.Path)
 			if r.Header.Get("Accept") == "text/event-stream" {
 				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = w.Write([]byte("data: {\"event_type\":\"interaction.completed\"}\n\n"))
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
