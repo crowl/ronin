@@ -284,12 +284,6 @@ func run() (exitCode int) {
 		}
 	}()
 
-	summarizer, summarizationPolicy, err := toolOutputSummarization(settings)
-	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "failed to initialize tool output summarization: %v\n", err)
-		return 1
-	}
-
 	// buildConversation creates a conversation for an existing session record.
 	// Each conversation owns its own model client so per-session model and
 	// reasoning switches stay isolated.
@@ -316,19 +310,17 @@ func run() (exitCode int) {
 			return nil, fmt.Errorf("initialize compactor: %w", err)
 		}
 		return runtime.NewConversation(runtime.ConversationConfig{
-			CWD:                           workingDir,
-			ModelClient:                   client,
-			Compactor:                     compactor,
-			ToolOutputSummarizer:          summarizer,
-			ToolOutputSummarizationPolicy: summarizationPolicy,
-			Tools:                         tools,
-			SystemPrompt:                  systemPrompt,
-			MaxTurns:                      settings.MaxTurns,
-			Now:                           func() time.Time { return time.Now() },
-			SessionStore:                  sessionStore,
-			Session:                       activeSession,
-			Messages:                      messages,
-			SessionCost:                   activeSession.Cost,
+			CWD:          workingDir,
+			ModelClient:  client,
+			Compactor:    compactor,
+			Tools:        tools,
+			SystemPrompt: systemPrompt,
+			MaxTurns:     settings.MaxTurns,
+			Now:          func() time.Time { return time.Now() },
+			SessionStore: sessionStore,
+			Session:      activeSession,
+			Messages:     messages,
+			SessionCost:  activeSession.Cost,
 		})
 	}
 
@@ -698,8 +690,6 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string, mcpT
 	var defaultLevel llm.ReasoningLevel
 	var defaultTools []runtime.Tool
 	var compactor runtime.Compactor
-	var summarizer runtime.ToolOutputSummarizer
-	var summarizationPolicy runtime.ToolOutputSummarizationPolicy
 
 	init := func() {
 		settings, initErr = config.Load()
@@ -753,12 +743,6 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string, mcpT
 		})
 		if err != nil {
 			initErr = fmt.Errorf("failed to initialize compactor: %w", err)
-			return
-		}
-
-		summarizer, summarizationPolicy, err = toolOutputSummarization(settings)
-		if err != nil {
-			initErr = fmt.Errorf("failed to initialize tool output summarization: %w", err)
 			return
 		}
 	}
@@ -830,16 +814,14 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string, mcpT
 			}
 		}
 		conv, err := runtime.NewConversation(runtime.ConversationConfig{
-			CWD:                           agentWorkingDir,
-			ModelClient:                   client,
-			Compactor:                     compactor,
-			ToolOutputSummarizer:          summarizer,
-			ToolOutputSummarizationPolicy: summarizationPolicy,
-			Tools:                         agentTools,
-			SystemPrompt:                  agentSystemPrompt,
-			MaxTurns:                      settings.MaxTurns,
-			Now:                           func() time.Time { return time.Now() },
-			Session:                       session.Session{WorkingDir: agentWorkingDir},
+			CWD:          agentWorkingDir,
+			ModelClient:  client,
+			Compactor:    compactor,
+			Tools:        agentTools,
+			SystemPrompt: agentSystemPrompt,
+			MaxTurns:     settings.MaxTurns,
+			Now:          func() time.Time { return time.Now() },
+			Session:      session.Session{WorkingDir: agentWorkingDir},
 		})
 		if err != nil {
 			return workflow.AgentResult{}, err
@@ -1032,45 +1014,6 @@ func runWorkflow(ctx context.Context, script, workingDir, input string, agent wo
 	}
 
 	return err
-}
-
-func toolOutputSummarization(settings config.Settings) (runtime.ToolOutputSummarizer, runtime.ToolOutputSummarizationPolicy, error) {
-	policy := runtime.DefaultToolOutputSummarizationPolicy()
-	cfg := settings.ToolOutputSummarization
-	policy.Enabled = cfg.Enabled
-	if cfg.MinBytes > 0 {
-		policy.MinBytes = cfg.MinBytes
-	}
-	if cfg.MaxSummaryTokens > 0 {
-		policy.MaxSummaryTokens = cfg.MaxSummaryTokens
-	}
-	policy.SummarizeErrors = cfg.SummarizeErrors
-	if cfg.ExcludedTools != nil {
-		policy.ExcludedTools = make(map[string]bool, len(cfg.ExcludedTools))
-		for _, name := range cfg.ExcludedTools {
-			if name != "" {
-				policy.ExcludedTools[name] = true
-			}
-		}
-	}
-
-	if !policy.Enabled {
-		return nil, policy, nil
-	}
-
-	model := llm.Model{Provider: cfg.Model.Provider, Name: cfg.Model.Name}
-	summaryClient, err := llm.LoadModelClient(model, llm.ReasoningLevelOff)
-	if err != nil {
-		return nil, policy, fmt.Errorf("load summary model client: %w", err)
-	}
-	summarizer, err := runtime.NewDefaultToolOutputSummarizer(runtime.DefaultToolOutputSummarizerConfig{
-		ModelClient: summaryClient,
-		Now:         func() time.Time { return time.Now() },
-	})
-	if err != nil {
-		return nil, policy, err
-	}
-	return summarizer, policy, nil
 }
 
 func startupSession(ctx context.Context, store session.Store, workingDir string, metadata session.Metadata, resume bool) (session.Session, []llm.Message, error) {

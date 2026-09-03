@@ -131,7 +131,7 @@ func TestLoad(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Load() error = %v", err)
 		}
-		if !reflect.DeepEqual(settings.Model, defaultSettings().Model) || settings.ReasoningLevel != defaultSettings().ReasoningLevel || settings.MaxTurns != defaultSettings().MaxTurns || !reflect.DeepEqual(settings.ToolOutputSummarization, defaultSettings().ToolOutputSummarization) {
+		if !reflect.DeepEqual(settings.Model, defaultSettings().Model) || settings.ReasoningLevel != defaultSettings().ReasoningLevel || settings.MaxTurns != defaultSettings().MaxTurns {
 			t.Fatalf("Load() preferences = %#v, want %#v", settings, defaultSettings())
 		}
 		if len(settings.Providers) == 0 {
@@ -169,10 +169,9 @@ func TestLoad(t *testing.T) {
 		}
 
 		want := config.Settings{
-			Model:                   config.Model{Provider: "anthropic", Name: "claude"},
-			ReasoningLevel:          "high",
-			MaxTurns:                10,
-			ToolOutputSummarization: config.ToolOutputSummarization{},
+			Model:          config.Model{Provider: "anthropic", Name: "claude"},
+			ReasoningLevel: "high",
+			MaxTurns:       10,
 		}
 		want.Providers = settings.Providers
 		if !reflect.DeepEqual(settings, want) {
@@ -211,6 +210,11 @@ func TestLoad(t *testing.T) {
 			{
 				name:    "unknown field",
 				content: `{"model": {"provider": "openai", "name": "gpt-5.5"}, "reasoning_level": "medium", "max_turns": 512, "theme": "dark"}`,
+				wantErr: "parse config",
+			},
+			{
+				name:    "removed tool output summarization field",
+				content: `{"model": {"provider": "openai", "name": "gpt-5.5"}, "reasoning_level": "medium", "max_turns": 512, "tool_output_summarization": {"enabled": false}}`,
 				wantErr: "parse config",
 			},
 			{
@@ -376,13 +380,6 @@ func defaultSettings() config.Settings {
 		Model:          config.Model{Provider: "openai", Name: "gpt-5.5"},
 		ReasoningLevel: "medium",
 		MaxTurns:       512,
-		ToolOutputSummarization: config.ToolOutputSummarization{
-			Enabled:          false,
-			MinBytes:         16_000,
-			MaxSummaryTokens: 1_000,
-			SummarizeErrors:  false,
-			ExcludedTools:    []string{"read_file", "edit_file", "write_file"},
-		},
 	}
 }
 

@@ -145,12 +145,10 @@ func (m WorkflowResultMessage) Text() string {
 }
 
 type ToolOutputMessage struct {
-	Timestamp               time.Time
-	ToolName                string
-	ToolCallID              string
-	ToolOutput              string
-	RawToolOutput           string
-	ToolOutputWasSummarized bool
+	Timestamp  time.Time
+	ToolName   string
+	ToolCallID string
+	ToolOutput string
 }
 
 type ToolErrorMessage struct {

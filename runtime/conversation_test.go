@@ -152,6 +152,52 @@ func TestPromptLifecycle(t *testing.T) {
 		assertLastEventType(t, gotEvents, runtime.PromptProcessingEnded{})
 	})
 
+	t.Run("passes complete tool output to the model", func(t *testing.T) {
+		result := map[string]string{"stdout": strings.Repeat("tool output\n", 2_000)}
+		modelClient := &fakeModelClient{eventBatches: [][]llm.PredictionEvent{
+			{
+				llm.BlockEnded{Block: llm.ToolCallBlock{ID: "call-1", Name: "shell", Arguments: json.RawMessage(`{}`)}},
+				llm.PredictionFinished{},
+			},
+			{
+				llm.BlockEnded{Block: llm.TextBlock{Text: "done"}},
+				llm.PredictionFinished{},
+			},
+		}}
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{
+			ModelClient: modelClient,
+			Tools:       []runtime.Tool{fakeTool{name: "shell", result: result}},
+			MaxTurns:    2,
+		})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+
+		events, errs := agt.Prompt(t.Context(), "run command")
+		_ = collectEvents(events)
+		if err := <-errs; err != nil {
+			t.Fatalf("Prompt() error = %v", err)
+		}
+		if len(modelClient.requests) != 2 {
+			t.Fatalf("PredictNext() requests = %d, want 2", len(modelClient.requests))
+		}
+		want, err := json.Marshal(result)
+		if err != nil {
+			t.Fatalf("marshal expected tool output: %v", err)
+		}
+		messages := modelClient.requests[1].Messages
+		for _, message := range messages {
+			output, ok := message.(llm.ToolOutputMessage)
+			if ok {
+				if output.ToolOutput != string(want) {
+					t.Fatalf("ToolOutput length = %d, want complete output length %d", len(output.ToolOutput), len(want))
+				}
+				return
+			}
+		}
+		t.Fatal("tool output message not found in second request")
+	})
+
 	t.Run("tool failure emits failed and ended", func(t *testing.T) {
 		toolErr := errors.New("tool failed")
 		tool := fakeTool{name: "fail", err: toolErr}
@@ -409,132 +455,6 @@ func TestPromptLifecycle(t *testing.T) {
 		}
 		if toolOutputs != 1 {
 			t.Fatalf("tool output message count = %d, want 1", toolOutputs)
-		}
-	})
-}
-
-func TestToolOutputSummarization(t *testing.T) {
-	toolCall := llm.ToolCallBlock{ID: "call-1", Name: "shell", Arguments: json.RawMessage(`{"command":"go test ./..."}`)}
-	largeResult := map[string]string{"stdout": strings.Repeat("test output\n", 20)}
-
-	t.Run("summarizes large allowed output and preserves raw output", func(t *testing.T) {
-		summarizer := &fakeToolOutputSummarizer{summary: runtime.ToolOutputSummary{Summary: "tests failed in runtime/conversation_test.go:10", Omitted: true}}
-		agt, err := runtime.NewConversation(runtime.ConversationConfig{
-			ModelClient: &fakeModelClient{eventBatches: [][]llm.PredictionEvent{
-				{llm.BlockEnded{Block: toolCall}, llm.PredictionFinished{}},
-				{llm.TextDelta{Text: "done"}, llm.BlockEnded{Block: llm.TextBlock{Text: "done"}}, llm.PredictionFinished{}},
-			}},
-			Tools:                []runtime.Tool{fakeTool{name: "shell", result: largeResult}},
-			MaxTurns:             2,
-			ToolOutputSummarizer: summarizer,
-			ToolOutputSummarizationPolicy: runtime.ToolOutputSummarizationPolicy{
-				Enabled:  true,
-				MinBytes: 1,
-			},
-		})
-		if err != nil {
-			t.Fatalf("NewConversation() error = %v", err)
-		}
-
-		events, errs := agt.Prompt(t.Context(), "run tests")
-		_ = collectEvents(events)
-		if err := <-errs; err != nil {
-			t.Fatalf("Prompt() error = %v", err)
-		}
-
-		messages := agt.Messages()
-		var output llm.ToolOutputMessage
-		for _, message := range messages {
-			if msg, ok := message.(llm.ToolOutputMessage); ok {
-				output = msg
-				break
-			}
-		}
-		if !output.ToolOutputWasSummarized {
-			t.Fatalf("ToolOutputWasSummarized = false, want true")
-		}
-		if output.RawToolOutput == "" || !strings.Contains(output.RawToolOutput, "test output") {
-			t.Fatalf("RawToolOutput = %q, want original output", output.RawToolOutput)
-		}
-		if !strings.Contains(output.ToolOutput, "tests failed") || strings.Contains(output.ToolOutput, "test output\\n") {
-			t.Fatalf("ToolOutput = %q, want summary without raw output", output.ToolOutput)
-		}
-		if summarizer.req.ToolName != "shell" || summarizer.req.ToolCallID != "call-1" {
-			t.Fatalf("summary request tool = %q/%q, want shell/call-1", summarizer.req.ToolName, summarizer.req.ToolCallID)
-		}
-		if !strings.Contains(summarizer.req.Origin, "run tests") || !strings.Contains(summarizer.req.Origin, "go test ./...") {
-			t.Fatalf("summary request origin = %q, want prompt and tool arguments", summarizer.req.Origin)
-		}
-	})
-
-	t.Run("falls back to raw output when summarizer fails", func(t *testing.T) {
-		agt, err := runtime.NewConversation(runtime.ConversationConfig{
-			ModelClient: &fakeModelClient{eventBatches: [][]llm.PredictionEvent{
-				{llm.BlockEnded{Block: toolCall}, llm.PredictionFinished{}},
-				{llm.TextDelta{Text: "done"}, llm.BlockEnded{Block: llm.TextBlock{Text: "done"}}, llm.PredictionFinished{}},
-			}},
-			Tools:                []runtime.Tool{fakeTool{name: "shell", result: largeResult}},
-			MaxTurns:             2,
-			ToolOutputSummarizer: &fakeToolOutputSummarizer{err: errors.New("summary failed")},
-			ToolOutputSummarizationPolicy: runtime.ToolOutputSummarizationPolicy{
-				Enabled:  true,
-				MinBytes: 1,
-			},
-		})
-		if err != nil {
-			t.Fatalf("NewConversation() error = %v", err)
-		}
-
-		events, errs := agt.Prompt(t.Context(), "run tests")
-		_ = collectEvents(events)
-		if err := <-errs; err != nil {
-			t.Fatalf("Prompt() error = %v", err)
-		}
-
-		for _, message := range agt.Messages() {
-			output, ok := message.(llm.ToolOutputMessage)
-			if !ok {
-				continue
-			}
-			if output.ToolOutputWasSummarized || output.RawToolOutput != "" {
-				t.Fatalf("output = %#v, want unsummarized raw output", output)
-			}
-			if !strings.Contains(output.ToolOutput, "test output") {
-				t.Fatalf("ToolOutput = %q, want raw output", output.ToolOutput)
-			}
-			return
-		}
-		t.Fatal("tool output message not found")
-	})
-
-	t.Run("does not summarize excluded tool", func(t *testing.T) {
-		summarizer := &fakeToolOutputSummarizer{summary: runtime.ToolOutputSummary{Summary: "summary"}}
-		readCall := llm.ToolCallBlock{ID: "call-1", Name: "read_file", Arguments: json.RawMessage(`{}`)}
-		agt, err := runtime.NewConversation(runtime.ConversationConfig{
-			ModelClient: &fakeModelClient{eventBatches: [][]llm.PredictionEvent{
-				{llm.BlockEnded{Block: readCall}, llm.PredictionFinished{}},
-				{llm.TextDelta{Text: "done"}, llm.BlockEnded{Block: llm.TextBlock{Text: "done"}}, llm.PredictionFinished{}},
-			}},
-			Tools:                []runtime.Tool{fakeTool{name: "read_file", result: largeResult}},
-			MaxTurns:             2,
-			ToolOutputSummarizer: summarizer,
-			ToolOutputSummarizationPolicy: runtime.ToolOutputSummarizationPolicy{
-				Enabled:       true,
-				MinBytes:      1,
-				ExcludedTools: map[string]bool{"read_file": true},
-			},
-		})
-		if err != nil {
-			t.Fatalf("NewConversation() error = %v", err)
-		}
-
-		events, errs := agt.Prompt(t.Context(), "read file")
-		_ = collectEvents(events)
-		if err := <-errs; err != nil {
-			t.Fatalf("Prompt() error = %v", err)
-		}
-		if summarizer.called {
-			t.Fatal("summarizer was called for excluded tool")
 		}
 	})
 }
@@ -981,22 +901,6 @@ func (f *fakeModelClient) PredictNext(_ context.Context, req llm.PredictNextRequ
 func (f *fakeModelClient) PredictNextStructured(context.Context, llm.PredictNextStructuredRequest) (json.RawMessage, error) {
 	f.structuredCalls++
 	return f.structuredRaw, nil
-}
-
-type fakeToolOutputSummarizer struct {
-	called  bool
-	req     runtime.ToolOutputSummaryRequest
-	summary runtime.ToolOutputSummary
-	err     error
-}
-
-func (f *fakeToolOutputSummarizer) SummarizeToolOutput(_ context.Context, req runtime.ToolOutputSummaryRequest) (runtime.ToolOutputSummary, error) {
-	f.called = true
-	f.req = req
-	if f.err != nil {
-		return runtime.ToolOutputSummary{}, f.err
-	}
-	return f.summary, nil
 }
 
 type fakeCompactor struct {

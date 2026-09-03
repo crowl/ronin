@@ -92,7 +92,7 @@ To back up sessions, copy `ronin.db` while Ronin is not running. To reset all pe
 
 ## Configuration
 
-Ronin creates `config.json` in `$XDG_CONFIG_HOME/ronin`, or in `$HOME/.config/ronin` when `XDG_CONFIG_HOME` is unset. It contains the default model, reasoning level, maximum turns, tool-output summarization settings, and optional MCP servers.
+Ronin creates `config.json` in `$XDG_CONFIG_HOME/ronin`, or in `$HOME/.config/ronin` when `XDG_CONFIG_HOME` is unset. It contains the default model, reasoning level, maximum turns, and optional MCP servers.
 
 Ronin merges an embedded provider and model catalog with optional `providers` overrides in `config.json`. Overrides are keyed by provider and model name, so a small pricing correction does not require copying the full catalog:
 

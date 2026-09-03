@@ -19,22 +19,20 @@ type eventJSON struct {
 }
 
 type messageJSON struct {
-	Type                    string      `json:"type"`
-	Timestamp               time.Time   `json:"timestamp"`
-	Text                    string      `json:"text,omitempty"`
-	Blocks                  []blockJSON `json:"blocks,omitempty"`
-	StopReason              string      `json:"stop_reason,omitempty"`
-	Usage                   llm.Usage   `json:"usage"`
-	ToolName                string      `json:"tool_name,omitempty"`
-	Name                    string      `json:"name,omitempty"`
-	ToolCallID              string      `json:"tool_call_id,omitempty"`
-	ToolOutput              string      `json:"tool_output,omitempty"`
-	RawToolOutput           string      `json:"raw_tool_output,omitempty"`
-	ToolOutputWasSummarized bool        `json:"tool_output_was_summarized,omitempty"`
-	Status                  string      `json:"status,omitempty"`
-	Summary                 string      `json:"summary,omitempty"`
-	Input                   string      `json:"input,omitempty"`
-	Error                   string      `json:"error,omitempty"`
+	Type       string      `json:"type"`
+	Timestamp  time.Time   `json:"timestamp"`
+	Text       string      `json:"text,omitempty"`
+	Blocks     []blockJSON `json:"blocks,omitempty"`
+	StopReason string      `json:"stop_reason,omitempty"`
+	Usage      llm.Usage   `json:"usage"`
+	ToolName   string      `json:"tool_name,omitempty"`
+	Name       string      `json:"name,omitempty"`
+	ToolCallID string      `json:"tool_call_id,omitempty"`
+	ToolOutput string      `json:"tool_output,omitempty"`
+	Status     string      `json:"status,omitempty"`
+	Summary    string      `json:"summary,omitempty"`
+	Input      string      `json:"input,omitempty"`
+	Error      string      `json:"error,omitempty"`
 }
 
 type blockJSON struct {
@@ -253,7 +251,7 @@ func encodeMessage(message llm.Message) (messageJSON, error) {
 	case llm.WorkflowResultMessage:
 		return messageJSON{Type: "workflow_result", Timestamp: m.Timestamp, Name: m.Name, Input: m.Input, Status: string(m.Status), Summary: m.Summary}, nil
 	case llm.ToolOutputMessage:
-		return messageJSON{Type: "tool_output", Timestamp: m.Timestamp, ToolName: m.ToolName, ToolCallID: m.ToolCallID, ToolOutput: m.ToolOutput, RawToolOutput: m.RawToolOutput, ToolOutputWasSummarized: m.ToolOutputWasSummarized}, nil
+		return messageJSON{Type: "tool_output", Timestamp: m.Timestamp, ToolName: m.ToolName, ToolCallID: m.ToolCallID, ToolOutput: m.ToolOutput}, nil
 	case llm.ToolErrorMessage:
 		return messageJSON{Type: "tool_error", Timestamp: m.Timestamp, ToolName: m.ToolName, ToolCallID: m.ToolCallID, Error: errorText(m.Error)}, nil
 	case llm.ErrorMessage:
@@ -285,7 +283,7 @@ func decodeMessage(encoded messageJSON) (llm.Message, error) {
 	case "workflow_result":
 		return llm.WorkflowResultMessage{Timestamp: encoded.Timestamp, Name: encoded.Name, Input: encoded.Input, Status: llm.WorkflowStatus(encoded.Status), Summary: encoded.Summary}, nil
 	case "tool_output":
-		return llm.ToolOutputMessage{Timestamp: encoded.Timestamp, ToolName: encoded.ToolName, ToolCallID: encoded.ToolCallID, ToolOutput: encoded.ToolOutput, RawToolOutput: encoded.RawToolOutput, ToolOutputWasSummarized: encoded.ToolOutputWasSummarized}, nil
+		return llm.ToolOutputMessage{Timestamp: encoded.Timestamp, ToolName: encoded.ToolName, ToolCallID: encoded.ToolCallID, ToolOutput: encoded.ToolOutput}, nil
 	case "tool_error":
 		return llm.ToolErrorMessage{Timestamp: encoded.Timestamp, ToolName: encoded.ToolName, ToolCallID: encoded.ToolCallID, Error: errors.New(encoded.Error)}, nil
 	case "error":

@@ -34,19 +34,17 @@ type ToolCallTitleProvider interface {
 }
 
 type ConversationConfig struct {
-	CWD                           string
-	ModelClient                   llm.ModelClient
-	Compactor                     Compactor
-	ToolOutputSummarizer          ToolOutputSummarizer
-	ToolOutputSummarizationPolicy ToolOutputSummarizationPolicy
-	Tools                         []Tool
-	SystemPrompt                  string
-	MaxTurns                      int
-	Now                           func() time.Time
-	SessionStore                  session.Store
-	Session                       session.Session
-	Messages                      []llm.Message
-	SessionCost                   llm.SessionCost
+	CWD          string
+	ModelClient  llm.ModelClient
+	Compactor    Compactor
+	Tools        []Tool
+	SystemPrompt string
+	MaxTurns     int
+	Now          func() time.Time
+	SessionStore session.Store
+	Session      session.Session
+	Messages     []llm.Message
+	SessionCost  llm.SessionCost
 }
 
 const (
@@ -91,21 +89,19 @@ func NewConversation(cfg ConversationConfig) (*Conversation, error) {
 	}
 
 	return &Conversation{
-		cwd:                           cfg.CWD,
-		systemPrompt:                  cfg.SystemPrompt,
-		maxTurns:                      maxTurns,
-		now:                           now,
-		modelClient:                   cfg.ModelClient,
-		contextUsage:                  contextUsage,
-		sessionCost:                   cfg.SessionCost,
-		toolDefs:                      toolDefs,
-		toolByName:                    toolByName,
-		compactor:                     cfg.Compactor,
-		toolOutputSummarizer:          cfg.ToolOutputSummarizer,
-		toolOutputSummarizationPolicy: cfg.ToolOutputSummarizationPolicy.normalized(),
-		sessionStore:                  cfg.SessionStore,
-		session:                       cfg.Session,
-		messages:                      messages,
+		cwd:          cfg.CWD,
+		systemPrompt: cfg.SystemPrompt,
+		maxTurns:     maxTurns,
+		now:          now,
+		modelClient:  cfg.ModelClient,
+		contextUsage: contextUsage,
+		sessionCost:  cfg.SessionCost,
+		toolDefs:     toolDefs,
+		toolByName:   toolByName,
+		compactor:    cfg.Compactor,
+		sessionStore: cfg.SessionStore,
+		session:      cfg.Session,
+		messages:     messages,
 	}, nil
 }
 
@@ -123,9 +119,6 @@ type Conversation struct {
 	toolByName map[string]Tool
 
 	compactor Compactor
-
-	toolOutputSummarizer          ToolOutputSummarizer
-	toolOutputSummarizationPolicy ToolOutputSummarizationPolicy
 
 	sessionStore session.Store
 	session      session.Session
@@ -800,68 +793,6 @@ func (c *Conversation) callIncrementalTool(ctx context.Context, events chan<- Ev
 	return incrementalTool.CallIncremental(ctx, toolCall.Arguments, emit)
 }
 
-func (c *Conversation) modelVisibleToolOutput(ctx context.Context, toolCall llm.ToolCallBlock, rawOutput string, wasError bool, toolError string) (string, string, bool) {
-	policy := c.toolOutputSummarizationPolicy.normalized()
-	if !policy.Enabled || c.toolOutputSummarizer == nil || (wasError && !policy.SummarizeErrors) || policy.ExcludedTools[toolCall.Name] || len(rawOutput) < policy.MinBytes || (policy.MinEstimatedTokens > 0 && estimateTokens(rawOutput) < policy.MinEstimatedTokens) {
-		return rawOutput, "", false
-	}
-	summary, err := c.toolOutputSummarizer.SummarizeToolOutput(ctx, ToolOutputSummaryRequest{
-		ToolName: toolCall.Name, ToolCallID: toolCall.ID, ToolArguments: string(toolCall.Arguments), ToolOutput: rawOutput,
-		ToolError: toolError, Origin: c.toolOutputOrigin(toolCall), WasError: wasError,
-	})
-	if err != nil || strings.TrimSpace(summary.Summary) == "" {
-		return rawOutput, "", false
-	}
-	wrapped, err := json.Marshal(map[string]any{"summarized": true, "raw_output_retained": true, "summary": summary.Summary, "omitted": summary.Omitted})
-	if err != nil {
-		return rawOutput, "", false
-	}
-	return string(wrapped), rawOutput, true
-}
-
-func (c *Conversation) toolOutputOrigin(toolCall llm.ToolCallBlock) string {
-	var latestUser string
-	for _, v := range slices.Backward(c.messages) {
-		if msg, ok := v.(llm.UserMessage); ok {
-			latestUser = msg.Text
-			break
-		}
-	}
-	var assistantText strings.Builder
-	for _, v := range slices.Backward(c.messages) {
-		msg, ok := v.(llm.AssistantMessage)
-		if !ok {
-			continue
-		}
-		for _, block := range msg.Blocks {
-			if text, ok := block.(llm.TextBlock); ok {
-				assistantText.WriteString(text.Text)
-			}
-		}
-		break
-	}
-	var b strings.Builder
-	if strings.TrimSpace(latestUser) != "" {
-		b.WriteString("Latest user message:\n")
-		b.WriteString(latestUser)
-		b.WriteString("\n\n")
-	}
-	if strings.TrimSpace(assistantText.String()) != "" {
-		b.WriteString("Assistant text before tool call:\n")
-		b.WriteString(assistantText.String())
-		b.WriteString("\n\n")
-	}
-	b.WriteString("Tool call requested: ")
-	b.WriteString(toolCall.Name)
-	if len(toolCall.Arguments) > 0 {
-		b.WriteString(" with arguments ")
-		b.WriteString(string(toolCall.Arguments))
-	}
-	return strings.TrimSpace(b.String())
-}
-
-func estimateTokens(text string) int { return (len(text) + 3) / 4 }
-
 func (c *Conversation) finishToolCall(ctx context.Context, events chan<- Event, executedTool Tool, toolCall llm.ToolCallBlock, toolResult any, execErr error) error {
 	if execErr != nil {
 		message := llm.ToolErrorMessage{Timestamp: c.now(), ToolCallID: toolCall.ID, ToolName: toolCall.Name, Error: execErr}
@@ -899,8 +830,7 @@ func (c *Conversation) finishToolCall(ctx context.Context, events chan<- Event, 
 			return nil
 		}
 	}
-	modelOutput, rawOutput, summarized := c.modelVisibleToolOutput(ctx, toolCall, string(data), false, "")
-	message := llm.ToolOutputMessage{Timestamp: c.now(), ToolCallID: toolCall.ID, ToolName: toolCall.Name, ToolOutput: modelOutput, RawToolOutput: rawOutput, ToolOutputWasSummarized: summarized}
+	message := llm.ToolOutputMessage{Timestamp: c.now(), ToolCallID: toolCall.ID, ToolName: toolCall.Name, ToolOutput: string(data)}
 	if err := c.appendMessage(ctx, message); err != nil {
 		return c.reportSaveFailure(ctx, events, nil, err)
 	}
