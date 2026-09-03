@@ -108,6 +108,38 @@ func TestDefaultCompactor(t *testing.T) {
 		}
 	})
 
+	t.Run("keeps_tool_call_with_recent_tool_error", func(t *testing.T) {
+		modelClient := &fakeStructuredModelClient{raw: validCompactionSummary("goal")}
+		compactor, err := NewDefaultCompactor(DefaultCompactorConfig{ModelClient: modelClient})
+		if err != nil {
+			t.Fatalf("NewDefaultCompactor() error = %v", err)
+		}
+
+		call := llm.AssistantMessage{Blocks: []llm.AssistantBlock{llm.ToolCallBlock{ID: "call-1", Name: "shell", Arguments: json.RawMessage(`{}`)}}}
+		result := llm.ToolErrorMessage{ToolCallID: "call-1", ToolName: "shell", Error: errors.New("failed")}
+		messages := []llm.Message{llm.UserMessage{Text: "message 1"}, call}
+		messages = append(messages, makeCompactionMessages(11)...)
+		messages = append(messages, result)
+
+		got, err := compactor.Compact(context.Background(), messages)
+		if err != nil {
+			t.Fatalf("Compact() error = %v", err)
+		}
+		gotCall, ok := got[1].(llm.AssistantMessage)
+		if !ok || len(gotCall.Blocks) != 1 {
+			t.Fatalf("first recent message = %#v, want assistant tool call", got[1])
+		}
+		if got[len(got)-1] != result {
+			t.Fatalf("last recent message = %#v, want tool error", got[len(got)-1])
+		}
+	})
+
+	t.Run("rejects nil model client", func(t *testing.T) {
+		if _, err := NewDefaultCompactor(DefaultCompactorConfig{}); err == nil || !strings.Contains(err.Error(), "model client") {
+			t.Fatalf("NewDefaultCompactor() error = %v, want model client error", err)
+		}
+	})
+
 	t.Run("rejects structured output that does not match the schema", func(t *testing.T) {
 		modelClient := &fakeStructuredModelClient{raw: json.RawMessage(`{"current_goal":"goal"}`)}
 		compactor, err := NewDefaultCompactor(DefaultCompactorConfig{ModelClient: modelClient})

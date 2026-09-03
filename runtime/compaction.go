@@ -36,6 +36,9 @@ type DefaultCompactorConfig struct {
 }
 
 func NewDefaultCompactor(cfg DefaultCompactorConfig) (*DefaultCompactor, error) {
+	if cfg.ModelClient == nil {
+		return nil, fmt.Errorf("model client is required")
+	}
 	return &DefaultCompactor{
 		sessionID:   cfg.SessionID,
 		modelClient: cfg.ModelClient,
@@ -151,12 +154,17 @@ func safeCompactionStart(messages []llm.Message, keepRecent int) int {
 			for _, callID := range messageToolCallIDs(messages[i]) {
 				seenCalls[callID] = true
 			}
-			toolResultMsg, ok := messages[i].(llm.ToolOutputMessage)
-			if !ok {
+			resultID := ""
+			switch toolResultMsg := messages[i].(type) {
+			case llm.ToolOutputMessage:
+				resultID = toolResultMsg.ToolCallID
+			case llm.ToolErrorMessage:
+				resultID = toolResultMsg.ToolCallID
+			default:
 				continue
 			}
-			if toolResultMsg.ToolCallID != "" && !seenCalls[toolResultMsg.ToolCallID] {
-				missingCallID = toolResultMsg.ToolCallID
+			if resultID != "" && !seenCalls[resultID] {
+				missingCallID = resultID
 				missingIndex = i
 				break
 			}
