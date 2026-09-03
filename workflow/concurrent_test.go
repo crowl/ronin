@@ -70,6 +70,24 @@ ronin.log(result.output.tasks[1].id)
 			t.Fatalf("stdout = %q, want runtime", stdout)
 		}
 	})
+
+	t.Run("structured output must satisfy its schema", func(t *testing.T) {
+		t.Parallel()
+		_, err := runScriptWithAgent(t, `
+ronin.run_agent({
+  prompt = "plan",
+  output_schema = '{"type":"object","required":["commit_message"],"properties":{"commit_message":{"type":"string","pattern":"^fix: "}}}'
+})
+`, func(_ context.Context, req AgentRequest) (AgentResult, error) {
+			if req.OutputSchema == nil {
+				t.Fatal("OutputSchema = nil")
+			}
+			return AgentResult{Text: "plan", Output: []byte(`{"commit_message":"string"}`)}, nil
+		})
+		if err == nil || !strings.Contains(err.Error(), "structured agent output validation failed") || !strings.Contains(err.Error(), "commit_message") {
+			t.Fatalf("RunFileWithAgent() error = %v, want schema validation error", err)
+		}
+	})
 }
 
 func TestManagedWorktrees(t *testing.T) {

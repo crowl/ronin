@@ -173,6 +173,11 @@ func (rt *agentRuntime) prepareRequest(req *AgentRequest) error {
 	if rt == nil || rt.agent == nil {
 		return fmt.Errorf("ronin.run_agent is not configured")
 	}
+	if req.OutputSchema != nil {
+		if err := jsonschema.ValidateDefinition(req.OutputSchema); err != nil {
+			return fmt.Errorf("output schema is invalid: %w", err)
+		}
+	}
 	if req.Workspace == "" {
 		return nil
 	}
@@ -207,6 +212,13 @@ func (rt *agentRuntime) runAgent(invocation int, req AgentRequest) (AgentResult,
 		rt.emitEvent(AgentEventReceived{Invocation: invocation, Event: event})
 	}
 	result, err := rt.agent(rt.ctx, req)
+	if err == nil && req.OutputSchema != nil {
+		if len(result.Output) == 0 {
+			err = fmt.Errorf("structured agent returned no output")
+		} else if validationErr := jsonschema.Validate(req.OutputSchema, result.Output); validationErr != nil {
+			err = fmt.Errorf("structured agent output validation failed: %w", validationErr)
+		}
+	}
 	if req.ReadOnly {
 		after, stateErr := rt.worktrees.fingerprint(req.Workspace)
 		switch {
