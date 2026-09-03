@@ -1,8 +1,12 @@
 package shell
 
-import "bytes"
+import (
+	"bytes"
+	"sync"
+)
 
 type limitedBuffer struct {
+	mu        sync.Mutex
 	buf       bytes.Buffer
 	limit     int64
 	written   int64
@@ -10,6 +14,9 @@ type limitedBuffer struct {
 }
 
 func (b *limitedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
 	n := len(p)
 
 	if b.limit <= 0 {
@@ -36,7 +43,15 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 }
 
 func (b *limitedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	return b.buf.String()
+}
+
+func (b *limitedBuffer) Truncated() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.truncated
 }
 
 func outputLimit(requested, fallback int64) int64 {

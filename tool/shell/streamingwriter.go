@@ -1,11 +1,16 @@
 package shell
 
-import "github.com/crowl/ronin/tool"
+import (
+	"sync/atomic"
+
+	"github.com/crowl/ronin/tool"
+)
 
 type streamingWriter struct {
-	stream tool.ShellStream
-	buffer *limitedBuffer
-	emit   func(tool.Artifact) error
+	stream   tool.ShellStream
+	buffer   *limitedBuffer
+	emit     func(tool.Artifact) error
+	disabled atomic.Bool
 }
 
 func newStreamingWriter(stream tool.ShellStream, buffer *limitedBuffer, emit func(tool.Artifact) error) *streamingWriter {
@@ -18,11 +23,15 @@ func (w *streamingWriter) Write(p []byte) (int, error) {
 			return 0, err
 		}
 	}
-	if w.emit != nil && len(p) > 0 {
+	if w.emit != nil && !w.disabled.Load() && len(p) > 0 {
 		artifact := tool.ShellStreamArtifact{Stream: w.stream, Content: string(p)}
 		if err := w.emit(artifact); err != nil {
 			return 0, err
 		}
 	}
 	return len(p), nil
+}
+
+func (w *streamingWriter) stopStreaming() {
+	w.disabled.Store(true)
 }

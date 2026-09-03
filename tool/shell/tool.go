@@ -170,8 +170,10 @@ func (t *Tool) callIncremental(ctx context.Context, args Args, emit func(tool.Ar
 	stdout.limit = outputLimit(args.MaxOutputBytes, defaultMaxOutputBytes)
 	stderr.limit = outputLimit(args.MaxOutputBytes, defaultMaxOutputBytes)
 
-	cmd.Stdout = newStreamingWriter(tool.ShellStreamStdout, &stdout, emit)
-	cmd.Stderr = newStreamingWriter(tool.ShellStreamStderr, &stderr, emit)
+	stdoutWriter := newStreamingWriter(tool.ShellStreamStdout, &stdout, emit)
+	stderrWriter := newStreamingWriter(tool.ShellStreamStderr, &stderr, emit)
+	cmd.Stdout = stdoutWriter
+	cmd.Stderr = stderrWriter
 
 	start := time.Now()
 
@@ -196,6 +198,8 @@ func (t *Tool) callIncremental(ctx context.Context, args Args, emit func(tool.Ar
 		case waitErr = <-done:
 		case <-time.After(cleanupTimeout):
 			cleanupTimedOut = true
+			stdoutWriter.stopStreaming()
+			stderrWriter.stopStreaming()
 		}
 		if errors.Is(cmdCtx.Err(), context.DeadlineExceeded) {
 			timedOut = true
@@ -228,8 +232,8 @@ func (t *Tool) callIncremental(ctx context.Context, args Args, emit func(tool.Ar
 		Success:         success,
 		Stdout:          stdout.String(),
 		Stderr:          stderr.String(),
-		StdoutTruncated: stdout.truncated,
-		StderrTruncated: stderr.truncated,
+		StdoutTruncated: stdout.Truncated(),
+		StderrTruncated: stderr.Truncated(),
 		DurationMS:      duration.Milliseconds(),
 		TimedOut:        timedOut,
 		CleanupTimedOut: cleanupTimedOut,
