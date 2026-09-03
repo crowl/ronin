@@ -136,8 +136,14 @@ func validateSchemaDefinition(schema map[string]any, path string) error {
 		}
 	}
 	if value, ok := schema["additionalProperties"]; ok {
-		if _, ok := value.(bool); !ok {
-			return fmt.Errorf("%s.additionalProperties must be a boolean", path)
+		switch additional := value.(type) {
+		case bool:
+		case map[string]any:
+			if err := validateSchemaDefinition(additional, path+".additionalProperties"); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("%s.additionalProperties must be a boolean or schema object", path)
 		}
 	}
 	if value, ok := schema["properties"]; ok {
@@ -248,6 +254,17 @@ func validateObject(schema map[string]any, value map[string]any, path string) ([
 			if _, exists := properties[name]; !exists {
 				violations = append(violations, childPath(path, name)+": additional property is not allowed")
 			}
+		}
+	} else if additional, ok := schema["additionalProperties"].(map[string]any); ok {
+		for name, item := range value {
+			if _, exists := properties[name]; exists {
+				continue
+			}
+			found, err := validateValue(additional, item, childPath(path, name))
+			if err != nil {
+				return nil, err
+			}
+			violations = append(violations, found...)
 		}
 	}
 	return violations, nil

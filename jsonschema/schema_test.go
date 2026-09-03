@@ -32,6 +32,15 @@ func TestFromRawRejectsInvalidSchema(t *testing.T) {
 }
 
 func TestValidateDefinition(t *testing.T) {
+	t.Run("accepts schema-valued additional properties", func(t *testing.T) {
+		type args struct {
+			Env map[string]string `json:"env"`
+		}
+		if err := jsonschema.ValidateDefinition(jsonschema.FromType[args]()); err != nil {
+			t.Fatalf("ValidateDefinition() error = %v", err)
+		}
+	})
+
 	t.Run("rejects unsupported keywords", func(t *testing.T) {
 		schema, err := jsonschema.FromRaw([]byte(`{"type":"object","properties":{"value":{"anyOf":[{"type":"string"},{"type":"number"}]}}}`))
 		if err != nil {
@@ -46,7 +55,7 @@ func TestValidateDefinition(t *testing.T) {
 		for name, input := range map[string]string{
 			"type":                  `{"type":"date"}`,
 			"required":              `{"type":"object","required":[1]}`,
-			"additional properties": `{"type":"object","additionalProperties":{"type":"string"}}`,
+			"additional properties": `{"type":"object","additionalProperties":"yes"}`,
 			"unique items":          `{"type":"array","uniqueItems":"yes"}`,
 		} {
 			t.Run(name, func(t *testing.T) {
@@ -63,6 +72,20 @@ func TestValidateDefinition(t *testing.T) {
 }
 
 func TestValidate(t *testing.T) {
+	t.Run("validates schema-valued additional properties", func(t *testing.T) {
+		type args struct {
+			Env map[string]string `json:"env"`
+		}
+		schema := jsonschema.FromType[args]()
+		if err := jsonschema.Validate(schema, []byte(`{"env":{"OK":"value"}}`)); err != nil {
+			t.Fatalf("Validate() error = %v", err)
+		}
+		err := jsonschema.Validate(schema, []byte(`{"env":{"BAD":42}}`))
+		if err == nil || !strings.Contains(err.Error(), "$.env.BAD: must be string") {
+			t.Fatalf("Validate() error = %v, want map value type error", err)
+		}
+	})
+
 	schema, err := jsonschema.FromRaw([]byte(`{
 		"type":"object",
 		"additionalProperties":false,
