@@ -39,9 +39,6 @@ func NewLLM(cfg LLMConfig) (*LLM, error) {
 	if !llm.IsValidReasoningLevel(cfg.ReasoningLevel) {
 		return nil, fmt.Errorf("reasoning level %v is not valid", cfg.ReasoningLevel)
 	}
-	if !llm.IsValidReasoningLevel(cfg.ReasoningLevel) {
-		return nil, fmt.Errorf("reasoning level %v is not valid", cfg.ReasoningLevel)
-	}
 	if cfg.Model.ReasoningMode == llm.ReasoningModeBudget && !cfg.Model.SupportsReasoning(llm.ReasoningLevelOff) && cfg.ReasoningLevel == llm.ReasoningLevelOff {
 		return nil, fmt.Errorf("reasoning cannot be disabled for Anthropic model %q", cfg.Model.Name)
 	}
