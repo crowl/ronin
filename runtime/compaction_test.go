@@ -181,6 +181,23 @@ func TestDefaultCompactor(t *testing.T) {
 	})
 }
 
+func TestCompactionFactSheetIsBoundedAndKeepsRecentFacts(t *testing.T) {
+	messages := make([]llm.Message, 0, 400)
+	for i := range 400 {
+		messages = append(messages, llm.UserMessage{Text: strconv.Itoa(i) + " " + strings.Repeat("x", 500)})
+	}
+	factSheet := buildCompactionFactSheet(messages, "")
+	if len(factSheet) > maxCompactionFactSheetBytes {
+		t.Fatalf("fact sheet length = %d, limit = %d", len(factSheet), maxCompactionFactSheetBytes)
+	}
+	if !strings.Contains(factSheet, "001 user: 0 ") || !strings.Contains(factSheet, "400 user: 399 ") {
+		t.Fatalf("fact sheet does not retain early and recent facts")
+	}
+	if !strings.Contains(factSheet, "omitted to keep compaction input bounded") {
+		t.Fatalf("fact sheet missing omission marker")
+	}
+}
+
 func validCompactionSummary(goal string) json.RawMessage {
 	return json.RawMessage(`{"current_goal":` + strconv.Quote(goal) + `,"user_preferences":[],"decisions":[],"files_and_code_state":[],"tests_and_tool_results":[],"open_tasks":[],"recovery":[]}`)
 }

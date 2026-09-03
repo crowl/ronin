@@ -27,7 +27,10 @@ var (
 	compactedContextTemplate        = template.Must(template.New("compacted_context").Parse(compactedContextTemplateText))
 )
 
-const defaultCompactKeepMessages = 12
+const (
+	defaultCompactKeepMessages  = 12
+	maxCompactionFactSheetBytes = 128 << 10
+)
 
 type DefaultCompactorConfig struct {
 	SessionID   string
@@ -215,34 +218,108 @@ func buildCompactionFactSheet(messages []llm.Message, sessionPath string) string
 	}
 	_, _ = fmt.Fprintln(&b)
 	_, _ = fmt.Fprintln(&b, "Deterministic facts:")
+	lines := make([]string, len(messages))
 	for i, msg := range messages {
-		switch typedMsg := msg.(type) {
-		case llm.UserMessage:
-			prefix := fmt.Sprintf("- %03d %s", i+1, "user")
-			_, _ = fmt.Fprintf(&b, "%s: %s\n", prefix, compactOneLine(typedMsg.Text, 500))
-		case llm.AssistantMessage:
-			prefix := fmt.Sprintf("- %03d %s", i+1, "assistant")
-			text := compactOneLine(typedMsg.Text(), 500)
-			if text != "" {
-				_, _ = fmt.Fprintf(&b, "%s: %s\n", prefix, text)
-			}
-			for _, block := range typedMsg.Blocks {
-				if call, ok := block.(llm.ToolCallBlock); ok {
-					_, _ = fmt.Fprintf(&b, "  tool_call %s args=%s\n", call.Name, compactOneLine(fmt.Sprintf("%v", call.Arguments), 400))
-				}
-			}
-		case llm.WorkflowResultMessage:
-			prefix := fmt.Sprintf("- %03d workflow %s %s", i+1, typedMsg.Name, typedMsg.Status)
-			_, _ = fmt.Fprintf(&b, "%s input=%s summary=%s\n", prefix, compactOneLine(typedMsg.Input, 500), compactOneLine(typedMsg.Summary, 700))
-		case llm.ToolOutputMessage:
-			prefix := fmt.Sprintf("- %03d %s", i+1, "tool_result")
-			_, _ = fmt.Fprintf(&b, "%s %s: %s\n", prefix, typedMsg.ToolName, compactOneLine(typedMsg.ToolOutput, 700))
-		case llm.ToolErrorMessage:
-			prefix := fmt.Sprintf("- %03d %s", i+1, "tool_error")
-			_, _ = fmt.Fprintf(&b, "%s %s: %s\n", prefix, typedMsg.ToolName, compactOneLine(typedMsg.Error.Error(), 700))
+		lines[i] = compactionFactLine(i, msg)
+	}
+	const omissionReserve = 128
+	available := maxCompactionFactSheetBytes - b.Len() - omissionReserve
+	selected := make([]bool, len(lines))
+	used := 0
+	for i, line := range lines {
+		if line == "" {
+			continue
+		}
+		if used+len(line) > available/4 {
+			break
+		}
+		selected[i] = true
+		used += len(line)
+	}
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := lines[i]
+		if line == "" || selected[i] || !importantCompactionFact(messages[i]) {
+			continue
+		}
+		if used+len(line) > available {
+			continue
+		}
+		selected[i] = true
+		used += len(line)
+	}
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := lines[i]
+		if line == "" || selected[i] {
+			continue
+		}
+		if used+len(line) > available {
+			continue
+		}
+		selected[i] = true
+		used += len(line)
+	}
+	omitted := 0
+	for i, line := range lines {
+		if line == "" {
+			continue
+		}
+		if selected[i] {
+			b.WriteString(line)
+		} else {
+			omitted++
 		}
 	}
+	if omitted > 0 {
+		_, _ = fmt.Fprintf(&b, "- ... %d message(s) omitted to keep compaction input bounded.\n", omitted)
+	}
 
+	return b.String()
+}
+
+func importantCompactionFact(msg llm.Message) bool {
+	switch typed := msg.(type) {
+	case llm.UserMessage, llm.WorkflowResultMessage, llm.ToolOutputMessage, llm.ToolErrorMessage, llm.ErrorMessage:
+		return true
+	case llm.AssistantMessage:
+		return len(messageToolCallIDs(typed)) > 0
+	default:
+		return false
+	}
+}
+
+func compactionFactLine(index int, msg llm.Message) string {
+	var b strings.Builder
+	switch typedMsg := msg.(type) {
+	case llm.UserMessage:
+		_, _ = fmt.Fprintf(&b, "- %03d user: %s\n", index+1, compactOneLine(typedMsg.Text, 500))
+	case llm.AssistantMessage:
+		prefix := fmt.Sprintf("- %03d assistant", index+1)
+		text := compactOneLine(typedMsg.Text(), 500)
+		if text != "" {
+			_, _ = fmt.Fprintf(&b, "%s: %s\n", prefix, text)
+		}
+		for _, block := range typedMsg.Blocks {
+			if call, ok := block.(llm.ToolCallBlock); ok {
+				_, _ = fmt.Fprintf(&b, "  tool_call %s args=%s\n", call.Name, compactOneLine(string(call.Arguments), 400))
+			}
+		}
+	case llm.WorkflowResultMessage:
+		_, _ = fmt.Fprintf(&b, "- %03d workflow %s %s input=%s summary=%s\n", index+1, typedMsg.Name, typedMsg.Status, compactOneLine(typedMsg.Input, 500), compactOneLine(typedMsg.Summary, 700))
+	case llm.ToolOutputMessage:
+		_, _ = fmt.Fprintf(&b, "- %03d tool_result %s: %s\n", index+1, typedMsg.ToolName, compactOneLine(typedMsg.ToolOutput, 700))
+	case llm.ToolErrorMessage:
+		text := ""
+		if typedMsg.Error != nil {
+			text = typedMsg.Error.Error()
+		}
+		_, _ = fmt.Fprintf(&b, "- %03d tool_error %s: %s\n", index+1, typedMsg.ToolName, compactOneLine(text, 700))
+	case llm.ErrorMessage:
+		text := ""
+		if typedMsg.Error != nil {
+			text = typedMsg.Error.Error()
+		}
+		_, _ = fmt.Fprintf(&b, "- %03d error: %s\n", index+1, compactOneLine(text, 700))
+	}
 	return b.String()
 }
 
