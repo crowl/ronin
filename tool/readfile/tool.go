@@ -119,9 +119,14 @@ func New(cwd string, cache *fsutil.ReadCache) *Tool {
 	return &Tool{cwd: cwd, cache: cache}
 }
 
+func NewRestricted(cwd string, cache *fsutil.ReadCache) *Tool {
+	return &Tool{cwd: cwd, cache: cache, restrictToCWD: true}
+}
+
 type Tool struct {
-	cwd   string
-	cache *fsutil.ReadCache
+	cwd           string
+	cache         *fsutil.ReadCache
+	restrictToCWD bool
 }
 
 func (t *Tool) Name() string {
@@ -165,7 +170,13 @@ func (t *Tool) call(ctx context.Context, args Args) (Result, error) {
 	default:
 	}
 
-	path, err := fsutil.ResolvePath(t.cwd, args.Path)
+	var path fsutil.ResolvedPath
+	var err error
+	if t.restrictToCWD {
+		path, err = fsutil.ResolvePathWithinCWD(t.cwd, args.Path)
+	} else {
+		path, err = fsutil.ResolvePath(t.cwd, args.Path)
+	}
 	if err != nil {
 		return Result{}, err
 	}

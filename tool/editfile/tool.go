@@ -80,9 +80,14 @@ func (r Result) Artifacts() []tool.Artifact {
 	}
 }
 
+func NewRestricted(cwd string, queue *fsutil.MutationQueue) *Tool {
+	return &Tool{cwd: cwd, queue: queue, restrictToCWD: true}
+}
+
 type Tool struct {
-	cwd   string
-	queue *fsutil.MutationQueue
+	cwd           string
+	queue         *fsutil.MutationQueue
+	restrictToCWD bool
 }
 
 func New(cwd string, queue *fsutil.MutationQueue) *Tool {
@@ -120,7 +125,13 @@ func (t *Tool) call(ctx context.Context, args Args) (Result, error) {
 	default:
 	}
 
-	path, err := fsutil.ResolvePath(t.cwd, args.Path)
+	var path fsutil.ResolvedPath
+	var err error
+	if t.restrictToCWD {
+		path, err = fsutil.ResolvePathWithinCWD(t.cwd, args.Path)
+	} else {
+		path, err = fsutil.ResolvePath(t.cwd, args.Path)
+	}
 	if err != nil {
 		return Result{}, err
 	}

@@ -61,6 +61,32 @@ func TestResolvePath(t *testing.T) {
 			t.Fatalf("Abs = %q, want %q", resolved.Abs, wantAbs)
 		}
 	})
+	t.Run("restricted resolution rejects parent escape", func(t *testing.T) {
+		dir := t.TempDir()
+		if _, err := fsutil.ResolvePathWithinCWD(dir, filepath.Join("..", "outside.txt")); err == nil {
+			t.Fatal("ResolvePathWithinCWD() error = nil")
+		}
+		if _, err := fsutil.ResolvePathForWriteWithinCWD(dir, filepath.Join("..", "outside.txt")); err == nil {
+			t.Fatal("ResolvePathForWriteWithinCWD() error = nil")
+		}
+	})
+
+	t.Run("restricted resolution rejects symlink escape", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("symlink creation may require privileges on Windows")
+		}
+		dir := t.TempDir()
+		outside := t.TempDir()
+		if err := os.Symlink(outside, filepath.Join(dir, "outside")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fsutil.ResolvePathWithinCWD(dir, filepath.Join("outside", "file.txt")); err == nil {
+			t.Fatal("ResolvePathWithinCWD() error = nil")
+		}
+		if _, err := fsutil.ResolvePathForWriteWithinCWD(dir, filepath.Join("outside", "file.txt")); err == nil {
+			t.Fatal("ResolvePathForWriteWithinCWD() error = nil")
+		}
+	})
 }
 
 func TestDisplayPath(t *testing.T) {

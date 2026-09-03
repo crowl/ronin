@@ -16,14 +16,22 @@ type ResolvedPath struct {
 }
 
 func ResolvePath(cwd string, path string) (ResolvedPath, error) {
-	return resolvePath(cwd, path, true)
+	return resolvePath(cwd, path, true, false)
+}
+
+func ResolvePathWithinCWD(cwd string, path string) (ResolvedPath, error) {
+	return resolvePath(cwd, path, true, true)
 }
 
 func ResolvePathForWrite(cwd string, path string) (ResolvedPath, error) {
-	return resolvePath(cwd, path, false)
+	return resolvePath(cwd, path, false, false)
 }
 
-func resolvePath(cwd string, path string, followLeaf bool) (ResolvedPath, error) {
+func ResolvePathForWriteWithinCWD(cwd string, path string) (ResolvedPath, error) {
+	return resolvePath(cwd, path, false, true)
+}
+
+func resolvePath(cwd string, path string, followLeaf, requireWithinCWD bool) (ResolvedPath, error) {
 	if cwd == "" {
 		cwd = "."
 	}
@@ -55,11 +63,19 @@ func resolvePath(cwd string, path string, followLeaf bool) (ResolvedPath, error)
 	if err != nil {
 		return ResolvedPath{}, err
 	}
+	if requireWithinCWD && !pathWithin(absCWD, resolvedAbs) {
+		return ResolvedPath{}, errors.New("path resolves outside the working directory")
+	}
 
 	return ResolvedPath{
 		Display: DisplayPath(absCWD, resolvedAbs),
 		Abs:     resolvedAbs,
 	}, nil
+}
+
+func pathWithin(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
 }
 
 func ResolveExistingOrParent(abs string) (string, error) {
