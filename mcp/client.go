@@ -440,6 +440,9 @@ func (s *session) initialize(ctx context.Context) (string, error) {
 	if result.ProtocolVersion == "" {
 		return "", errors.New("initialize: server returned no protocol version")
 	}
+	if result.ProtocolVersion != protocolVersion {
+		return "", fmt.Errorf("initialize: server negotiated unsupported protocol version %q; want %q", result.ProtocolVersion, protocolVersion)
+	}
 	if err := s.notify(ctx, "notifications/initialized", map[string]any{}); err != nil {
 		return "", fmt.Errorf("send initialized notification: %w", err)
 	}
@@ -742,6 +745,9 @@ type Result struct {
 }
 
 func newResult(result callToolResult) (Result, error) {
+	if result.IsError {
+		return Result{}, tool.Error{Code: "mcp_tool_error", Message: mcpToolErrorMessage(result)}
+	}
 	converted := Result{
 		Content:           append([]json.RawMessage(nil), result.Content...),
 		StructuredContent: result.StructuredContent,
@@ -760,6 +766,28 @@ func newResult(result callToolResult) (Result, error) {
 		}
 	}
 	return converted, nil
+}
+
+func mcpToolErrorMessage(result callToolResult) string {
+	var messages []string
+	for _, content := range result.Content {
+		var textContent struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+		if json.Unmarshal(content, &textContent) == nil && textContent.Type == "text" && strings.TrimSpace(textContent.Text) != "" {
+			messages = append(messages, strings.TrimSpace(textContent.Text))
+		}
+	}
+	if len(messages) != 0 {
+		return strings.Join(messages, "\n")
+	}
+	if result.StructuredContent != nil {
+		if data, err := json.Marshal(result.StructuredContent); err == nil {
+			return string(data)
+		}
+	}
+	return "MCP tool reported an error"
 }
 
 func (r Result) Artifacts() []tool.Artifact {

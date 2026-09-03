@@ -20,6 +20,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/crowl/ronin/tool"
 )
 
 func TestConnectStdioServer(t *testing.T) {
@@ -600,6 +602,53 @@ func (s *testSSEServer) roots() []string {
 	return append([]string(nil), s.seenRoots...)
 }
 
+func TestMCPErrorResult(t *testing.T) {
+	_, err := newResult(callToolResult{
+		IsError: true,
+		Content: []json.RawMessage{json.RawMessage(`{"type":"text","text":"permission denied"}`)},
+	})
+	if err == nil {
+		t.Fatal("newResult() error = nil")
+	}
+	var toolErr tool.Error
+	if !errors.As(err, &toolErr) {
+		t.Fatalf("newResult() error = %T, want tool.Error", err)
+	}
+	if toolErr.Code != "mcp_tool_error" || !strings.Contains(toolErr.Message, "permission denied") {
+		t.Fatalf("newResult() error = %#v", toolErr)
+	}
+}
+
+func TestInitializeRejectsUnsupportedProtocolVersion(t *testing.T) {
+	transport := newRecordingTransport()
+	session := newSession(transport, nil, "")
+	defer session.Close()
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := session.initialize(t.Context())
+		result <- err
+	}()
+	request := <-transport.writes
+	var sent rpcRequest
+	if err := json.Unmarshal(request, &sent); err != nil {
+		t.Fatalf("decode initialize request: %v", err)
+	}
+	response, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      sent.ID,
+		"result":  map[string]any{"protocolVersion": "1900-01-01"},
+	})
+	if err != nil {
+		t.Fatalf("marshal response: %v", err)
+	}
+	go func() { transport.responses <- response }()
+
+	if err := <-result; err == nil || !strings.Contains(err.Error(), "unsupported protocol version") {
+		t.Fatalf("initialize() error = %v", err)
+	}
+}
+
 func TestValidateServer(t *testing.T) {
 	for _, test := range []struct {
 		name       string
@@ -624,21 +673,27 @@ func TestValidateServer(t *testing.T) {
 }
 
 type recordingTransport struct {
-	writes chan []byte
-	closed chan struct{}
-	once   sync.Once
+	writes    chan []byte
+	responses chan []byte
+	closed    chan struct{}
+	once      sync.Once
 }
 
 func newRecordingTransport() *recordingTransport {
 	return &recordingTransport{
-		writes: make(chan []byte, 2),
-		closed: make(chan struct{}),
+		writes:    make(chan []byte, 2),
+		responses: make(chan []byte, 2),
+		closed:    make(chan struct{}),
 	}
 }
 
 func (t *recordingTransport) ReadMessage() ([]byte, error) {
-	<-t.closed
-	return nil, io.EOF
+	select {
+	case response := <-t.responses:
+		return response, nil
+	case <-t.closed:
+		return nil, io.EOF
+	}
 }
 
 func (t *recordingTransport) WriteMessage(ctx context.Context, data []byte) error {
