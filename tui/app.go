@@ -302,6 +302,13 @@ func (app *app) submitPrompt(ctx context.Context, prompt string) {
 }
 
 func (app *app) runCommand(ctx context.Context, item menuItem, command Command) error {
+	if app.model.working {
+		if _, exit := command.(Exit); exit {
+			return errExitRequested
+		}
+		app.model.recordCommand(item, errors.New("cannot run commands while another operation is active"))
+		return nil
+	}
 	var err error
 	switch typedCommand := command.(type) {
 	case RewindConversation:

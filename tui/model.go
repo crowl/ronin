@@ -46,6 +46,7 @@ type appModel struct {
 	boxLineCache   boxLineCache
 	statusBarCache statusBarCache
 
+	usage         llm.Usage
 	working       bool
 	workingLabel  string
 	toolsExpanded bool
@@ -120,6 +121,7 @@ func (m *appModel) populateInitialBoxes(conversation Conversation) {
 	if conversation == nil {
 		return
 	}
+	m.usage = conversation.ContextUsage()
 	messages := conversation.Messages()
 	for _, message := range messages {
 		switch msg := message.(type) {
@@ -519,6 +521,14 @@ func (m *appModel) handleConversationEvent(event runtime.Event, now time.Time) (
 	case runtime.AssistantMessageDeltaReceived:
 		m.queueTextDelta(pendingTextDeltaAssistant, typedEvent.Text)
 	case runtime.AssistantMessageEnded:
+		cost := m.usage.Cost
+		if typedEvent.Message.Usage.Cost.Available {
+			cost.Total += typedEvent.Message.Usage.Cost.Total
+		} else {
+			cost.Available = false
+		}
+		m.usage = typedEvent.Message.Usage
+		m.usage.Cost = cost
 		m.flushPendingTextDelta()
 	case runtime.ToolExecutionStarted:
 		m.flushPendingTextDelta()
@@ -558,7 +568,8 @@ func (m *appModel) handleConversationEvent(event runtime.Event, now time.Time) (
 		m.flushPendingTextDelta()
 		index := findToolBlockIndex(m.boxes, typedEvent.CallID)
 		if index == -1 {
-			return modelUpdate{}, fmt.Errorf("expected tool block for call id %q (%q) to exist", typedEvent.CallID, typedEvent.Tool.Name())
+			m.boxes = append(m.boxes, toolCallBox{ToolCallID: typedEvent.CallID, Title: typedEvent.CallID, StartedAt: now})
+			index = len(m.boxes) - 1
 		}
 		toolCallBox, ok := m.boxes[index].(toolCallBox)
 		if !ok {
@@ -574,7 +585,8 @@ func (m *appModel) handleConversationEvent(event runtime.Event, now time.Time) (
 		m.flushPendingTextDelta()
 		index := findToolBlockIndex(m.boxes, typedEvent.CallID)
 		if index == -1 {
-			return modelUpdate{}, fmt.Errorf("expected tool block for call id %q (%q) to exist", typedEvent.CallID, typedEvent.Tool.Name())
+			m.boxes = append(m.boxes, toolCallBox{ToolCallID: typedEvent.CallID, Title: typedEvent.CallID, StartedAt: now})
+			index = len(m.boxes) - 1
 		}
 		toolCallBox, ok := m.boxes[index].(toolCallBox)
 		if !ok {
@@ -646,6 +658,9 @@ func (m *appModel) boundWorkflowVisualTimeline(width int, now time.Time) {
 	}
 }
 func (m *appModel) lines(width int, conversation Conversation, now time.Time) ([]string, error) {
+	if !m.working {
+		m.usage = conversation.ContextUsage()
+	}
 	m.flushPendingTextDelta()
 	m.boundWorkflowVisualTimeline(width, now)
 
@@ -704,7 +719,7 @@ func (m *appModel) lines(width int, conversation Conversation, now time.Time) ([
 		UseCWDStatus:   true,
 		Model:          conversation.Model(),
 		ReasoningLevel: conversation.ReasoningLevel(),
-		ContextUsage:   conversation.ContextUsage(),
+		ContextUsage:   m.usage,
 	}.Lines(width)...)
 
 	return lines, nil
