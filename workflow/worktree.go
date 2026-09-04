@@ -3,10 +3,12 @@ package workflow
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -737,7 +739,69 @@ func (rt *worktreeRuntime) fingerprint(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(head) + "\n" + strings.TrimSpace(branch) + "\n" + status, nil
+	// This detects changes, not sandbox violations. Ignored files are excluded.
+	hash := sha256.New()
+	fmt.Fprintf(hash, "%q\n%q\n%q\n", head, branch, status)
+	root, err := rt.git(path, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", err
+	}
+	root = strings.TrimSpace(root)
+	for _, args := range [][]string{
+		{"diff", "--binary", "--no-ext-diff", "--no-textconv", "--ignore-submodules=none"},
+		{"diff", "--cached", "--binary", "--no-ext-diff", "--no-textconv", "--ignore-submodules=none"},
+	} {
+		ctx, cancel := context.WithTimeout(rt.ctx, gitCommandTimeout)
+		cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
+		cmd.WaitDelay = 5 * time.Second
+		cmd.Stdout = hash
+		err := cmd.Run()
+		cancel()
+		if err != nil {
+			return "", fmt.Errorf("fingerprint Git diff: %w", err)
+		}
+		io.WriteString(hash, "\x00")
+	}
+	paths, err := rt.git(root, "ls-files", "--others", "--exclude-standard", "-z")
+	if err != nil {
+		return "", err
+	}
+	for name := range strings.SplitSeq(paths, "\x00") {
+		if name == "" {
+			continue
+		}
+		if err := rt.ctx.Err(); err != nil {
+			return "", err
+		}
+		filePath := filepath.Join(root, name)
+		info, err := os.Lstat(filePath)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(hash, "%q %v %d\n", name, info.Mode(), info.Size())
+		switch {
+		case info.Mode()&os.ModeSymlink != 0:
+			target, err := os.Readlink(filePath)
+			if err != nil {
+				return "", err
+			}
+			fmt.Fprintf(hash, "%q", target)
+		case info.Mode().IsRegular():
+			file, err := os.Open(filePath)
+			if err != nil {
+				return "", err
+			}
+			_, copyErr := io.Copy(hash, file)
+			closeErr := file.Close()
+			if err := errors.Join(copyErr, closeErr); err != nil {
+				return "", err
+			}
+		default:
+			return "", fmt.Errorf("cannot fingerprint non-regular untracked path %q", name)
+		}
+		io.WriteString(hash, "\x00")
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 func (rt *worktreeRuntime) status(path string) (string, error) {
@@ -793,6 +857,9 @@ func (rt *worktreeRuntime) runGit(ctx context.Context, path string, args ...stri
 			text += "\n[git output truncated]"
 		}
 		return text, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(text))
+	}
+	if truncated {
+		return text, fmt.Errorf("git %s: output exceeds %d bytes", strings.Join(args, " "), gitOutputLimit)
 	}
 	return text, nil
 }
