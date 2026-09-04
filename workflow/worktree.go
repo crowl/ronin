@@ -42,32 +42,37 @@ type gitPreflight struct {
 }
 
 type managedWorktree struct {
-	ID     string `json:"id"`
-	Kind   string `json:"kind"`
-	Handle string `json:"handle"`
-	Path   string `json:"path"`
-	Branch string `json:"branch"`
-	Base   string `json:"base"`
-	Sealed bool   `json:"sealed"`
+	ID              string `json:"id"`
+	Kind            string `json:"kind"`
+	Handle          string `json:"handle"`
+	Path            string `json:"path"`
+	Branch          string `json:"branch"`
+	Base            string `json:"base"`
+	Sealed          bool   `json:"sealed"`
+	SealedHead      string `json:"sealed_head,omitempty"`
+	WorktreeRemoved bool   `json:"worktree_removed,omitempty"`
+	BranchRemoved   bool   `json:"branch_removed,omitempty"`
 }
 
 type worktreeManifest struct {
-	RunID       string             `json:"run_id"`
-	PrimaryRoot string             `json:"primary_root"`
-	BaseBranch  string             `json:"base_branch"`
-	BaseHead    string             `json:"base_head"`
-	RunRoot     string             `json:"run_root"`
-	Worktrees   []*managedWorktree `json:"worktrees"`
+	PromotedHead string             `json:"promoted_head,omitempty"`
+	RunID        string             `json:"run_id"`
+	PrimaryRoot  string             `json:"primary_root"`
+	BaseBranch   string             `json:"base_branch"`
+	BaseHead     string             `json:"base_head"`
+	RunRoot      string             `json:"run_root"`
+	Worktrees    []*managedWorktree `json:"worktrees"`
 }
 
 type worktreeRuntime struct {
-	ctx          context.Context
-	workingDir   string
-	preflight    *gitPreflight
-	manifest     *worktreeManifest
-	manifestPath string
-	byHandle     map[string]*managedWorktree
-	promoted     bool
+	ctx             context.Context
+	workingDir      string
+	preflight       *gitPreflight
+	manifest        *worktreeManifest
+	manifestPath    string
+	byHandle        map[string]*managedWorktree
+	cleanupComplete bool
+	promoted        bool
 }
 
 func newWorktreeRuntime(ctx context.Context) *worktreeRuntime {
@@ -490,12 +495,46 @@ func (rt *worktreeRuntime) seal(workspace *managedWorktree) (string, error) {
 	if err := rt.rejectLaneChanges(workspace); err != nil {
 		return "", err
 	}
-	workspace.Sealed = true
-	if err := rt.writeManifest(); err != nil {
+	return rt.recordSeal(workspace)
+}
+
+func (rt *worktreeRuntime) recordSeal(workspace *managedWorktree) (string, error) {
+	head, err := rt.git(workspace.Path, "rev-parse", "HEAD")
+	if err != nil {
 		return "", err
 	}
+	workspace.SealedHead = strings.TrimSpace(head)
+	workspace.Sealed = true
+	if err := rt.writeManifest(); err != nil {
+		workspace.Sealed = false
+		workspace.SealedHead = ""
+		return "", err
+	}
+	return workspace.SealedHead, nil
+}
+
+func (rt *worktreeRuntime) verifySeal(workspace *managedWorktree) error {
+	if !workspace.Sealed || workspace.SealedHead == "" {
+		return fmt.Errorf("workspace %q has no sealed commit", workspace.ID)
+	}
+	if err := rt.verifyWorkspaceBranch(workspace); err != nil {
+		return err
+	}
 	head, err := rt.git(workspace.Path, "rev-parse", "HEAD")
-	return strings.TrimSpace(head), err
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(head) != workspace.SealedHead {
+		return fmt.Errorf("workspace %q changed after sealing", workspace.ID)
+	}
+	status, err := rt.status(workspace.Path)
+	if err != nil {
+		return err
+	}
+	if status != "" {
+		return fmt.Errorf("workspace %q became dirty after sealing", workspace.ID)
+	}
+	return nil
 }
 
 func (rt *worktreeRuntime) rejectLaneChanges(workspace *managedWorktree) error {
@@ -536,7 +575,10 @@ func (rt *worktreeRuntime) squash(integration, lane *managedWorktree, message st
 	} else if status != "" {
 		return "", fmt.Errorf("integration worktree is dirty before squash:\n%s", status)
 	}
-	if _, err := rt.git(integration.Path, "merge", "--squash", "--no-commit", lane.Branch); err != nil {
+	if err := rt.verifySeal(lane); err != nil {
+		return "", err
+	}
+	if _, err := rt.git(integration.Path, "merge", "--squash", "--no-commit", lane.SealedHead); err != nil {
 		return "", fmt.Errorf("squash lane %q; integration worktree retained for recovery: %w", lane.ID, err)
 	}
 	_, err := rt.git(integration.Path, "diff", "--cached", "--quiet")
@@ -585,11 +627,8 @@ func (rt *worktreeRuntime) squashRepairs(workspace *managedWorktree, base, messa
 		return "", false, fmt.Errorf("inspect integration repairs: %w", err)
 	}
 	if strings.TrimSpace(count) == "0" {
-		workspace.Sealed = true
-		if err := rt.writeManifest(); err != nil {
-			return "", false, err
-		}
-		return base, false, nil
+		head, err := rt.recordSeal(workspace)
+		return head, false, err
 	}
 	if _, err := rt.git(workspace.Path, "reset", "--soft", base); err != nil {
 		return "", false, fmt.Errorf("prepare integration repair squash: %w", err)
@@ -597,14 +636,8 @@ func (rt *worktreeRuntime) squashRepairs(workspace *managedWorktree, base, messa
 	if _, err := rt.gitCommit(workspace.Path, message); err != nil {
 		return "", false, fmt.Errorf("commit integration repair squash: %w", err)
 	}
-	head, err := rt.git(workspace.Path, "rev-parse", "HEAD")
-	if err == nil {
-		workspace.Sealed = true
-		if manifestErr := rt.writeManifest(); manifestErr != nil {
-			return "", false, manifestErr
-		}
-	}
-	return strings.TrimSpace(head), true, err
+	head, err := rt.recordSeal(workspace)
+	return head, true, err
 }
 
 func (rt *worktreeRuntime) promote(integration *managedWorktree) error {
@@ -634,19 +667,44 @@ func (rt *worktreeRuntime) promote(integration *managedWorktree) error {
 	} else if status != "" {
 		return fmt.Errorf("primary worktree became dirty before promotion:\n%s", status)
 	}
-	if _, err := rt.git(current.Root, "merge", "--ff-only", integration.Branch); err != nil {
+	if err := rt.verifySeal(integration); err != nil {
+		return err
+	}
+	if _, err := rt.git(current.Root, "merge", "--ff-only", integration.SealedHead); err != nil {
 		return fmt.Errorf("fast-forward primary branch: %w", err)
+	}
+	rt.promoted = true
+	rt.manifest.PromotedHead = integration.SealedHead
+	if err := rt.writeManifest(); err != nil {
+		return fmt.Errorf("promotion succeeded but recording promotion failed: %w", err)
 	}
 	if err := rt.cleanupSuccess(); err != nil {
 		return fmt.Errorf("promotion succeeded but cleanup failed: %w", err)
 	}
-	rt.promoted = true
+	rt.cleanupComplete = true
 	return nil
 }
 
 func (rt *worktreeRuntime) recover() string {
-	if rt.manifest == nil || rt.promoted {
+	if rt.manifest == nil || rt.cleanupComplete {
 		return ""
+	}
+	if rt.promoted {
+		var b strings.Builder
+		fmt.Fprintf(&b, "Promotion succeeded at %s; cleanup remains incomplete. Do not promote again.\nManifest: %s\nManual cleanup after inspection:\n", rt.manifest.PromotedHead, rt.manifestPath)
+		for _, workspace := range rt.manifest.Worktrees {
+			if !workspace.WorktreeRemoved {
+				fmt.Fprintf(&b, "- git -C %q worktree remove %q\n", rt.manifest.PrimaryRoot, workspace.Path)
+			}
+			if !workspace.BranchRemoved {
+				fmt.Fprintf(&b, "- git -C %q branch -D %q\n", rt.manifest.PrimaryRoot, workspace.Branch)
+			}
+		}
+		fmt.Fprintf(&b, "Remove the run directory %q and manifest directory %q after cleanup.\n", rt.manifest.RunRoot, filepath.Dir(rt.manifestPath))
+		if err := rt.writeManifest(); err != nil {
+			fmt.Fprintf(&b, "Could not update manifest: %v\n", err)
+		}
+		return strings.TrimSpace(b.String())
 	}
 	var retained []string
 	var cleanupErrors []string
@@ -699,8 +757,11 @@ func (rt *worktreeRuntime) cleanupSuccess() error {
 			errs = append(errs, fmt.Errorf("remove worktree %s: %w", workspace.ID, err))
 			continue
 		}
+		workspace.WorktreeRemoved = true
 		if _, err := rt.git(rt.manifest.PrimaryRoot, "branch", "-D", workspace.Branch); err != nil {
 			errs = append(errs, fmt.Errorf("remove branch %s: %w", workspace.Branch, err))
+		} else {
+			workspace.BranchRemoved = true
 		}
 	}
 	if len(errs) > 0 {
