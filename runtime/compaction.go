@@ -79,6 +79,16 @@ func (c *DefaultCompactor) Compact(ctx context.Context, msgs []llm.Message) ([]l
 	}
 
 	older := append([]llm.Message(nil), msgs[:start]...)
+	// Never silently discard the only surviving summary of earlier history.
+	priorBytes := 0
+	for _, message := range older {
+		if user, ok := message.(llm.UserMessage); ok && isCompactedContext(user.Text) {
+			priorBytes += len(compactionFactLine(0, user))
+		}
+	}
+	if priorBytes > maxCompactionFactSheetBytes-1024 {
+		return nil, fmt.Errorf("previous compacted context exceeds compaction input budget")
+	}
 	recent := append([]llm.Message(nil), msgs[start:]...)
 	factSheet := buildCompactionFactSheet(older, "")
 	summary, err := c.generateCompactionSummary(ctx, factSheet)
@@ -226,8 +236,14 @@ func buildCompactionFactSheet(messages []llm.Message, sessionPath string) string
 	available := maxCompactionFactSheetBytes - b.Len() - omissionReserve
 	selected := make([]bool, len(lines))
 	used := 0
+	for i, message := range messages {
+		if user, ok := message.(llm.UserMessage); ok && isCompactedContext(user.Text) && used+len(lines[i]) <= available {
+			selected[i] = true
+			used += len(lines[i])
+		}
+	}
 	for i, line := range lines {
-		if line == "" {
+		if line == "" || selected[i] {
 			continue
 		}
 		if used+len(line) > available/4 {
@@ -291,6 +307,9 @@ func compactionFactLine(index int, msg llm.Message) string {
 	var b strings.Builder
 	switch typedMsg := msg.(type) {
 	case llm.UserMessage:
+		if isCompactedContext(typedMsg.Text) {
+			return fmt.Sprintf("- %03d previous compacted context:\n%s\n", index+1, typedMsg.Text)
+		}
 		_, _ = fmt.Fprintf(&b, "- %03d user: %s\n", index+1, compactOneLine(typedMsg.Text, 500))
 	case llm.AssistantMessage:
 		prefix := fmt.Sprintf("- %03d assistant", index+1)
