@@ -191,13 +191,21 @@ func (p editorPresenter) Lines(width int) []string {
 
 	firstVisualLine := true
 	for logicalLineIndex, logicalLine := range logicalLines {
+		if logicalLineIndex == cursorLine {
+			cursorColumn = len([]rune(text.ExpandTabs(string(logicalLine[:cursorColumn]))))
+		}
+		logicalLine = []rune(text.ExpandTabs(string(logicalLine)))
+		// Reserve a visible cell for the insertion cursor at end of input.
+		if logicalLineIndex == cursorLine && cursorColumn == len(logicalLine) {
+			logicalLine = append(logicalLine, ' ')
+		}
 		segments := wrapeditorPresenterLogicalLine(logicalLine, width, firstVisualLine)
 		for _, segment := range segments {
 			prefix := editorContinuationPrefix
 			if firstVisualLine {
 				prefix = editorPrefix
 			}
-			containsCursor := logicalLineIndex == cursorLine && segment.startColumn <= cursorColumn && cursorColumn <= segment.endColumn
+			containsCursor := logicalLineIndex == cursorLine && segment.startColumn <= cursorColumn && cursorColumn < segment.endColumn
 			lines = append(lines, rendereditorPresenterSegment(prefix, segment, cursorColumn, containsCursor))
 			firstVisualLine = false
 		}
@@ -253,7 +261,16 @@ func wrapeditorPresenterLogicalLine(line []rune, width int, firstVisualLine bool
 
 	segments := make([]editorSegment, 0, (len(line)/available)+1)
 	for start := 0; start < len(line); {
-		end := min(start+available, len(line))
+		end := start
+		cells := 0
+		for end < len(line) {
+			n := text.VisibleLen(string(line[end]))
+			if cells+n > available && end > start {
+				break
+			}
+			cells += n
+			end++
+		}
 		segments = append(segments, editorSegment{
 			text:        line[start:end],
 			startColumn: start,
