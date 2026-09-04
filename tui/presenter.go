@@ -73,8 +73,18 @@ func renderBoxContentLinesAt(block box, width int, toolsExpanded bool, now time.
 	case toolCallBox:
 		lines := markedLines(toolMarker, typedBlock.Title, width, strongStyle)
 		var artifactLines []string
+		more := false
 		for _, artifact := range typedBlock.Artifacts {
-			artifactLines = append(artifactLines, toolArtifactLines(artifact, width)...)
+			if !toolsExpanded && typedBlock.Revision > 0 {
+				preview, truncated := toolArtifactLinesBounded(artifact, width, maxToolOutputLinesNotExpanded-len(artifactLines))
+				artifactLines = append(artifactLines, preview...)
+				more = more || truncated
+				if more {
+					break
+				}
+			} else {
+				artifactLines = append(artifactLines, toolArtifactLines(artifact, width)...)
+			}
 		}
 		if typedBlock.Error != "" {
 			for _, line := range text.Wrap("  ", typedBlock.Error, width) {
@@ -84,7 +94,15 @@ func renderBoxContentLinesAt(block box, width int, toolsExpanded bool, now time.
 		if len(artifactLines) > maxToolOutputLinesNotExpanded && !toolsExpanded {
 			skipped := len(artifactLines) - maxToolOutputLinesNotExpanded
 			notice := fmt.Sprintf("  ... (%d more lines, ctrl+o to expand)", skipped)
+			if more {
+				notice = "  ... (more output, ctrl+o to expand)"
+			}
 			artifactLines = append(artifactLines[:maxToolOutputLinesNotExpanded], mutedStyle.apply(notice))
+		} else if more {
+			artifactLines = append(artifactLines, mutedStyle.apply("  ... (more output, ctrl+o to expand)"))
+		}
+		if typedBlock.DisplayTruncated {
+			lines = append(lines, mutedStyle.apply("  ... (display output truncated)"))
 		}
 		lines = append(lines, artifactLines...)
 

@@ -20,6 +20,8 @@ type boxLineCacheEntry struct {
 }
 
 type boxLineSignature struct {
+	Revision       uint64
+	Truncated      bool
 	Kind           string
 	Width          int
 	ToolsExpanded  bool
@@ -118,7 +120,13 @@ func boxSignature(block box, width int, toolsExpanded bool, now time.Time) boxLi
 		signature.Kind = "tool"
 		signature.ToolCallID = typedBlock.ToolCallID
 		signature.Title = typedBlock.Title
-		signature.Text = toolCallSignatureText(typedBlock)
+		signature.Revision = typedBlock.Revision
+		signature.Truncated = typedBlock.DisplayTruncated
+		if typedBlock.Revision == 0 {
+			signature.Text = toolCallSignatureText(typedBlock)
+		} else {
+			signature.Text = typedBlock.Error
+		}
 		signature.StartedAt = typedBlock.StartedAt.UnixNano()
 		signature.EndedAt = typedBlock.EndedAt.UnixNano()
 		if typedBlock.EndedAt.IsZero() {

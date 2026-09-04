@@ -13,12 +13,15 @@ type assistantMessageBox struct{ Text string }
 type assistantThinkingBox struct{ Text string }
 
 type toolCallBox struct {
-	ToolCallID string
-	Title      string
-	Artifacts  []tool.Artifact
-	Error      string
-	StartedAt  time.Time
-	EndedAt    time.Time
+	DisplayBytes     int
+	DisplayTruncated bool
+	Revision         uint64
+	ToolCallID       string
+	Title            string
+	Artifacts        []tool.Artifact
+	Error            string
+	StartedAt        time.Time
+	EndedAt          time.Time
 }
 
 type workflowEntry struct {

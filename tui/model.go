@@ -547,7 +547,7 @@ func (m *appModel) handleConversationEvent(event runtime.Event, now time.Time) (
 		if !ok {
 			return modelUpdate{}, fmt.Errorf("expected tool call box at index %d, got %T", index, m.boxes[index])
 		}
-		toolCallBox.Artifacts = appendToolArtifact(toolCallBox.Artifacts, typedEvent.Artifact)
+		toolCallBox.addDisplayArtifact(typedEvent.Artifact)
 		m.boxes[index] = toolCallBox
 	case runtime.ToolExecutionResultReceived:
 		m.flushPendingTextDelta()
@@ -562,7 +562,12 @@ func (m *appModel) handleConversationEvent(event runtime.Event, now time.Time) (
 		if !ok {
 			return modelUpdate{}, fmt.Errorf("expected tool call box at index %d, got %T", index, m.boxes[index])
 		}
-		toolCallBox.Artifacts = append([]tool.Artifact(nil), typedEvent.Artifacts...)
+		toolCallBox.Artifacts = nil
+		toolCallBox.DisplayBytes = 0
+		toolCallBox.DisplayTruncated = false
+		for _, artifact := range typedEvent.Artifacts {
+			toolCallBox.addDisplayArtifact(artifact)
+		}
 		m.boxes[index] = toolCallBox
 	case runtime.ToolExecutionFailed:
 		m.flushPendingTextDelta()
@@ -575,7 +580,7 @@ func (m *appModel) handleConversationEvent(event runtime.Event, now time.Time) (
 		if !ok {
 			return modelUpdate{}, fmt.Errorf("expected tool call box at index %d, got %T", index, m.boxes[index])
 		}
-		toolCallBox.Error += typedEvent.Error.Error()
+		toolCallBox.Error = boundWorkflowText(toolCallBox.Error+typedEvent.Error.Error(), maxWorkflowDetailSize)
 		if toolCallBox.StartedAt.IsZero() {
 			toolCallBox.StartedAt = now
 		}

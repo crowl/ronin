@@ -3,11 +3,13 @@ package tui
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/runtime"
+	"github.com/crowl/ronin/tool"
 	"github.com/crowl/ronin/tui/internal/terminal"
 )
 
@@ -75,4 +77,27 @@ func (t *cancelTerminal) ReadKey(ctx context.Context) (terminal.Key, error) {
 func (*cancelTerminal) Write(string) error { return nil }
 func (*cancelTerminal) Size() (terminal.Size, error) {
 	return terminal.Size{Width: 80, Height: 24}, nil
+}
+
+func TestToolDisplayBudget(t *testing.T) {
+	b := toolCallBox{}
+	b.addDisplayArtifact(tool.TextArtifact{Text: strings.Repeat("x", maxToolDisplayBytes+1)})
+	if !b.DisplayTruncated || b.DisplayBytes > maxToolDisplayBytes {
+		t.Fatalf("budget=%d truncated=%v", b.DisplayBytes, b.DisplayTruncated)
+	}
+	before := b.Revision
+	b.addDisplayArtifact(tool.TextArtifact{Text: "ignored"})
+	if b.Revision != before {
+		t.Fatal("truncated box retained more data")
+	}
+}
+
+func BenchmarkToolCacheSignature(b *testing.B) {
+	box := toolCallBox{}
+	box.addDisplayArtifact(tool.TextArtifact{Text: strings.Repeat("x", maxToolDisplayBytes)})
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		_ = boxSignature(box, 80, false, time.Time{})
+	}
 }
