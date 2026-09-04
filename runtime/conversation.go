@@ -845,22 +845,7 @@ func completionError(reason llm.StopReason) error {
 func (c *Conversation) executeToolCall(ctx context.Context, events chan<- Event, toolCall llm.ToolCallBlock) error {
 	t, ok := c.toolByName[toolCall.Name]
 	if !ok {
-		execErr := fmt.Errorf("tool %q not found", toolCall.Name)
-		message := llm.ToolErrorMessage{Timestamp: c.now(), ToolCallID: toolCall.ID, ToolName: toolCall.Name, Error: execErr}
-		if err := c.appendMessage(ctx, message); err != nil {
-			return c.reportSaveFailure(ctx, events, nil, err)
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case events <- ToolExecutionFailed{CallID: toolCall.ID, Error: execErr}:
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case events <- ToolExecutionEnded{CallID: toolCall.ID}:
-			return nil
-		}
+		return c.failToolCall(ctx, events, nil, toolCall, fmt.Errorf("tool %q not found", toolCall.Name))
 	}
 	callTitle := t.Name()
 	if titleProvider, ok := t.(ToolCallTitleProvider); ok {
@@ -895,42 +880,32 @@ func (c *Conversation) callIncrementalTool(ctx context.Context, events chan<- Ev
 	return incrementalTool.CallIncremental(ctx, toolCall.Arguments, emit)
 }
 
+func (c *Conversation) failToolCall(ctx context.Context, events chan<- Event, executedTool Tool, call llm.ToolCallBlock, execErr error) error {
+	message := llm.ToolErrorMessage{Timestamp: c.now(), ToolCallID: call.ID, ToolName: call.Name, Error: execErr}
+	if err := c.appendMessage(ctx, message); err != nil {
+		return c.reportSaveFailure(ctx, events, nil, err)
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case events <- ToolExecutionFailed{Tool: executedTool, CallID: call.ID, Error: execErr}:
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case events <- ToolExecutionEnded{Tool: executedTool, CallID: call.ID}:
+		return nil
+	}
+}
+
 func (c *Conversation) finishToolCall(ctx context.Context, events chan<- Event, executedTool Tool, toolCall llm.ToolCallBlock, toolResult any, execErr error) error {
 	if execErr != nil {
-		message := llm.ToolErrorMessage{Timestamp: c.now(), ToolCallID: toolCall.ID, ToolName: toolCall.Name, Error: execErr}
-		if err := c.appendMessage(ctx, message); err != nil {
-			return c.reportSaveFailure(ctx, events, nil, err)
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case events <- ToolExecutionFailed{Tool: executedTool, CallID: toolCall.ID, Error: execErr}:
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case events <- ToolExecutionEnded{Tool: executedTool, CallID: toolCall.ID}:
-			return nil
-		}
+		return c.failToolCall(ctx, events, executedTool, toolCall, execErr)
 	}
 	data, err := json.Marshal(toolResult)
 	if err != nil {
 		execErr = fmt.Errorf("marshal tool %q result: %w", toolCall.Name, err)
-		message := llm.ToolErrorMessage{Timestamp: c.now(), ToolCallID: toolCall.ID, ToolName: toolCall.Name, Error: execErr}
-		if appendErr := c.appendMessage(ctx, message); appendErr != nil {
-			return c.reportSaveFailure(ctx, events, nil, appendErr)
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case events <- ToolExecutionFailed{Tool: executedTool, CallID: toolCall.ID, Error: execErr}:
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case events <- ToolExecutionEnded{Tool: executedTool, CallID: toolCall.ID}:
-			return nil
-		}
+		return c.failToolCall(ctx, events, executedTool, toolCall, execErr)
 	}
 	message := llm.ToolOutputMessage{Timestamp: c.now(), ToolCallID: toolCall.ID, ToolName: toolCall.Name, ToolOutput: string(data)}
 	if err := c.appendMessage(ctx, message); err != nil {
