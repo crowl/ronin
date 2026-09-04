@@ -55,6 +55,8 @@ func connectSSETransport(ctx context.Context, endpoint string) (*sseTransport, e
 	}
 
 	streamCtx, cancel := context.WithCancel(context.Background())
+	stopCancellation := context.AfterFunc(ctx, cancel)
+	defer stopCancellation()
 	requestURL := *base
 	requestURL.User = nil
 	request, err := http.NewRequestWithContext(streamCtx, http.MethodGet, requestURL.String(), nil)
@@ -85,6 +87,9 @@ func connectSSETransport(ctx context.Context, endpoint string) (*sseTransport, e
 		detail := readHTTPError(response.Body)
 		_ = response.Body.Close()
 		cancel()
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("connect to %q: %w", endpoint, err)
+		}
 		return nil, fmt.Errorf("connect to %q: HTTP %s%s", endpoint, response.Status, detail)
 	}
 	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
@@ -113,6 +118,11 @@ func connectSSETransport(ctx context.Context, endpoint string) (*sseTransport, e
 		return nil, fmt.Errorf("connect to %q: invalid SSE message endpoint %q", endpoint, event.data)
 	}
 	postEndpoint.User = nil
+	if !stopCancellation() || ctx.Err() != nil {
+		cancel()
+		_ = response.Body.Close()
+		return nil, fmt.Errorf("connect to %q: %w", endpoint, ctx.Err())
+	}
 
 	transport := &sseTransport{
 		client:       client,

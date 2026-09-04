@@ -198,12 +198,12 @@ type session struct {
 	capabilities map[string]any
 	rootURI      string
 
-	writeMu sync.Mutex
-	mu      sync.Mutex
-	nextID  int64
-	pending map[int64]chan rpcResponse
-	closed  bool
-	readErr error
+	writeSlot chan struct{}
+	mu        sync.Mutex
+	nextID    int64
+	pending   map[int64]chan rpcResponse
+	closed    bool
+	readErr   error
 
 	closeOnce sync.Once
 	closeErr  error
@@ -249,6 +249,7 @@ func newSession(transport messageTransport, capabilities map[string]any, rootURI
 		transport:    transport,
 		capabilities: capabilities,
 		rootURI:      rootURI,
+		writeSlot:    make(chan struct{}, 1),
 		pending:      make(map[int64]chan rpcResponse),
 	}
 	go s.readLoop()
@@ -565,8 +566,12 @@ func (s *session) notify(ctx context.Context, method string, params any) error {
 }
 
 func (s *session) writeContext(ctx context.Context, message any) error {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
+	select {
+	case s.writeSlot <- struct{}{}:
+		defer func() { <-s.writeSlot }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 
 	s.mu.Lock()
 	closed := s.closed
