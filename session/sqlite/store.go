@@ -106,7 +106,7 @@ func (s *Store) Fork(ctx context.Context, parentID string, metadata session.Meta
 	if parentID == "" {
 		return session.Session{}, errors.New("parent session id must not be empty")
 	}
-	parent, found, err := s.loadSession(ctx, `WHERE id = ?`, parentID)
+	parent, found, err := loadSession(ctx, s.db, `WHERE id = ?`, parentID)
 	if err != nil {
 		return session.Session{}, err
 	}
@@ -280,16 +280,7 @@ func (s *Store) Load(ctx context.Context, sessionID string) (session.Session, []
 	if sessionID == "" {
 		return session.Session{}, nil, false, errors.New("session id must not be empty")
 	}
-	record, found, err := s.loadSession(ctx, `WHERE id = ?`, sessionID)
-	if err != nil || !found {
-		return record, nil, found, err
-	}
-	messages, cost, err := s.loadMessages(ctx, record.ID)
-	if err != nil {
-		return session.Session{}, nil, false, err
-	}
-	record.Cost = cost
-	return record, messages, true, nil
+	return s.loadSnapshot(ctx, `WHERE id = ?`, sessionID)
 }
 
 func (s *Store) Latest(ctx context.Context, workingDir string) (session.Session, []llm.Message, bool, error) {
@@ -297,13 +288,27 @@ func (s *Store) Latest(ctx context.Context, workingDir string) (session.Session,
 	if err != nil {
 		return session.Session{}, nil, false, err
 	}
-	record, found, err := s.loadSession(ctx, `WHERE working_dir = ? ORDER BY updated_at DESC, rowid DESC LIMIT 1`, workingDir)
+	return s.loadSnapshot(ctx, `WHERE working_dir = ? ORDER BY updated_at DESC, rowid DESC LIMIT 1`, workingDir)
+}
+
+func (s *Store) loadSnapshot(ctx context.Context, clause string, args ...any) (session.Session, []llm.Message, bool, error) {
+	// modernc uses a deferred BEGIN for read-only transactions, even with
+	// _txlock=immediate. WAL writers can proceed while this snapshot is read.
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return session.Session{}, nil, false, fmt.Errorf("begin session snapshot: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	record, found, err := loadSession(ctx, tx, clause, args...)
 	if err != nil || !found {
 		return record, nil, found, err
 	}
-	messages, cost, err := s.loadMessages(ctx, record.ID)
+	messages, cost, err := loadMessages(ctx, tx, record.ID)
 	if err != nil {
 		return session.Session{}, nil, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return session.Session{}, nil, false, fmt.Errorf("finish session snapshot: %w", err)
 	}
 	record.Cost = cost
 	return record, messages, true, nil
@@ -361,8 +366,13 @@ func (s *Store) Clear(ctx context.Context, workingDir string) error {
 	return nil
 }
 
-func (s *Store) loadSession(ctx context.Context, clause string, args ...any) (session.Session, bool, error) {
-	row := s.db.QueryRowContext(ctx, `
+type sessionReader interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+func loadSession(ctx context.Context, reader sessionReader, clause string, args ...any) (session.Session, bool, error) {
+	row := reader.QueryRowContext(ctx, `
 		SELECT id, working_dir, title, COALESCE(parent_id, ''),
 		       COALESCE(model_provider, ''), COALESCE(model_name, ''),
 		       COALESCE(reasoning_level, ''), created_at, updated_at
@@ -383,8 +393,8 @@ func (s *Store) loadSession(ctx context.Context, clause string, args ...any) (se
 	return record, true, nil
 }
 
-func (s *Store) loadMessages(ctx context.Context, sessionID string) ([]llm.Message, llm.SessionCost, error) {
-	rows, err := s.db.QueryContext(ctx, `
+func loadMessages(ctx context.Context, reader sessionReader, sessionID string) ([]llm.Message, llm.SessionCost, error) {
+	rows, err := reader.QueryContext(ctx, `
 		SELECT seq, type, payload, created_at
 		FROM session_events WHERE session_id = ? ORDER BY seq`, sessionID)
 	if err != nil {
