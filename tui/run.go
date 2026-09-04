@@ -51,7 +51,7 @@ type Config struct {
 	Output         *os.File
 }
 
-func Run(ctx context.Context, cfg Config) error {
+func Run(ctx context.Context, cfg Config) (runErr error) {
 	if cfg.Conversation == nil {
 		return fmt.Errorf("conversation is required")
 	}
@@ -69,6 +69,8 @@ func Run(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return fmt.Errorf("create terminal: %w", err)
 	}
+
+	defer func() { runErr = errors.Join(runErr, term.Stop()) }()
 
 	renderer, err := render.New(term)
 	if err != nil {
@@ -90,15 +92,6 @@ func Run(ctx context.Context, cfg Config) error {
 	if err := term.Start(); err != nil {
 		return fmt.Errorf("start terminal: %w", err)
 	}
-	defer func() {
-		if p := recover(); p != nil {
-			_ = term.Stop()
-			panic(p)
-		}
-	}()
-	defer func() {
-		_ = term.Stop()
-	}()
 
 	if err := application.Run(ctx); err != nil {
 		if errors.Is(err, errExitRequested) {

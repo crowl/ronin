@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/crowl/ronin/llm"
@@ -70,6 +71,7 @@ type app struct {
 	size       terminal.Size
 	sizeCached bool
 
+	workers    sync.WaitGroup
 	cancelFunc context.CancelFunc
 
 	renderRequested     bool
@@ -79,6 +81,17 @@ type app struct {
 }
 
 func (app *app) Run(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer func() {
+		cancel()
+		if app.cancelFunc != nil {
+			app.cancelFunc()
+		}
+		if app.renderTimer != nil {
+			app.renderTimer.Stop()
+		}
+		app.workers.Wait()
+	}()
 	app.watchResize(ctx)
 	app.startKeyReader(ctx)
 	app.startWorkingTicker(ctx)
@@ -108,7 +121,7 @@ func (app *app) Run(ctx context.Context) error {
 }
 
 func (app *app) startKeyReader(ctx context.Context) {
-	go func() {
+	app.workers.Go(func() {
 		for {
 			key, err := app.terminal.ReadKey(ctx)
 			if err != nil {
@@ -125,11 +138,11 @@ func (app *app) startKeyReader(ctx context.Context) {
 				return
 			}
 		}
-	}()
+	})
 }
 
 func (app *app) startWorkingTicker(ctx context.Context) {
-	go func() {
+	app.workers.Go(func() {
 		ticker := time.NewTicker(100 * time.Millisecond)
 		defer ticker.Stop()
 
@@ -145,7 +158,7 @@ func (app *app) startWorkingTicker(ctx context.Context) {
 				}
 			}
 		}
-	}()
+	})
 }
 
 func (app *app) handleAppEvent(ctx context.Context, event event) error {
@@ -255,7 +268,7 @@ func (app *app) submitPrompt(ctx context.Context, prompt string) {
 	app.cancelFunc = cancel
 	app.requestRender()
 
-	go func() {
+	app.workers.Go(func() {
 		defer cancel()
 		defer func() {
 			select {
@@ -285,7 +298,7 @@ func (app *app) submitPrompt(ctx context.Context, prompt string) {
 		case <-promptCtx.Done():
 			return
 		}
-	}()
+	})
 }
 
 func (app *app) runCommand(ctx context.Context, item menuItem, command Command) error {
@@ -394,7 +407,7 @@ func (app *app) activateMCP(ctx context.Context, item menuItem, name string) {
 	app.cancelFunc = cancel
 	app.requestRender()
 
-	go func() {
+	app.workers.Go(func() {
 		defer cancel()
 		activated := false
 		var err error
@@ -410,7 +423,7 @@ func (app *app) activateMCP(ctx context.Context, item menuItem, name string) {
 		case app.events <- mcpActivationDone{Item: item, Activated: activated, Err: err}:
 		case <-ctx.Done():
 		}
-	}()
+	})
 }
 
 func (app *app) runWorkflow(ctx context.Context, item workflow.Workflow, input string) {
@@ -424,7 +437,7 @@ func (app *app) runWorkflow(ctx context.Context, item workflow.Workflow, input s
 	workflowCtx, cancel := context.WithCancel(ctx)
 	app.cancelFunc = cancel
 	app.requestRender()
-	go func() {
+	app.workers.Go(func() {
 		defer cancel()
 		result := app.workflowRunner.Run(workflowCtx, item, input, func(event workflow.Event) {
 			select {
@@ -441,7 +454,7 @@ func (app *app) runWorkflow(ctx context.Context, item workflow.Workflow, input s
 		case app.events <- workflowDone{Err: err}:
 		case <-ctx.Done():
 		}
-	}()
+	})
 }
 
 func (app *app) compactConversation(ctx context.Context, item menuItem) {
@@ -451,7 +464,7 @@ func (app *app) compactConversation(ctx context.Context, item menuItem) {
 	app.cancelFunc = cancel
 	app.requestRender()
 
-	go func() {
+	app.workers.Go(func() {
 		defer cancel()
 		err := app.conversation.CompactConversation(compactCtx)
 		if err != nil {
@@ -461,7 +474,7 @@ func (app *app) compactConversation(ctx context.Context, item menuItem) {
 		case app.events <- conversationCompactionDone{Err: err}:
 		case <-ctx.Done():
 		}
-	}()
+	})
 }
 
 func (app *app) requestRender() {

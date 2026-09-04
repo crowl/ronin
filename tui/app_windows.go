@@ -8,7 +8,7 @@ import (
 )
 
 func (app *app) watchResize(ctx context.Context) {
-	go func() {
+	app.workers.Go(func() {
 		var lastWidth, lastHeight int
 		if sz, err := app.terminal.Size(); err == nil {
 			lastWidth = sz.Width
@@ -38,5 +38,5 @@ func (app *app) watchResize(ctx context.Context) {
 				}
 			}
 		}
-	}()
+	})
 }

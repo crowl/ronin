@@ -12,7 +12,7 @@ import (
 func (app *app) watchResize(ctx context.Context) {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGWINCH)
-	go func() {
+	app.workers.Go(func() {
 		defer signal.Stop(signals)
 		for {
 			select {
@@ -26,5 +26,5 @@ func (app *app) watchResize(ctx context.Context) {
 				}
 			}
 		}
-	}()
+	})
 }
