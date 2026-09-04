@@ -10,7 +10,6 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"sync"
 )
@@ -32,20 +31,12 @@ type sseTransport struct {
 	closeOnce sync.Once
 }
 
-func connectRemoteSession(ctx context.Context, cwd, endpoint string) (*session, error) {
-	absoluteCWD, err := filepath.Abs(cwd)
-	if err != nil {
-		return nil, fmt.Errorf("resolve MCP workspace root %q: %w", cwd, err)
-	}
+func connectRemoteSession(ctx context.Context, endpoint, rootURI string) (*session, error) {
 	transport, err := connectSSETransport(ctx, endpoint)
 	if err != nil {
 		return nil, err
 	}
-	root := (&url.URL{Scheme: "file", Path: absoluteCWD}).String()
-	capabilities := map[string]any{
-		"roots": map[string]any{"listChanged": false},
-	}
-	return newSession(transport, capabilities, root), nil
+	return newWorkspaceSession(transport, rootURI), nil
 }
 
 func connectSSETransport(ctx context.Context, endpoint string) (*sseTransport, error) {

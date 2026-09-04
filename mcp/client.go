@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -57,6 +59,11 @@ func Connect(ctx context.Context, cwd string, configs map[string]ServerConfig) (
 		return client, nil
 	}
 
+	rootURI, err := workspaceRootURI(cwd)
+	if err != nil {
+		return nil, err
+	}
+
 	names := make([]string, 0, len(configs))
 	for name := range configs {
 		names = append(names, name)
@@ -68,12 +75,20 @@ func Connect(ctx context.Context, cwd string, configs map[string]ServerConfig) (
 			_ = client.Close()
 			return nil, err
 		}
-		if err := client.connectServer(ctx, cwd, name, configs[name]); err != nil {
+		if err := client.connectServer(ctx, cwd, rootURI, name, configs[name]); err != nil {
 			_ = client.Close()
 			return nil, fmt.Errorf("initialize MCP server %q: %w", name, err)
 		}
 	}
 	return client, nil
+}
+
+func workspaceRootURI(cwd string) (string, error) {
+	absoluteCWD, err := filepath.Abs(cwd)
+	if err != nil {
+		return "", fmt.Errorf("resolve MCP workspace root %q: %w", cwd, err)
+	}
+	return (&url.URL{Scheme: "file", Path: absoluteCWD}).String(), nil
 }
 
 func (c *Client) Tools() []runtime.Tool {
@@ -100,16 +115,16 @@ func (c *Client) Close() error {
 	return errors.Join(errs...)
 }
 
-func (c *Client) connectServer(ctx context.Context, cwd, serverName string, cfg ServerConfig) error {
+func (c *Client) connectServer(ctx context.Context, cwd, rootURI, serverName string, cfg ServerConfig) error {
 	initCtx, cancel := context.WithTimeout(ctx, initializationTimeout)
 	defer cancel()
 
 	var session *session
 	var err error
 	if cfg.URL != "" {
-		session, err = connectRemoteSession(initCtx, cwd, cfg.URL)
+		session, err = connectRemoteSession(initCtx, cfg.URL, rootURI)
 	} else {
-		session, err = startSession(cwd, cfg)
+		session, err = startSession(cwd, rootURI, cfg)
 	}
 	if err != nil {
 		return err
@@ -236,12 +251,19 @@ func (e *rpcError) Error() string {
 	return fmt.Sprintf("MCP error %d: %s (%s)", e.Code, e.Message, e.Data)
 }
 
-func startSession(cwd string, cfg ServerConfig) (*session, error) {
+func startSession(cwd, rootURI string, cfg ServerConfig) (*session, error) {
 	transport, err := startStdioTransport(cwd, cfg)
 	if err != nil {
 		return nil, err
 	}
-	return newSession(transport, nil, ""), nil
+	return newWorkspaceSession(transport, rootURI), nil
+}
+
+func newWorkspaceSession(transport messageTransport, rootURI string) *session {
+	capabilities := map[string]any{
+		"roots": map[string]any{"listChanged": false},
+	}
+	return newSession(transport, capabilities, rootURI)
 }
 
 func newSession(transport messageTransport, capabilities map[string]any, rootURI string) *session {

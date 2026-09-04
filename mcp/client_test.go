@@ -25,11 +25,15 @@ import (
 )
 
 func TestConnectStdioServer(t *testing.T) {
-	client, err := Connect(t.Context(), t.TempDir(), map[string]ServerConfig{
+	workspace := t.TempDir()
+	client, err := Connect(t.Context(), workspace, map[string]ServerConfig{
 		"test": {
 			Command: os.Args[0],
 			Args:    []string{"-test.run=^TestMCPHelperProcess$"},
-			Env:     map[string]string{"RONIN_MCP_HELPER": "1"},
+			Env: map[string]string{
+				"RONIN_MCP_HELPER":      "1",
+				"RONIN_MCP_ROOT_OUTPUT": "root.txt",
+			},
 		},
 	})
 	if err != nil {
@@ -46,6 +50,24 @@ func TestConnectStdioServer(t *testing.T) {
 	}
 	if len(instructions[0].Tools) != 1 || instructions[0].Tools[0] != "echo" {
 		t.Fatalf("Instructions()[0].Tools = %#v", instructions[0].Tools)
+	}
+
+	rootFile := filepath.Join(workspace, "root.txt")
+	var root []byte
+	deadline := time.Now().Add(time.Second)
+	for {
+		root, err = os.ReadFile(rootFile)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, os.ErrNotExist) || time.Now().After(deadline) {
+			t.Fatalf("ReadFile(%q) error = %v", rootFile, err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	wantRoot := (&url.URL{Scheme: "file", Path: workspace}).String()
+	if got := strings.TrimSpace(string(root)); got != wantRoot {
+		t.Fatalf("workspace root = %q, want %q", got, wantRoot)
 	}
 
 	tools := client.Tools()
@@ -333,7 +355,11 @@ func TestStartSessionWritesBoundedServerLog(t *testing.T) {
 	if err := os.WriteFile(logPath, []byte("old log contents"), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	session, err := startSession(t.TempDir(), ServerConfig{
+	rootURI, err := workspaceRootURI(t.TempDir())
+	if err != nil {
+		t.Fatalf("workspaceRootURI() error = %v", err)
+	}
+	session, err := startSession(t.TempDir(), rootURI, ServerConfig{
 		Command: os.Args[0],
 		Args:    []string{"-test.run=^TestMCPHelperProcess$"},
 		Env: map[string]string{
@@ -376,12 +402,14 @@ func TestMCPHelperProcess(t *testing.T) {
 
 	scanner := bufio.NewScanner(os.Stdin)
 	encoder := json.NewEncoder(os.Stdout)
+	rootOutput := os.Getenv("RONIN_MCP_ROOT_OUTPUT")
 	for scanner.Scan() {
 		var request struct {
 			JSONRPC string          `json:"jsonrpc"`
 			ID      json.RawMessage `json:"id,omitempty"`
 			Method  string          `json:"method"`
 			Params  json.RawMessage `json:"params,omitempty"`
+			Result  json.RawMessage `json:"result,omitempty"`
 		}
 		if err := json.Unmarshal(scanner.Bytes(), &request); err != nil {
 			os.Exit(2)
@@ -393,11 +421,29 @@ func TestMCPHelperProcess(t *testing.T) {
 		response := map[string]any{"jsonrpc": "2.0", "id": request.ID}
 		switch request.Method {
 		case "initialize":
+			var params struct {
+				Capabilities struct {
+					Roots map[string]any `json:"roots"`
+				} `json:"capabilities"`
+			}
+			if err := json.Unmarshal(request.Params, &params); err != nil || params.Capabilities.Roots == nil {
+				os.Exit(2)
+			}
 			response["result"] = map[string]any{
 				"protocolVersion": protocolVersion,
 				"capabilities":    map[string]any{"tools": map[string]any{}},
 				"serverInfo":      map[string]string{"name": "test", "version": "1"},
 				"instructions":    "Use echo to repeat text.",
+			}
+			if rootOutput != "" {
+				if err := encoder.Encode(response); err != nil {
+					os.Exit(2)
+				}
+				rootRequest := map[string]any{"jsonrpc": "2.0", "id": 9001, "method": "roots/list", "params": map[string]any{}}
+				if err := encoder.Encode(rootRequest); err != nil {
+					os.Exit(2)
+				}
+				continue
 			}
 		case "tools/list":
 			response["result"] = map[string]any{"tools": []any{map[string]any{
@@ -420,6 +466,20 @@ func TestMCPHelperProcess(t *testing.T) {
 			}
 		default:
 			response["error"] = map[string]any{"code": -32601, "message": "method not found"}
+		}
+		if request.Method == "" && rootOutput != "" {
+			var result struct {
+				Roots []struct {
+					URI string `json:"uri"`
+				} `json:"roots"`
+			}
+			if err := json.Unmarshal(request.Result, &result); err != nil || len(result.Roots) != 1 {
+				os.Exit(2)
+			}
+			if err := os.WriteFile(rootOutput, []byte(result.Roots[0].URI), 0o600); err != nil {
+				os.Exit(2)
+			}
+			continue
 		}
 		if err := encoder.Encode(response); err != nil {
 			os.Exit(2)
