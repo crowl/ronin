@@ -64,6 +64,7 @@ func (e *FailureError) Error() string {
 }
 
 // Run executes a named workflow and reports structured progress.
+// Event callbacks are serialized and must return promptly.
 func Run(ctx context.Context, item Workflow, workingDir, input string, agent AgentFunc, emit func(Event)) Result {
 	result := Result{Name: item.Name, Input: input, Status: StatusCompleted, Summary: "Workflow completed"}
 	if emit != nil {
@@ -171,7 +172,7 @@ func runFile(ctx context.Context, path, workingDir, input string, out io.Writer,
 	var outputErr error
 	agentRuntime := newAgentRuntime(ctx, agent, emit)
 	agentRuntime.worktrees.setWorkingDir(runtimeWorkingDir)
-	registerRonin(state, out, &outputErr, &signal, agentRuntime, runtimeWorkingDir, input, emit)
+	registerRonin(state, out, &outputErr, &signal, agentRuntime, runtimeWorkingDir, input, agentRuntime.emitEvent)
 
 	if err := lua.LoadBuffer(state, string(script), path, ""); err != nil {
 		return fmt.Errorf("parse workflow script %q: %w", path, err)
