@@ -123,11 +123,11 @@ func (c *DefaultCompactor) generateCompactionSummary(ctx context.Context, factSh
 		Text:      prompt.String(),
 	}
 
-	raw, err := c.modelClient.PredictNextStructured(ctx, llm.PredictNextStructuredRequest{
+	raw, err := llm.PredictStructuredObserved(ctx, c.modelClient, llm.PredictNextStructuredRequest{
 		SystemPrompt: "You compact coding conversation context into precise structured JSON.",
 		Messages:     []llm.Message{msg},
 		Schema:       jsonschema.FromType[compactionSummary](),
-	})
+	}, "compaction")
 	if err != nil {
 		return compactionSummary{}, fmt.Errorf("generate structured compaction summary: %w", err)
 	}

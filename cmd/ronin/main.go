@@ -28,6 +28,7 @@ import (
 	"github.com/crowl/ronin/runtime"
 	"github.com/crowl/ronin/session"
 	"github.com/crowl/ronin/session/sqlite"
+	"github.com/crowl/ronin/telemetry"
 	"github.com/crowl/ronin/tool/codenav"
 	"github.com/crowl/ronin/tool/editfile"
 	"github.com/crowl/ronin/tool/fsutil"
@@ -78,6 +79,19 @@ func run() (exitCode int) {
 			return 1
 		}
 		return 0
+	}
+
+	shutdownTelemetry, telemetryErr := telemetry.Setup(context.Background())
+	if telemetryErr != nil {
+		_, _ = fmt.Fprintln(os.Stderr, "telemetry initialization failed; continuing without telemetry")
+	} else {
+		defer func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := shutdownTelemetry(ctx); err != nil {
+				_, _ = fmt.Fprintln(os.Stderr, "telemetry shutdown incomplete")
+			}
+		}()
 	}
 
 	workflowCmd, workflowMode, err := parseWorkflowCommand(flag.Args(), os.Stdin)
@@ -1212,14 +1226,14 @@ func structureWorkflowAgentOutput(ctx context.Context, client llm.ModelClient, r
 	var lastValidationErr error
 
 	for attempt := 0; attempt <= maxStructuredOutputCorrectionAttempts; attempt++ {
-		raw, err := client.PredictNextStructured(ctx, llm.PredictNextStructuredRequest{
+		raw, err := llm.PredictStructuredObserved(ctx, client, llm.PredictNextStructuredRequest{
 			SystemPrompt: "Convert the supplied agent report into JSON matching the requested schema. Preserve its decisions exactly and do not add new work. Return substantive values from the report, never schema examples or placeholders.",
 			Messages: []llm.Message{llm.UserMessage{
 				Timestamp: time.Now(),
 				Text:      prompt,
 			}},
 			Schema: schema,
-		})
+		}, "workflow_output")
 		if err != nil {
 			return nil, err
 		}

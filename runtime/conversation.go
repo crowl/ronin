@@ -12,7 +12,9 @@ import (
 	"github.com/crowl/ronin/config"
 	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/session"
+	"github.com/crowl/ronin/telemetry"
 	"github.com/crowl/ronin/tool"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 type Compactor interface {
@@ -600,7 +602,21 @@ func (c *Conversation) updateMetadata(ctx context.Context, updated session.Sessi
 	})
 }
 
-func (c *Conversation) run(ctx context.Context, prompt string, events chan<- Event) error {
+func (c *Conversation) run(ctx context.Context, prompt string, events chan<- Event) (runErr error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	ctx = telemetry.WithModel(ctx, c.Model().Provider, c.Model().Name)
+	ctx, promptOp := telemetry.StartScope(ctx, "prompt_turn", attribute.String("ronin.session.id", c.session.ID))
+	defer func() { promptOp.End(runErr) }()
+	promptCtx := ctx
+	var cycleOp *telemetry.Operation
+	defer func() {
+		if cycleOp != nil {
+			cycleOp.End(runErr)
+		}
+	}()
+	cycleCount := 0
+	defer func() { promptOp.Attributes(attribute.Int("ronin.cycle.count", cycleCount)) }()
 	started := false
 	finished := false
 	finish := func(err error) error {
@@ -646,6 +662,11 @@ func (c *Conversation) run(ctx context.Context, prompt string, events chan<- Eve
 
 	contextRetryUsed := false
 	for turn := 0; turn < c.maxTurns; {
+		if cycleOp != nil {
+			cycleOp.End(nil)
+		}
+		cycleCount++
+		ctx, cycleOp = telemetry.StartScope(promptCtx, "cycle", attribute.Int("ronin.cycle.index", cycleCount))
 		if c.shouldCompact() {
 			if err := c.compact(ctx); err != nil {
 				return finish(fmt.Errorf("automatic context compaction: %w", err))
@@ -663,7 +684,7 @@ func (c *Conversation) run(ctx context.Context, prompt string, events chan<- Eve
 		predictionFinished := false
 		requestMessages := llm.ProjectMessagesForProvider(c.messages, c.modelClient.Model().Provider)
 		request := llm.PredictNextRequest{SystemPrompt: c.systemPrompt, Tools: append([]llm.Tool(nil), c.toolDefs...), Messages: requestMessages}
-		predictionEventsCh, predictionErrCh := c.modelClient.PredictNext(ctx, request)
+		predictionEventsCh, predictionErrCh := predictObserved(ctx, c.modelClient, request)
 		for event := range predictionEventsCh {
 			switch typed := event.(type) {
 			case llm.PredictionStarted:
@@ -842,16 +863,26 @@ func completionError(reason llm.StopReason) error {
 	}
 }
 
-func (c *Conversation) executeToolCall(ctx context.Context, events chan<- Event, toolCall llm.ToolCallBlock) error {
+func (c *Conversation) executeToolCall(ctx context.Context, events chan<- Event, toolCall llm.ToolCallBlock) (callErr error) {
+	ctx, op := telemetry.Start(ctx, "tool", attribute.String("gen_ai.tool.name", toolCall.Name), attribute.String("gen_ai.tool.call.id", toolCall.ID))
+	observation := &toolObservation{op: op}
+	ctx = context.WithValue(ctx, toolOperationKey{}, observation)
+	op.Attributes(attribute.Int("ronin.tool.arguments.size", len(toolCall.Arguments)))
+	var executionErr error
+	defer func() { op.End(errors.Join(executionErr, callErr, observation.err)) }()
 	t, ok := c.toolByName[toolCall.Name]
 	if !ok {
-		return c.failToolCall(ctx, events, nil, toolCall, fmt.Errorf("tool %q not found", toolCall.Name))
+		executionErr = fmt.Errorf("tool %q not found", toolCall.Name)
+		op.Attributes(attribute.Bool("ronin.tool.rejected", true))
+		return c.failToolCall(ctx, events, nil, toolCall, executionErr)
 	}
 	callTitle := t.Name()
 	if titleProvider, ok := t.(ToolCallTitleProvider); ok {
 		var err error
 		callTitle, err = titleProvider.CallTitle(toolCall.Arguments)
 		if err != nil {
+			executionErr = err
+			op.Attributes(attribute.Bool("ronin.tool.rejected", true))
 			return c.finishToolCall(ctx, events, t, toolCall, nil, err)
 		}
 	}
@@ -862,10 +893,12 @@ func (c *Conversation) executeToolCall(ctx context.Context, events chan<- Event,
 	}
 	if incrementalTool, ok := t.(IncrementalTool); ok {
 		result, err := c.callIncrementalTool(ctx, events, incrementalTool, toolCall)
-		return c.finishToolCall(ctx, events, t, toolCall, result, err)
+		executionErr = err
+		return c.finishToolCall(ctx, events, t, toolCall, result, executionErr)
 	}
 	result, err := t.Call(ctx, toolCall.Arguments)
-	return c.finishToolCall(ctx, events, t, toolCall, result, err)
+	executionErr = err
+	return c.finishToolCall(ctx, events, t, toolCall, result, executionErr)
 }
 
 func (c *Conversation) callIncrementalTool(ctx context.Context, events chan<- Event, incrementalTool IncrementalTool, toolCall llm.ToolCallBlock) (any, error) {
@@ -881,6 +914,9 @@ func (c *Conversation) callIncrementalTool(ctx context.Context, events chan<- Ev
 }
 
 func (c *Conversation) failToolCall(ctx context.Context, events chan<- Event, executedTool Tool, call llm.ToolCallBlock, execErr error) error {
+	if op, ok := ctx.Value(toolOperationKey{}).(*toolObservation); ok {
+		op.err = execErr
+	}
 	message := llm.ToolErrorMessage{Timestamp: c.now(), ToolCallID: call.ID, ToolName: call.Name, Error: execErr}
 	if err := c.appendMessage(ctx, message); err != nil {
 		return c.reportSaveFailure(ctx, events, nil, err)
@@ -906,6 +942,9 @@ func (c *Conversation) finishToolCall(ctx context.Context, events chan<- Event, 
 	if err != nil {
 		execErr = fmt.Errorf("marshal tool %q result: %w", toolCall.Name, err)
 		return c.failToolCall(ctx, events, executedTool, toolCall, execErr)
+	}
+	if observation, ok := ctx.Value(toolOperationKey{}).(*toolObservation); ok {
+		observation.op.Attributes(attribute.Int("ronin.tool.result.size", len(data)))
 	}
 	message := llm.ToolOutputMessage{Timestamp: c.now(), ToolCallID: toolCall.ID, ToolName: toolCall.Name, ToolOutput: string(data)}
 	if err := c.appendMessage(ctx, message); err != nil {
