@@ -21,6 +21,8 @@ const (
 )
 
 // Do sends an HTTP request with the default LLM provider retry policy.
+// It retries 429, 500, 502, 503, 504, and 529 responses up to five total attempts.
+// Transport errors and failures after the response is returned are not retried.
 // The newRequest function is called for each attempt so request bodies can be replayed safely.
 func Do(ctx context.Context, client *http.Client, newRequest func() (*http.Request, error)) (*http.Response, error) {
 	if client == nil {
@@ -54,7 +56,7 @@ func Do(ctx context.Context, client *http.Client, newRequest func() (*http.Reque
 			return nil, err
 		}
 
-		if resp.StatusCode != http.StatusTooManyRequests || attempt == httpRetryMaxAttempts {
+		if !retryableStatus(resp.StatusCode) || attempt == httpRetryMaxAttempts {
 			return resp, nil
 		}
 
@@ -66,6 +68,17 @@ func Do(ctx context.Context, client *http.Client, newRequest func() (*http.Reque
 	}
 
 	return nil, fmt.Errorf("request failed after %d attempts", httpRetryMaxAttempts)
+}
+
+func retryableStatus(status int) bool {
+	switch status {
+	case http.StatusTooManyRequests, http.StatusInternalServerError,
+		http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout,
+		529: // Provider overload (e.g. Anthropic).
+		return true
+	default:
+		return false
+	}
 }
 
 func retryDelay(attempt int, resp *http.Response) time.Duration {

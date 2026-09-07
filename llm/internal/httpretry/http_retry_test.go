@@ -15,39 +15,55 @@ import (
 )
 
 func TestDo(t *testing.T) {
-	t.Run("retries 429 then succeeds", func(t *testing.T) {
+	for _, status := range []int{429, 500, 502, 503, 504, 529} {
+		for _, succeeds := range []bool{true, false} {
+			t.Run(fmt.Sprintf("status %d succeeds %t", status, succeeds), func(t *testing.T) {
+				attempts := 0
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					body, err := io.ReadAll(r.Body)
+					if err != nil || string(body) != "body" {
+						t.Errorf("request body = %q, error = %v", body, err)
+					}
+					attempts++
+					if !succeeds || attempts == 1 {
+						w.Header().Set("Retry-After", "0")
+						http.Error(w, fmt.Sprintf("attempt %d", attempts), status)
+						return
+					}
+					_, _ = w.Write([]byte("ok"))
+				}))
+				defer server.Close()
+
+				resp, err := httpretry.Do(context.Background(), server.Client(), func() (*http.Request, error) {
+					return http.NewRequest(http.MethodPost, server.URL, strings.NewReader("body"))
+				})
+				if err != nil {
+					t.Fatalf("Do() error = %v", err)
+				}
+				defer resp.Body.Close()
+				wantStatus, wantAttempts, wantBody := status, 5, "attempt 5\n"
+				if succeeds {
+					wantStatus, wantAttempts, wantBody = http.StatusOK, 2, "ok"
+				}
+				if resp.StatusCode != wantStatus {
+					t.Fatalf("status = %d, want %d", resp.StatusCode, wantStatus)
+				}
+				if attempts != wantAttempts {
+					t.Fatalf("attempts = %d, want %d", attempts, wantAttempts)
+				}
+				body, err := io.ReadAll(resp.Body)
+				if err != nil || string(body) != wantBody {
+					t.Fatalf("response body = %q, error = %v, want %q", body, err, wantBody)
+				}
+			})
+		}
+	}
+
+	t.Run("does not retry 501", func(t *testing.T) {
 		attempts := 0
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			attempts++
-			if attempts == 1 {
-				w.Header().Set("Retry-After", "0")
-				http.Error(w, "rate limited", http.StatusTooManyRequests)
-				return
-			}
-			_, _ = w.Write([]byte("ok"))
-		}))
-		defer server.Close()
-
-		resp, err := httpretry.Do(context.Background(), server.Client(), func() (*http.Request, error) {
-			return http.NewRequest(http.MethodPost, server.URL, strings.NewReader("body"))
-		})
-		if err != nil {
-			t.Fatalf("Do() error = %v", err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("status = %d, want 200", resp.StatusCode)
-		}
-		if attempts != 2 {
-			t.Fatalf("attempts = %d, want 2", attempts)
-		}
-	})
-
-	t.Run("does not retry 500", func(t *testing.T) {
-		attempts := 0
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			attempts++
-			http.Error(w, "temporary", http.StatusInternalServerError)
+			http.Error(w, "temporary", http.StatusNotImplemented)
 		}))
 		defer server.Close()
 
@@ -58,8 +74,8 @@ func TestDo(t *testing.T) {
 			t.Fatalf("Do() error = %v", err)
 		}
 		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusInternalServerError {
-			t.Fatalf("status = %d, want 500", resp.StatusCode)
+		if resp.StatusCode != http.StatusNotImplemented {
+			t.Fatalf("status = %d, want 501", resp.StatusCode)
 		}
 		if attempts != 1 {
 			t.Fatalf("attempts = %d, want 1", attempts)
@@ -89,12 +105,12 @@ func TestDo(t *testing.T) {
 		}
 	})
 
-	t.Run("does not retry 503", func(t *testing.T) {
+	t.Run("does not retry 403", func(t *testing.T) {
 		attempts := 0
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			attempts++
 			w.Header().Set("Retry-After", "0")
-			http.Error(w, fmt.Sprintf("attempt %d", attempts), http.StatusServiceUnavailable)
+			http.Error(w, fmt.Sprintf("attempt %d", attempts), http.StatusForbidden)
 		}))
 		defer server.Close()
 
@@ -105,8 +121,8 @@ func TestDo(t *testing.T) {
 			t.Fatalf("Do() error = %v", err)
 		}
 		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusServiceUnavailable {
-			t.Fatalf("status = %d, want 503", resp.StatusCode)
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403", resp.StatusCode)
 		}
 		if attempts != 1 {
 			t.Fatalf("attempts = %d, want 1", attempts)
