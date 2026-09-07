@@ -42,7 +42,13 @@ func Open(ctx context.Context, cfg StoreConfig) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve database path %q: %w", cfg.Path, err)
 	}
-	dsn := (&url.URL{Scheme: "file", Path: path}).String() +
+	// File URIs use slash-separated absolute paths, including a leading slash
+	// before a Windows drive letter. Otherwise net/url emits a URI authority.
+	uriPath := filepath.ToSlash(path)
+	if !strings.HasPrefix(uriPath, "/") {
+		uriPath = "/" + uriPath
+	}
+	dsn := (&url.URL{Scheme: "file", Path: uriPath}).String() +
 		"?_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)&_pragma=journal_mode(WAL)&_txlock=immediate"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {

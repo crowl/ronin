@@ -104,7 +104,12 @@ func (i *Index) snapshot(ctx context.Context) (records []fileRecord, status Stat
 	}
 	key := fmt.Sprintf("%x", sha256.Sum256([]byte(workspace+"\x00"+cacheVersion)))
 	dbPath := filepath.Join(resolvedCache, key+".db")
-	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: dbPath}).String()+"?_pragma=busy_timeout(1000)&_txlock=immediate")
+	// A Windows drive path must be /C:/... in a file URI, not an authority.
+	uriPath := filepath.ToSlash(dbPath)
+	if !strings.HasPrefix(uriPath, "/") {
+		uriPath = "/" + uriPath
+	}
+	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: uriPath}).String()+"?_pragma=busy_timeout(1000)&_txlock=immediate")
 	if err != nil {
 		return nil, status, err
 	}
