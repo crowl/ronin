@@ -197,6 +197,12 @@ func (app *app) handleAppEvent(ctx context.Context, event event) error {
 	case mcpActivationDone:
 		app.cancelFunc = nil
 		return app.applyUpdate(ctx, app.model.finishMCPActivation(typedEvent.Item, typedEvent.Activated, typedEvent.Err))
+	case shellOutputReceived:
+		app.model.shellOutput(typedEvent)
+		app.requestRender()
+	case shellCommandDone:
+		app.cancelFunc = nil
+		return app.applyUpdate(ctx, app.model.finishShell(typedEvent.Command, typedEvent.Result, typedEvent.Err))
 	case workflowEventReceived:
 		return app.applyUpdate(ctx, app.model.handleWorkflowEvent(typedEvent.Event, time.Now()))
 	case workflowDone:
@@ -255,6 +261,23 @@ func (app *app) applyUpdate(ctx context.Context, update modelUpdate) error {
 }
 
 func (app *app) submitPrompt(ctx context.Context, prompt string) {
+	if command, recognized := parseShellSubmission(prompt); recognized {
+		if command == "" {
+			return
+		}
+		if app.model.working {
+			app.model.boxes = append(app.model.boxes, systemMessageBox{Text: "Shell command rejected: another operation is active"})
+			app.requestRender()
+			return
+		}
+		app.startShell(ctx, command)
+		return
+	}
+	if app.model.shellRunning {
+		app.model.boxes = append(app.model.boxes, systemMessageBox{Text: "Prompt rejected: a shell command is running"})
+		app.requestRender()
+		return
+	}
 	if app.model.working {
 		app.model.queueSteeringPrompt(prompt)
 		app.requestRender()

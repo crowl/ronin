@@ -15,6 +15,32 @@
 - Project instructions through `AGENTS.md`
 - Reusable skills and Lua workflows
 
+## Local shell commands
+
+In the TUI, submit text beginning with `!` to run a local shell command, for example:
+
+```text
+!git status --short
+!go test ./... 2>&1 | tail -30
+```
+
+Commands run non-interactively in Ronin's working directory. Output streams into
+scrollback, and completion shows the exit code or error. Use the normal cancel
+key to stop execution. A bare `!` does nothing. While a shell command is running,
+other prompts and commands are rejected rather than queued.
+
+Commands, captured stdout/stderr, and completion status are saved in session
+history and restored on resume, but **never sent to the model**, including during
+compaction. Rewind retains this local execution audit; a fork starts a separate
+local audit. An execution without a saved completion is shown as interrupted on
+resume. Rewinding does not undo filesystem changes made by commands.
+
+Capture is limited to 128 KiB per output stream, with visible truncation. Commands
+use the shell tool's existing timeout (five minutes). Interactive programs and
+persistent shell state (such as `cd` affecting later commands) are not supported.
+Shell commands execute with your normal local permissions, and their output may
+contain secrets that will be stored in the session database.
+
 ## OpenTelemetry
 
 Ronin can export traces and metrics to any standard OTLP collector. Export is off by default: unset exporter selectors default to `none` in Ronin. Set `OTEL_TRACES_EXPORTER=otlp` and/or `OTEL_METRICS_EXPORTER=otlp` to enable each signal independently; `none` disables that signal. Only `otlp` and `none` are supported. No custom environment variables are required:

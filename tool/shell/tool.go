@@ -69,6 +69,15 @@ func (r Result) Artifacts() []tool.Artifact {
 	return artifacts
 }
 
+// Run executes a non-interactive local command with bounded captured output.
+// emit may be called concurrently for stdout and stderr and must not block
+// indefinitely. A nil callback disables streaming; cancellation retains output.
+func Run(ctx context.Context, command, cwd string, maxOutput int64, emit func(tool.Artifact) error) (Result, error) {
+	t := New(cwd)
+	return t.callIncremental(ctx, Args{Command: command, MaxOutputBytes: maxOutput}, emit)
+}
+
+// New creates a shell tool without command policy restrictions.
 func New(cwd string) *Tool {
 	return NewWithPolicy(cwd, AllowAll{})
 }
@@ -126,6 +135,9 @@ func (t *Tool) call(ctx context.Context, args Args) (Result, error) {
 }
 
 func (t *Tool) callIncremental(ctx context.Context, args Args, emit func(tool.Artifact) error) (Result, error) {
+	if err := ctx.Err(); err != nil {
+		return Result{}, err
+	}
 	if t.policy != nil {
 		if err := t.policy.Allow(args); err != nil {
 			return Result{}, err
@@ -186,6 +198,7 @@ func (t *Tool) callIncremental(ctx context.Context, args Args, emit func(tool.Ar
 		done <- cmd.Wait()
 	}()
 
+	var runErr error
 	var waitErr error
 	timedOut := false
 	cleanupTimedOut := false
@@ -204,7 +217,7 @@ func (t *Tool) callIncremental(ctx context.Context, args Args, emit func(tool.Ar
 		if errors.Is(cmdCtx.Err(), context.DeadlineExceeded) {
 			timedOut = true
 		} else {
-			return Result{}, cmdCtx.Err()
+			runErr = cmdCtx.Err()
 		}
 	}
 
@@ -213,7 +226,7 @@ func (t *Tool) callIncremental(ctx context.Context, args Args, emit func(tool.Ar
 	exitCode := 0
 	success := true
 
-	if timedOut {
+	if timedOut || runErr != nil {
 		success = false
 		exitCode = -1
 	} else if waitErr != nil {
@@ -237,7 +250,7 @@ func (t *Tool) callIncremental(ctx context.Context, args Args, emit func(tool.Ar
 		DurationMS:      duration.Milliseconds(),
 		TimedOut:        timedOut,
 		CleanupTimedOut: cleanupTimedOut,
-	}, nil
+	}, runErr
 }
 
 func buildEnv(extra map[string]string) []string {

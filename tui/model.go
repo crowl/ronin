@@ -10,7 +10,9 @@ import (
 
 	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/runtime"
+	"github.com/crowl/ronin/session"
 	"github.com/crowl/ronin/tool"
+	"github.com/crowl/ronin/tool/shell"
 	"github.com/crowl/ronin/tui/internal/editor"
 	"github.com/crowl/ronin/tui/internal/terminal"
 	"github.com/crowl/ronin/workflow"
@@ -51,8 +53,10 @@ type appModel struct {
 	workingLabel  string
 	toolsExpanded bool
 
-	steeringPrompt string
-	workflowInput  *workflow.Workflow
+	shellRunning     bool
+	shellOutputIndex int
+	steeringPrompt   string
+	workflowInput    *workflow.Workflow
 
 	indicatorFrame int
 
@@ -123,8 +127,26 @@ func (m *appModel) populateInitialBoxes(conversation Conversation) {
 	}
 	m.usage = conversation.ContextUsage()
 	messages := conversation.Messages()
+	history := make([]session.Event, 0, len(messages))
 	for _, message := range messages {
-		switch msg := message.(type) {
+		history = append(history, session.Event{Type: session.EventMessage, Message: message})
+	}
+	if local, ok := conversation.(shellHistory); ok {
+		history = local.DisplayHistory()
+	}
+	unfinished := map[string]bool{}
+	for _, event := range history {
+		if event.Type != session.EventMessage {
+			m.appendShellHistory(event)
+			if event.ShellCommand != nil {
+				unfinished[event.ShellCommand.ID] = true
+			}
+			if event.ShellStatus != nil {
+				delete(unfinished, event.ShellStatus.ID)
+			}
+			continue
+		}
+		switch msg := event.Message.(type) {
 		case llm.UserMessage:
 			m.boxes = append(m.boxes, userMessageBox{Text: msg.Text})
 		case llm.ErrorMessage:
@@ -180,6 +202,9 @@ func (m *appModel) populateInitialBoxes(conversation Conversation) {
 				}
 			}
 		}
+	}
+	if len(unfinished) > 0 {
+		m.boxes = append(m.boxes, systemMessageBox{Text: "Shell execution interrupted before completion was recorded"})
 	}
 }
 
@@ -304,6 +329,45 @@ func (m *appModel) applyHistoryChange(conversation Conversation, prompt, message
 	m.boxLineCache.Reset()
 	m.statusBarCache.Reset()
 	m.editor.SetText(prompt)
+}
+
+func (m *appModel) startShell(command string) {
+	m.shellRunning = true
+	m.boxes = append(m.boxes, systemMessageBox{Text: "$ " + shellText(command)})
+	m.shellOutputIndex = len(m.boxes)
+	m.boxes = append(m.boxes, systemMessageBox{})
+	m.working = true
+	m.workingLabel = "Running shell command"
+	m.indicatorFrame = 0
+	m.saveError = ""
+}
+
+func (m *appModel) finishShell(command string, result shell.Result, err error) modelUpdate {
+	m.shellRunning = false
+	m.working = false
+	m.workingLabel = ""
+	text := "stdout:\n" + shellText(result.Stdout)
+	if result.Stderr != "" {
+		text += "\nstderr:\n" + shellText(result.Stderr)
+	}
+	if result.StdoutTruncated || result.StderrTruncated {
+		text += "\n[output truncated]"
+	}
+	if result.Command != "" {
+		text += fmt.Sprintf("\nShell exit code %d", result.ExitCode)
+	}
+	if result.TimedOut {
+		text += " [timed out]"
+	}
+	if result.CleanupTimedOut {
+		text += " [process cleanup timed out]"
+	}
+	if err != nil {
+		text += "\nShell error: " + shellText(err.Error())
+	}
+	m.boxes[m.shellOutputIndex] = systemMessageBox{Text: text}
+	m.boxLineCache.Reset()
+	return modelUpdate{Render: true}
 }
 
 func (m *appModel) startPrompt(prompt string) {
