@@ -1,0 +1,11 @@
+(function_declaration name: (identifier) @name) @function
+(function_signature name: (identifier) @name) @function
+(variable_declarator name: (identifier) @name) @variable
+(class_declaration name: (type_identifier) @name) @class
+(abstract_class_declaration name: (type_identifier) @name) @class
+(interface_declaration name: (type_identifier) @name) @interface
+(type_alias_declaration name: (type_identifier) @name) @type
+(method_definition name: (property_identifier) @name) @method
+(method_signature name: (property_identifier) @name) @method
+(abstract_method_signature name: (property_identifier) @name) @method
+(enum_declaration name: (identifier) @name) @enum
