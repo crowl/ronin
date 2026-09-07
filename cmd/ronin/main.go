@@ -28,6 +28,7 @@ import (
 	"github.com/crowl/ronin/runtime"
 	"github.com/crowl/ronin/session"
 	"github.com/crowl/ronin/session/sqlite"
+	"github.com/crowl/ronin/tool/codenav"
 	"github.com/crowl/ronin/tool/editfile"
 	"github.com/crowl/ronin/tool/fsutil"
 	"github.com/crowl/ronin/tool/readfile"
@@ -237,6 +238,8 @@ func run() (exitCode int) {
 	mutationQueue := fsutil.NewMutationQueue()
 
 	baseTools := []runtime.Tool{
+		codenav.NewMap(workingDir),
+		codenav.NewFind(workingDir),
 		readfile.New(workingDir, readCache),
 		editfile.New(workingDir, mutationQueue),
 		writefile.New(workingDir, mutationQueue),
@@ -724,6 +727,8 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string, mcpT
 		readCache := fsutil.NewReadCache()
 		mutationQueue := fsutil.NewMutationQueue()
 		defaultTools = []runtime.Tool{
+			codenav.NewMap(workingDir),
+			codenav.NewFind(workingDir),
 			readfile.New(workingDir, readCache),
 			editfile.New(workingDir, mutationQueue),
 			writefile.New(workingDir, mutationQueue),
@@ -832,10 +837,12 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string, mcpT
 
 func managedWorkflowAgentTools(workingDir string, readOnly bool) []runtime.Tool {
 	if readOnly {
-		return []runtime.Tool{readfile.NewRestricted(workingDir, fsutil.NewReadCache())}
+		return []runtime.Tool{readfile.NewRestricted(workingDir, fsutil.NewReadCache()), codenav.NewMap(workingDir), codenav.NewFind(workingDir)}
 	}
 	mutationQueue := fsutil.NewMutationQueue()
 	return []runtime.Tool{
+		codenav.NewMap(workingDir),
+		codenav.NewFind(workingDir),
 		readfile.NewRestricted(workingDir, fsutil.NewReadCache()),
 		editfile.NewRestricted(workingDir, mutationQueue),
 		writefile.NewRestricted(workingDir, mutationQueue),
@@ -844,7 +851,7 @@ func managedWorkflowAgentTools(workingDir string, readOnly bool) []runtime.Tool 
 
 func workflowAgentTools(workingDir string, readOnly bool, defaultTools, mcpTools []runtime.Tool) []runtime.Tool {
 	if readOnly {
-		return []runtime.Tool{readfile.New(workingDir, fsutil.NewReadCache())}
+		return []runtime.Tool{readfile.New(workingDir, fsutil.NewReadCache()), codenav.NewMap(workingDir), codenav.NewFind(workingDir)}
 	}
 	tools := append([]runtime.Tool(nil), defaultTools...)
 	return append(tools, mcpTools...)

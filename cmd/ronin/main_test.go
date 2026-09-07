@@ -34,10 +34,10 @@ func TestWorkflowAgentTools(t *testing.T) {
 	}
 	mcpTools := []runtime.Tool{fakePromptTool{name: "mcp__tool"}}
 
-	t.Run("read-only agent receives only read_file", func(t *testing.T) {
+	t.Run("read-only agent receives navigation and read_file", func(t *testing.T) {
 		tools := workflowAgentTools(t.TempDir(), true, defaultTools, mcpTools)
-		if got := toolNames(tools); !reflect.DeepEqual(got, []string{"read_file"}) {
-			t.Fatalf("tool names = %v, want [read_file]", got)
+		if got := toolNames(tools); !reflect.DeepEqual(got, []string{"read_file", "code_map", "code_find"}) {
+			t.Fatalf("tool names = %v, want [read_file code_map code_find]", got)
 		}
 	})
 
@@ -51,16 +51,16 @@ func TestWorkflowAgentTools(t *testing.T) {
 
 	t.Run("managed writable agent has file tools without shell", func(t *testing.T) {
 		tools := managedWorkflowAgentTools(t.TempDir(), false)
-		want := []string{"read_file", "edit_file", "write_file"}
+		want := []string{"code_map", "code_find", "read_file", "edit_file", "write_file"}
 		if got := toolNames(tools); !reflect.DeepEqual(got, want) {
 			t.Fatalf("tool names = %v, want %v", got, want)
 		}
 	})
 
-	t.Run("managed read-only agent receives only read_file", func(t *testing.T) {
+	t.Run("managed read-only agent receives navigation and read_file", func(t *testing.T) {
 		tools := managedWorkflowAgentTools(t.TempDir(), true)
-		if got := toolNames(tools); !reflect.DeepEqual(got, []string{"read_file"}) {
-			t.Fatalf("tool names = %v, want [read_file]", got)
+		if got := toolNames(tools); !reflect.DeepEqual(got, []string{"read_file", "code_map", "code_find"}) {
+			t.Fatalf("tool names = %v, want [read_file code_map code_find]", got)
 		}
 	})
 }
