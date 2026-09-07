@@ -1,9 +1,11 @@
 package fsutil_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/crowl/ronin/fsutil"
@@ -77,8 +79,76 @@ func TestWriteFileAtomic(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "missing", "file.txt")
 
-		if err := fsutil.WriteFileAtomic(path, []byte("data"), 0o644); err == nil {
+		err := fsutil.WriteFileAtomic(path, []byte("data"), 0o644)
+		if err == nil {
 			t.Fatal("WriteFileAtomic() error = nil, want error")
+		}
+		if !strings.Contains(err.Error(), "write file \""+path+"\": create temporary file:") {
+			t.Fatalf("error = %v, want temporary-file creation context for %q", err, path)
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("errors.Is(error, os.ErrNotExist) = false, error = %v", err)
+		}
+		var pathErr *os.PathError
+		if !errors.As(err, &pathErr) {
+			t.Fatalf("errors.As(error, *os.PathError) = false, error = %v", err)
+		}
+	})
+
+	t.Run("preserves existing directory after rename failure", func(t *testing.T) {
+		parent := t.TempDir()
+		path := filepath.Join(parent, "destination")
+		if err := os.Mkdir(path, 0o755); err != nil {
+			t.Fatalf("os.Mkdir() error = %v", err)
+		}
+		entry := filepath.Join(path, "existing.txt")
+		const contents = "existing contents"
+		if err := os.WriteFile(entry, []byte(contents), 0o644); err != nil {
+			t.Fatalf("os.WriteFile() error = %v", err)
+		}
+
+		err := fsutil.WriteFileAtomic(path, []byte("replacement"), 0o644)
+		if err == nil {
+			t.Fatal("WriteFileAtomic() error = nil, want error")
+		}
+		if !strings.Contains(err.Error(), "write file \""+path+"\": rename temporary file:") {
+			t.Fatalf("error = %v, want rename context for %q", err, path)
+		}
+		var linkErr *os.LinkError
+		if !errors.As(err, &linkErr) {
+			t.Fatalf("errors.As(error, *os.LinkError) = false, error = %v", err)
+		}
+		if linkErr.Op != "rename" {
+			t.Fatalf("LinkError.Op = %q, want rename", linkErr.Op)
+		}
+		if linkErr.New != path {
+			t.Fatalf("LinkError.New = %q, want %q", linkErr.New, path)
+		}
+		if !errors.Is(err, linkErr.Err) {
+			t.Fatalf("errors.Is(error, linkErr.Err) = false, error = %v", err)
+		}
+
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("os.Stat() error = %v", err)
+		}
+		if !info.IsDir() {
+			t.Fatalf("destination is not a directory")
+		}
+		got, err := os.ReadFile(entry)
+		if err != nil {
+			t.Fatalf("os.ReadFile() error = %v", err)
+		}
+		if string(got) != contents {
+			t.Fatalf("existing content = %q, want %q", got, contents)
+		}
+
+		entries, err := os.ReadDir(parent)
+		if err != nil {
+			t.Fatalf("os.ReadDir() error = %v", err)
+		}
+		if len(entries) != 1 || entries[0].Name() != "destination" {
+			t.Fatalf("parent entries = %v, want only destination", entries)
 		}
 	})
 }
