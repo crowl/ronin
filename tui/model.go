@@ -25,18 +25,15 @@ const (
 	pendingTextDeltaThinking
 	pendingTextDeltaAssistant
 
-	maxWorkflowEntries    = 1024
 	maxWorkflowNameSize   = 256
 	maxWorkflowStatusSize = 32
-	maxWorkflowTextSize   = 16 * 1024
 	maxWorkflowDetailSize = 128 * 1024
 
-	maxWorkflowDisplayBytes       = 1 * 1024 * 1024
-	maxWorkflowTimelineBytes      = 960 * 1024
 	maxWorkflowSummaryBytes       = 64 * 1024
 	maxWorkflowVisualLines        = 1000
-	maxWorkflowTimelineLines      = 900
-	maxWorkflowSummaryLines       = 100
+	maxWorkflowSummaryLines       = 6
+	maxWorkflowRecentSteps        = 5
+	maxWorkflowStepErrorSize      = 1024
 	maxWorkflowLatestActivitySize = 256
 )
 
@@ -398,64 +395,69 @@ func (m *appModel) handleWorkflowEvent(event workflow.Event, now time.Time) mode
 		return modelUpdate{}
 	}
 	box := m.boxes[index].(workflowBox)
+	if !box.EndedAt.IsZero() {
+		return modelUpdate{}
+	}
 	switch event := event.(type) {
 	case workflow.Log:
-		appendWorkflowBoxEntry(&box, workflowEntry{Text: event.Text})
+		box.LatestActivity = boundWorkflowText(event.Text, maxWorkflowLatestActivitySize)
 	case workflow.AgentStarted:
-		appendWorkflowBoxEntry(&box, workflowEntry{Text: fmt.Sprintf("Agent %d started", event.Invocation), Detail: event.Request.Prompt, Lifecycle: true})
-	case workflow.AgentEventReceived:
-		switch progress := event.Event.(type) {
-		case workflow.AgentThinkingDelta:
-			appendWorkflowBoxEntry(&box, workflowEntry{Text: fmt.Sprintf("Agent %d thinking", event.Invocation), Detail: progress.Text})
-		case workflow.AgentTextDelta:
-			appendWorkflowBoxEntry(&box, workflowEntry{Text: fmt.Sprintf("Agent %d response", event.Invocation), Detail: progress.Text})
-		case workflow.AgentToolStarted:
-			title := boundWorkflowText(progress.Title, maxWorkflowTextSize)
-			appendWorkflowBoxEntry(&box, workflowEntry{Text: fmt.Sprintf("Agent %d: %s", event.Invocation, title), Lifecycle: true})
-		case workflow.AgentToolOutput:
-			appendWorkflowBoxEntry(&box, workflowEntry{Text: fmt.Sprintf("Agent %d tool output", event.Invocation), Artifacts: []tool.Artifact{progress.Artifact}})
-		case workflow.AgentToolFailed:
-			appendWorkflowBoxEntry(&box, workflowEntry{Text: fmt.Sprintf("Agent %d tool failed", event.Invocation), Detail: progress.Error, Lifecycle: true})
+		for _, step := range box.Active {
+			if step.Invocation == event.Invocation {
+				return modelUpdate{}
+			}
 		}
+		name := boundWorkflowText(event.Request.Name, maxWorkflowNameSize)
+		if strings.TrimSpace(name) == "" {
+			name = fmt.Sprintf("Agent %d", event.Invocation)
+		}
+		box.Active = append(box.Active, workflowStep{Invocation: event.Invocation, Name: name, Status: "running", StartedAt: now})
 	case workflow.AgentFinished:
-		text := fmt.Sprintf("Agent %d finished", event.Invocation)
-		if event.Error != "" {
-			text = fmt.Sprintf("Agent %d failed", event.Invocation)
+		for i, step := range box.Active {
+			if step.Invocation != event.Invocation {
+				continue
+			}
+			step.Status = "completed"
+			if event.Cancelled {
+				step.Status = "cancelled"
+			} else if event.Error != "" {
+				step.Status = "failed"
+			}
+			step.Error = boundWorkflowText(event.Error, maxWorkflowStepErrorSize)
+			step.EndedAt = now
+			box.recordFinishedStep(step)
+			box.Active = slices.Delete(box.Active, i, i+1)
+			break
 		}
-		detail, _ := appendWorkflowText(boundWorkflowText(event.Text, maxWorkflowDetailSize), boundWorkflowText(event.Error, maxWorkflowDetailSize), maxWorkflowDetailSize)
-		appendWorkflowBoxEntry(&box, workflowEntry{Text: text, Detail: detail, Lifecycle: true})
 	case workflow.Finished:
 		box.Status = boundWorkflowText(string(event.Result.Status), maxWorkflowStatusSize)
 		box.Summary = boundWorkflowSummary(event.Result.Summary)
 		box.EndedAt = now
+		for _, step := range box.Active {
+			// A terminal workflow cannot leave an invocation running, even if
+			// its individual completion event was not delivered.
+			step.Status = "cancelled"
+			if event.Result.Status == workflow.StatusFailed {
+				step.Status = "failed"
+			}
+			step.EndedAt = now
+			box.recordFinishedStep(step)
+		}
+		box.Active = nil
+	default:
+		// Agent transcripts belong to internal workflow handoffs, not the TUI.
+		return modelUpdate{}
 	}
 	m.boxes[index] = box
 	return modelUpdate{Render: true}
 }
 
-func workflowTimelineCapacity(box workflowBox) int {
-	fixed := len(box.Name) + len(box.Input) + maxWorkflowStatusSize + maxWorkflowLatestActivitySize + maxWorkflowSummaryBytes
-	return min(maxWorkflowTimelineBytes, max(0, maxWorkflowDisplayBytes-fixed))
-}
-
-func appendWorkflowBoxEntry(box *workflowBox, entry workflowEntry) {
-	if box.TimelineTruncated {
-		if entry.Lifecycle {
-			box.LatestActivity = truncateWorkflowText(entry.Text, maxWorkflowLatestActivitySize)
-		}
-		return
+func (b *workflowBox) recordFinishedStep(step workflowStep) {
+	b.Completed++
+	if len(b.Recent) == maxWorkflowRecentSteps {
+		b.Recent = slices.Delete(b.Recent, 0, 1)
 	}
-
-	remaining := workflowTimelineCapacity(*box) - box.TimelineBytes
-	updated, used, truncated := appendWorkflowEntryBounded(box.Entries, entry, remaining)
-	box.Entries = updated
-	box.TimelineBytes += used
-	if truncated {
-		box.TimelineTruncated = true
-		if entry.Lifecycle {
-			box.LatestActivity = truncateWorkflowText(entry.Text, maxWorkflowLatestActivitySize)
-		}
-	}
+	b.Recent = append(b.Recent, step)
 }
 
 func (m *appModel) finishWorkflow(err error) modelUpdate {
@@ -710,28 +712,11 @@ func (m *appModel) recordCommand(item menuItem, err error) {
 	}
 }
 
-func (m *appModel) boundWorkflowVisualTimeline(width int, now time.Time) {
-	if width < 1 {
-		width = 1
-	}
-	for index, block := range m.boxes {
-		workflow, ok := block.(workflowBox)
-		if !ok || workflow.TimelineTruncated {
-			continue
-		}
-		_, truncated := renderWorkflowBoxLinesState(workflow, width, m.toolsExpanded, now)
-		if truncated {
-			workflow.TimelineTruncated = true
-			m.boxes[index] = workflow
-		}
-	}
-}
 func (m *appModel) lines(width int, conversation Conversation, now time.Time) ([]string, error) {
 	if !m.working {
 		m.usage = conversation.ContextUsage()
 	}
 	m.flushPendingTextDelta()
-	m.boundWorkflowVisualTimeline(width, now)
 
 	lines := []string{""}
 	appendBlankLine := func() {

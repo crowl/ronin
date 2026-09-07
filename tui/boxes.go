@@ -24,24 +24,26 @@ type toolCallBox struct {
 	EndedAt          time.Time
 }
 
-type workflowEntry struct {
-	Text      string
-	Detail    string
-	Artifacts []tool.Artifact
-	Lifecycle bool
+type workflowStep struct {
+	Invocation int
+	Name       string
+	Status     string
+	Error      string
+	StartedAt  time.Time
+	EndedAt    time.Time
 }
 
 type workflowBox struct {
-	Name              string
-	Input             string
-	Status            string
-	Summary           string
-	Entries           []workflowEntry
-	TimelineBytes     int
-	TimelineTruncated bool
-	LatestActivity    string
-	StartedAt         time.Time
-	EndedAt           time.Time
+	Name           string
+	Input          string
+	Status         string
+	Summary        string
+	Active         []workflowStep
+	Recent         []workflowStep
+	Completed      int
+	LatestActivity string
+	StartedAt      time.Time
+	EndedAt        time.Time
 }
 
 type systemMessageBox struct{ Text string }

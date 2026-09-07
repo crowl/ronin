@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -11,81 +10,205 @@ import (
 	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/tool"
 	"github.com/crowl/ronin/tui/internal/terminal"
+	"github.com/crowl/ronin/tui/internal/text"
 	"github.com/crowl/ronin/workflow"
 )
 
 func TestWorkflowInputMode(t *testing.T) {
-	model, err := newAppModel([]Command{InvokeWorkflow{Workflow: workflow.Workflow{Name: "implement"}}})
-	if err != nil {
-		t.Fatalf("newAppModel() error = %v", err)
-	}
+	model := mustWorkflowModel(t)
 	model.enterWorkflowInput(workflow.Workflow{Name: "implement", Path: "/workflow.lua"})
 	if got := model.editorLabel(); got != "workflow implement input" {
 		t.Fatalf("editorLabel() = %q", got)
 	}
-
 	if _, err := model.handleKey(terminal.Key{Type: terminal.KeyRune, Rune: 'x'}); err != nil {
-		t.Fatalf("handleKey() error = %v", err)
+		t.Fatal(err)
 	}
 	update, err := model.handleKey(terminal.Key{Type: terminal.KeyEnter})
 	if err != nil {
-		t.Fatalf("submit error = %v", err)
+		t.Fatal(err)
 	}
 	action, ok := update.Action.(runWorkflowAction)
-	if !ok || action.Workflow.Name != "implement" || action.Input != "x" {
-		t.Fatalf("submit action = %#v", update.Action)
+	if !ok || action.Workflow.Name != "implement" || action.Input != "x" || model.workflowInput != nil {
+		t.Fatalf("submit action = %#v, input = %#v", update.Action, model.workflowInput)
 	}
-	if model.workflowInput != nil {
-		t.Fatal("workflow input mode remained active")
-	}
-
 	model.enterWorkflowInput(workflow.Workflow{Name: "review"})
 	if _, err := model.handleKey(terminal.Key{Type: terminal.KeyEscape}); err != nil {
-		t.Fatalf("escape error = %v", err)
+		t.Fatal(err)
 	}
 	if model.workflowInput != nil {
 		t.Fatal("escape did not exit workflow input mode")
 	}
 }
 
-func TestWorkflowTimeline(t *testing.T) {
-	model, err := newAppModel([]Command{Exit{}})
-	if err != nil {
-		t.Fatalf("newAppModel() error = %v", err)
+func TestWorkflowConcurrentStepStatus(t *testing.T) {
+	model := mustWorkflowModel(t)
+	model.startWorkflow(workflow.Workflow{Name: "developing"}, "build it")
+	now := time.Now()
+	start := func(id int, name string) {
+		model.handleWorkflowEvent(workflow.AgentStarted{Invocation: id, Request: workflow.AgentRequest{Name: name, Prompt: "secret prompt"}}, now)
 	}
-	item := workflow.Workflow{Name: "implement"}
-	model.startWorkflow(item, "build it")
-	model.handleWorkflowEvent(workflow.Log{Text: "Planning"}, time.Now())
-	model.handleWorkflowEvent(workflow.AgentStarted{Invocation: 1, Request: workflow.AgentRequest{Prompt: "secret detail"}}, time.Now())
-	model.handleWorkflowEvent(workflow.Finished{Result: workflow.Result{Name: "implement", Status: workflow.StatusCompleted, Summary: "done"}}, time.Now())
-
-	box := model.boxes[len(model.boxes)-1].(workflowBox)
-	collapsed := strings.Join(renderBoxLinesAt(box, 80, false, time.Now()), "\n")
-	if !strings.Contains(collapsed, "Planning") || !strings.Contains(collapsed, "done") || strings.Contains(collapsed, "secret detail") {
-		t.Fatalf("collapsed timeline = %q", collapsed)
+	start(1, "Implementing: alpha (cycle 1)")
+	start(2, "Reviewing: beta (cycle 1)")
+	start(2, "duplicate")
+	box := model.boxes[0].(workflowBox)
+	if len(box.Active) != 2 {
+		t.Fatalf("active = %#v", box.Active)
 	}
-	expanded := strings.Join(renderBoxLinesAt(box, 80, true, time.Now()), "\n")
-	if !strings.Contains(expanded, "secret detail") {
-		t.Fatalf("expanded timeline = %q", expanded)
+	lines := renderWorkflowBoxLines(box, 100, false, now.Add(2*time.Second))
+	plain := textWithoutANSI(lines)
+	for _, want := range []string{"2 active", "Implementing: alpha (cycle 1)", "Reviewing: beta (cycle 1)", "2.0s"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("missing %q in %q", want, plain)
+		}
 	}
-
-	model = mustWorkflowModel(t)
-	model.populateInitialBoxes(&fakeConversation{messages: []llm.Message{llm.WorkflowResultMessage{Name: "review", Input: "check", Status: llm.WorkflowStatusCompleted, Summary: "approved"}}})
-	if _, ok := model.boxes[0].(workflowBox); !ok {
-		t.Fatalf("resumed box = %T", model.boxes[0])
+	if !strings.Contains(lines[1], strongStyle.start()) || !strings.Contains(lines[2], strongStyle.start()) {
+		t.Fatalf("active steps are not prominent: %q", lines)
+	}
+	model.handleWorkflowEvent(workflow.AgentFinished{Invocation: 2, Text: "secret report"}, now.Add(3*time.Second))
+	start(3, "Reviewing: beta (cycle 2)")
+	box = model.boxes[0].(workflowBox)
+	if len(box.Active) != 2 || box.Active[0].Invocation != 1 || box.Active[1].Invocation != 3 || box.Completed != 1 || box.Recent[0].Status != "completed" {
+		t.Fatalf("out-of-order completion/retry = %#v", box)
+	}
+	plain = textWithoutANSI(renderWorkflowBoxLines(box, 100, true, now.Add(8*time.Second)))
+	if strings.Contains(plain, "secret") || !strings.Contains(plain, "3.0s") || !strings.Contains(plain, "cycle 2") {
+		t.Fatalf("expanded status = %q", plain)
+	}
+	if strings.Index(plain, "cycle 2") > strings.Index(plain, "completed") {
+		t.Fatalf("completed history precedes active steps: %q", plain)
 	}
 }
 
-func TestWorkflowTimelineCoalescesDeltas(t *testing.T) {
-	entries := appendWorkflowEntry(nil, workflowEntry{Text: "Agent 1 response", Detail: "one"})
-	entries = appendWorkflowEntry(entries, workflowEntry{Text: "Agent 1 response", Detail: " two"})
-	if len(entries) != 1 || entries[0].Detail != "one two" {
-		t.Fatalf("entries = %#v", entries)
+func TestWorkflowDiscardsAgentTranscripts(t *testing.T) {
+	model := mustWorkflowModel(t)
+	model.startWorkflow(workflow.Workflow{Name: "quiet"}, "input")
+	now := time.Now()
+	model.handleWorkflowEvent(workflow.AgentStarted{Invocation: 1}, now)
+	secret := strings.Repeat("secret", 100000)
+	for _, event := range []workflow.AgentEvent{
+		workflow.AgentThinkingDelta{Text: secret},
+		workflow.AgentTextDelta{Text: secret},
+		workflow.AgentToolStarted{Title: secret},
+		workflow.AgentToolOutput{Artifact: tool.FileArtifact{Path: secret, Content: secret}},
+		workflow.AgentToolFailed{Error: secret},
+		workflow.AgentToolEnded{},
+	} {
+		if update := model.handleWorkflowEvent(workflow.AgentEventReceived{Invocation: 1, Event: event}, now); update.Render {
+			t.Fatal("transcript event requested a render")
+		}
 	}
-	entries = appendWorkflowEntry(entries, workflowEntry{Text: "Agent 1 tool output", Artifacts: []tool.Artifact{tool.TextArtifact{Text: "old"}}})
-	entries = appendWorkflowEntry(entries, workflowEntry{Text: "Agent 1 tool output", Artifacts: []tool.Artifact{tool.TextArtifact{Text: "new"}}})
-	if len(entries[1].Artifacts) != 1 || entries[1].Artifacts[0].(tool.TextArtifact).Text != "new" {
-		t.Fatalf("tool artifacts = %#v, want latest only", entries[1].Artifacts)
+	box := model.boxes[0].(workflowBox)
+	if box.Active[0].Name != "Agent 1" || len(box.Recent) != 0 || box.LatestActivity != "" {
+		t.Fatalf("transcript changed status: %#v", box)
+	}
+	for _, expanded := range []bool{false, true} {
+		if got := textWithoutANSI(renderWorkflowBoxLines(box, 80, expanded, now)); strings.Contains(got, "secret") {
+			t.Fatalf("transcript leaked: %q", got)
+		}
+	}
+}
+
+func TestWorkflowTerminalStates(t *testing.T) {
+	for _, status := range []workflow.Status{workflow.StatusCompleted, workflow.StatusFailed, workflow.StatusCancelled} {
+		t.Run(string(status), func(t *testing.T) {
+			model := mustWorkflowModel(t)
+			model.startWorkflow(workflow.Workflow{Name: "test"}, "")
+			now := time.Now()
+			for id := 1; id <= 3; id++ {
+				model.handleWorkflowEvent(workflow.AgentStarted{Invocation: id}, now)
+			}
+			model.handleWorkflowEvent(workflow.AgentFinished{Invocation: 1, Error: "concrete failure"}, now)
+			model.handleWorkflowEvent(workflow.AgentFinished{Invocation: 2, Error: "context canceled", Cancelled: true}, now)
+			box := model.boxes[0].(workflowBox)
+			if box.Recent[0].Status != "failed" || box.Recent[1].Status != "cancelled" {
+				t.Fatalf("step outcomes = %#v", box.Recent)
+			}
+			model.handleWorkflowEvent(workflow.Finished{Result: workflow.Result{Status: status, Summary: "final outcome"}}, now.Add(time.Second))
+			model.handleWorkflowEvent(workflow.AgentStarted{Invocation: 4}, now)
+			box = model.boxes[0].(workflowBox)
+			if len(box.Active) != 0 || box.EndedAt.IsZero() || box.Status != string(status) || box.Completed != 3 {
+				t.Fatalf("terminal state = %#v", box)
+			}
+			plain := textWithoutANSI(renderWorkflowBoxLines(box, 100, false, now))
+			if strings.Contains(plain, "running") || !strings.Contains(plain, "concrete failure") || !strings.Contains(plain, "final outcome") {
+				t.Fatalf("terminal display = %q", plain)
+			}
+		})
+	}
+}
+
+func TestWorkflowHistoryAndRenderingBounds(t *testing.T) {
+	model := mustWorkflowModel(t)
+	model.startWorkflow(workflow.Workflow{Name: "bounded"}, "input")
+	now := time.Now()
+	for id := 1; id <= 100; id++ {
+		model.handleWorkflowEvent(workflow.AgentStarted{Invocation: id, Request: workflow.AgentRequest{Name: strings.Repeat("界", 1000)}}, now)
+		model.handleWorkflowEvent(workflow.AgentFinished{Invocation: id, Error: strings.Repeat("界", 1000)}, now)
+	}
+	model.handleWorkflowEvent(workflow.AgentStarted{Invocation: 101, Request: workflow.AgentRequest{Name: "Still running"}}, now)
+	model.handleWorkflowEvent(workflow.Log{Text: strings.Repeat("log\n", 10000)}, now)
+	box := model.boxes[0].(workflowBox)
+	if len(box.Recent) != maxWorkflowRecentSteps || box.Completed != 100 || len(box.LatestActivity) > maxWorkflowLatestActivitySize {
+		t.Fatalf("unbounded history: %#v", box)
+	}
+	for _, step := range box.Recent {
+		if len(step.Name) > maxWorkflowNameSize || len(step.Error) > maxWorkflowStepErrorSize || !utf8.ValidString(step.Name) || !utf8.ValidString(step.Error) {
+			t.Fatalf("unbounded step: %#v", step)
+		}
+	}
+	for _, width := range []int{1, 7, 30, 80, 200} {
+		lines := renderWorkflowBoxLines(box, width, true, now)
+		if len(lines) > 20 {
+			t.Fatalf("width %d: %d lines, want compact status", width, len(lines))
+		}
+		for _, line := range plainLines(lines) {
+			if text.VisibleLen(line) > width {
+				t.Fatalf("width %d: oversized line %q", width, line)
+			}
+		}
+	}
+	// A narrow render must not permanently suppress subsequent updates.
+	if _, err := model.lines(1, &fakeConversation{}, now); err != nil {
+		t.Fatal(err)
+	}
+	model.handleWorkflowEvent(workflow.Log{Text: "Latest update"}, now)
+	box = model.boxes[0].(workflowBox)
+	plain := textWithoutANSI(renderWorkflowBoxLines(box, 80, false, now))
+	if !strings.Contains(plain, "Still running") || !strings.Contains(plain, "Latest update") {
+		t.Fatalf("activity lost after narrow render: %q", plain)
+	}
+	for id := 102; id < maxWorkflowVisualLines+200; id++ {
+		model.handleWorkflowEvent(workflow.AgentStarted{Invocation: id}, now)
+	}
+	box = model.boxes[0].(workflowBox)
+	lines := renderWorkflowBoxLines(box, 80, false, now)
+	if len(lines) > maxWorkflowVisualLines || !strings.Contains(textWithoutANSI(lines), "more active steps") || !strings.Contains(lines[len(lines)-1], "Elapsed") {
+		t.Fatalf("active overflow: %d lines, footer %q", len(lines), lines[len(lines)-1])
+	}
+}
+
+func TestWorkflowCacheTracksStepChangesAndElapsedTime(t *testing.T) {
+	now := time.Now()
+	item := workflowBox{Name: "test", StartedAt: now, Active: []workflowStep{{Invocation: 1, Name: "Planning", Status: "running", StartedAt: now}}}
+	var cache boxLineCache
+	first := textWithoutANSI(cache.Lines([]box{item}, 100, false, now))
+	later := textWithoutANSI(cache.Lines([]box{item}, 100, false, now.Add(time.Second)))
+	if first == later || !strings.Contains(later, "1.0s") {
+		t.Fatalf("elapsed display did not update: %q", later)
+	}
+	item.Active[0].Name = "Reviewing"
+	changed := textWithoutANSI(cache.Lines([]box{item}, 100, false, now.Add(time.Second)))
+	if changed == later || !strings.Contains(changed, "Reviewing") {
+		t.Fatalf("step name did not invalidate cache: %q", changed)
+	}
+}
+
+func TestWorkflowResumedSummary(t *testing.T) {
+	model := mustWorkflowModel(t)
+	model.populateInitialBoxes(&fakeConversation{messages: []llm.Message{llm.WorkflowResultMessage{Name: "review", Input: "check", Status: llm.WorkflowStatusCompleted, Summary: "approved", Timestamp: time.Now()}}})
+	box, ok := model.boxes[0].(workflowBox)
+	if !ok || box.Summary != "approved" || len(box.Active) != 0 || box.EndedAt.IsZero() {
+		t.Fatalf("resumed workflow = %#v", model.boxes[0])
 	}
 }
 
@@ -105,36 +228,10 @@ func TestBoundedArtifactRenderingPreservesFileMetadata(t *testing.T) {
 	}
 }
 
-func TestWorkflowTimelineReservationsAndWidthCap(t *testing.T) {
-	box := workflowBox{
-		Name: "large", Status: string(workflow.StatusCompleted), Summary: strings.Repeat("summary ", 1000),
-		Entries: []workflowEntry{{Text: strings.Repeat("timeline ", 10000)}}, TimelineTruncated: true,
-		LatestActivity: "Agent 1 finished", StartedAt: time.Now(),
-	}
-	for _, width := range []int{1, 7, 80, 200} {
-		lines := renderWorkflowBoxLines(box, width, true, time.Now())
-		if len(lines) > maxWorkflowVisualLines {
-			t.Fatalf("width %d rendered %d lines", width, len(lines))
-		}
-		if len(boundedWorkflowWrap(" Summary: ", box.Summary, width, maxWorkflowSummaryLines)) > maxWorkflowSummaryLines {
-			t.Fatalf("width %d summary exceeded reservation", width)
-		}
-	}
-}
-
-func TestWorkflowTimelineHasOneTruncationNotice(t *testing.T) {
-	box := workflowBox{Name: "large", TimelineTruncated: true, LatestActivity: "Agent 1 finished", StartedAt: time.Now()}
-	lines := renderWorkflowBoxLines(box, 80, true, time.Now())
-	plain := textWithoutANSI(lines)
-	if strings.Count(plain, "workflow output truncated") != 1 {
-		t.Fatalf("truncation notices = %d in %q", strings.Count(plain, "workflow output truncated"), plain)
-	}
-}
-
 func BenchmarkBoundedArtifactRendering(b *testing.B) {
 	artifact := tool.TextArtifact{Text: strings.Repeat("long line ", 100000)}
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		lines, _ := toolArtifactLinesBounded(artifact, 80, 20)
 		if len(lines) > 20 {
 			b.Fatal("bounded artifact rendering exceeded limit")
@@ -146,130 +243,23 @@ func TestWorkflowTextTruncationFitsLimit(t *testing.T) {
 	value := strings.Repeat("界", 100)
 	for limit := 1; limit <= 32; limit++ {
 		got := truncateWorkflowText(value, limit)
-		if len(got) > limit {
-			t.Fatalf("limit %d: got %d bytes", limit, len(got))
+		if len(got) > limit || !utf8.ValidString(got) {
+			t.Fatalf("limit %d: invalid bounded text %q", limit, got)
 		}
-		if !utf8.ValidString(got) {
-			t.Fatalf("limit %d: invalid UTF-8 %q", limit, got)
-		}
-	}
-	if got := truncateWorkflowText(value, 32); strings.Contains(got, value) {
-		t.Fatal("truncated text retained the original value")
 	}
 }
 
 func TestWorkflowArtifactContentBounds(t *testing.T) {
 	content := strings.Repeat("界", 100)
-	artifacts := []tool.Artifact{
-		tool.TextArtifact{Text: content},
-		tool.ShellStreamArtifact{Content: content},
-		tool.FileArtifact{Content: content},
-		tool.FileRangeArtifact{Content: content},
-		tool.UnifiedDiffArtifact{Diff: content},
-		tool.FileMetadataArtifact{Path: strings.Repeat("path", 100), FileID: content},
-	}
-	for _, artifact := range artifacts {
+	for _, artifact := range []tool.Artifact{
+		tool.TextArtifact{Text: content}, tool.ShellStreamArtifact{Content: content},
+		tool.FileArtifact{Content: content}, tool.FileRangeArtifact{Content: content},
+		tool.UnifiedDiffArtifact{Diff: content}, tool.FileMetadataArtifact{Path: content, FileID: content},
+	} {
 		bounded, used, truncated := boundWorkflowArtifact(artifact, 40)
 		if !truncated || used > 40 || len(workflowArtifactContent(bounded)) > 40 || !utf8.ValidString(workflowArtifactContent(bounded)) {
 			t.Fatalf("artifact was not bounded: %#v, used=%d truncated=%t", bounded, used, truncated)
 		}
-	}
-}
-
-func TestWorkflowArtifactFieldsAreBoundThroughEvents(t *testing.T) {
-	artifacts := []tool.Artifact{
-		tool.TextArtifact{Text: strings.Repeat("text", 400000)},
-		tool.ShellStreamArtifact{Content: strings.Repeat("shell", 400000)},
-		tool.FileArtifact{Path: strings.Repeat("file-path", 400000), Content: strings.Repeat("file", 400000)},
-		tool.FileRangeArtifact{Path: strings.Repeat("range-path", 400000), Content: strings.Repeat("range", 400000)},
-		tool.UnifiedDiffArtifact{Path: strings.Repeat("diff-path", 400000), Diff: strings.Repeat("diff", 400000)},
-	}
-	for _, artifact := range artifacts {
-		model := mustWorkflowModel(t)
-		model.startWorkflow(workflow.Workflow{Name: "bounded"}, "input")
-		model.handleWorkflowEvent(workflow.AgentEventReceived{Invocation: 1, Event: workflow.AgentToolOutput{Artifact: artifact}}, time.Now())
-		box := model.boxes[len(model.boxes)-1].(workflowBox)
-		if box.TimelineBytes > workflowTimelineCapacity(box) {
-			t.Fatalf("%T retained %d timeline bytes, capacity %d", artifact, box.TimelineBytes, workflowTimelineCapacity(box))
-		}
-		for _, entry := range box.Entries {
-			for _, retained := range entry.Artifacts {
-				switch retained := retained.(type) {
-				case tool.FileArtifact:
-					if retained.Path != "" || len(retained.Content) > maxWorkflowDisplayBytes {
-						t.Fatalf("file artifact retained path/content: path=%d content=%d", len(retained.Path), len(retained.Content))
-					}
-				case tool.FileRangeArtifact:
-					if retained.Path != "" || len(retained.Content) > maxWorkflowDisplayBytes {
-						t.Fatalf("file range retained path/content: path=%d content=%d", len(retained.Path), len(retained.Content))
-					}
-				case tool.UnifiedDiffArtifact:
-					if retained.Path != "" || len(retained.Diff) > maxWorkflowDisplayBytes {
-						t.Fatalf("diff retained path/content: path=%d content=%d", len(retained.Path), len(retained.Diff))
-					}
-				}
-			}
-		}
-	}
-
-	model := mustWorkflowModel(t)
-	model.startWorkflow(workflow.Workflow{Name: "metadata"}, "input")
-	model.handleWorkflowEvent(workflow.AgentEventReceived{Invocation: 1, Event: workflow.AgentToolOutput{Artifact: tool.FileMetadataArtifact{Path: strings.Repeat("oversized-path", 200000), FileID: "id"}}}, time.Now())
-	box := model.boxes[len(model.boxes)-1].(workflowBox)
-	metadata := box.Entries[0].Artifacts[0].(tool.FileMetadataArtifact)
-	if metadata.Path != "" || box.TimelineBytes > workflowTimelineCapacity(box) {
-		t.Fatalf("metadata artifact retained non-rendered path or exceeded budget: %#v, bytes=%d", metadata, box.TimelineBytes)
-	}
-}
-
-func TestWorkflowVisualExhaustionDropsDetailedEvents(t *testing.T) {
-	model := mustWorkflowModel(t)
-	model.startWorkflow(workflow.Workflow{Name: "narrow"}, "input")
-	for i := range maxWorkflowTimelineLines + 10 {
-		model.handleWorkflowEvent(workflow.Log{Text: fmt.Sprintf("event %d", i)}, time.Now())
-	}
-	if _, err := model.lines(1, &fakeConversation{}, time.Now()); err != nil {
-		t.Fatalf("lines() error = %v", err)
-	}
-	box := model.boxes[len(model.boxes)-1].(workflowBox)
-	if !box.TimelineTruncated {
-		t.Fatal("narrow rendering did not mark visual exhaustion")
-	}
-	entries := len(box.Entries)
-	model.handleWorkflowEvent(workflow.Log{Text: "debug: " + strings.Repeat("detail", 10000)}, time.Now())
-	model.handleWorkflowEvent(workflow.AgentFinished{Invocation: 1}, time.Now())
-	box = model.boxes[len(model.boxes)-1].(workflowBox)
-	if len(box.Entries) != entries || strings.Contains(box.LatestActivity, "debug:") || !strings.Contains(box.LatestActivity, "finished") {
-		t.Fatalf("post-exhaustion timeline = entries %d, latest %q", len(box.Entries), box.LatestActivity)
-	}
-}
-func TestWorkflowTimelineBoundsLifecycleAndRendering(t *testing.T) {
-	model := mustWorkflowModel(t)
-	model.startWorkflow(workflow.Workflow{Name: "large"}, "input")
-	model.handleWorkflowEvent(workflow.AgentEventReceived{Invocation: 1, Event: workflow.AgentToolOutput{Artifact: tool.FileArtifact{Content: strings.Repeat("line content 123456789\\n", 100000)}}}, time.Now())
-
-	box := model.boxes[len(model.boxes)-1].(workflowBox)
-	if box.TimelineBytes > workflowTimelineCapacity(box) || !box.TimelineTruncated {
-		t.Fatalf("timeline bytes=%d capacity=%d truncated=%t", box.TimelineBytes, workflowTimelineCapacity(box), box.TimelineTruncated)
-	}
-	entries := len(box.Entries)
-	model.handleWorkflowEvent(workflow.AgentStarted{Invocation: 2}, time.Now())
-	model.handleWorkflowEvent(workflow.AgentFinished{Invocation: 2, Text: strings.Repeat("response", 100000)}, time.Now())
-	box = model.boxes[len(model.boxes)-1].(workflowBox)
-	if len(box.Entries) != entries || !strings.Contains(box.LatestActivity, "finished") {
-		t.Fatalf("post-truncation lifecycle: entries=%d latest=%q", len(box.Entries), box.LatestActivity)
-	}
-	model.handleWorkflowEvent(workflow.Finished{Result: workflow.Result{Status: workflow.StatusFailed, Summary: strings.Repeat("summary ", 100000)}}, time.Now())
-	box = model.boxes[len(model.boxes)-1].(workflowBox)
-	if box.Status != string(workflow.StatusFailed) || len(box.Summary) > maxWorkflowSummaryBytes || !utf8.ValidString(box.Summary) {
-		t.Fatalf("final workflow state: status=%q summary bytes=%d", box.Status, len(box.Summary))
-	}
-	lines := renderWorkflowBoxLines(box, 80, true, time.Now())
-	if len(lines) > maxWorkflowVisualLines {
-		t.Fatalf("rendered %d lines", len(lines))
-	}
-	if !strings.Contains(textWithoutANSI(lines), string(workflow.StatusFailed)) {
-		t.Fatal("final status missing from rendered workflow")
 	}
 }
 
@@ -296,7 +286,7 @@ func TestWorkflowSummaryIsBoundBeforePersistence(t *testing.T) {
 }
 
 func textWithoutANSI(lines []string) string {
-	return strings.Join(plainLines(lines), "\\n")
+	return strings.Join(plainLines(lines), "\n")
 }
 
 type testWorkflowRunner struct{}

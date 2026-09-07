@@ -117,21 +117,18 @@ func workflowEventArtifact(event Event) tool.Artifact {
 	case Log:
 		return tool.TextArtifact{Text: event.Text + "\n"}
 	case AgentStarted:
-		return tool.TextArtifact{Text: fmt.Sprintf("Agent %d started\n", event.Invocation)}
-	case AgentEventReceived:
-		switch progress := event.Event.(type) {
-		case AgentThinkingDelta:
-			return tool.TextArtifact{Text: progress.Text}
-		case AgentTextDelta:
-			return tool.TextArtifact{Text: progress.Text}
-		case AgentToolStarted:
-			return tool.TextArtifact{Text: progress.Title + "\n"}
-		case AgentToolOutput:
-			return progress.Artifact
-		case AgentToolFailed:
-			return tool.TextArtifact{Text: progress.Error + "\n"}
+		name := event.Request.Name
+		if name == "" {
+			name = fmt.Sprintf("Agent %d", event.Invocation)
 		}
+		return tool.TextArtifact{Text: fmt.Sprintf("%s started (agent %d)\n", name, event.Invocation)}
 	case AgentFinished:
+		if event.Cancelled {
+			return tool.TextArtifact{Text: fmt.Sprintf("Agent %d cancelled\n", event.Invocation)}
+		}
+		if event.Error != "" {
+			return tool.TextArtifact{Text: fmt.Sprintf("Agent %d failed: %s\n", event.Invocation, event.Error)}
+		}
 		return tool.TextArtifact{Text: fmt.Sprintf("Agent %d finished\n", event.Invocation)}
 	case Finished:
 		return tool.TextArtifact{Text: fmt.Sprintf("Workflow %s: %s\n", event.Result.Status, event.Result.Summary)}

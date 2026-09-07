@@ -470,6 +470,18 @@ func (app *app) runWorkflow(ctx context.Context, item workflow.Workflow, input s
 	app.workers.Go(func() {
 		defer cancel()
 		result := app.workflowRunner.Run(workflowCtx, item, input, func(event workflow.Event) {
+			// Do not queue agent transcripts or retain prompts/reports in the UI.
+			switch progress := event.(type) {
+			case workflow.AgentEventReceived:
+				return
+			case workflow.AgentStarted:
+				progress.Request = workflow.AgentRequest{Name: boundWorkflowText(progress.Request.Name, maxWorkflowNameSize)}
+				event = progress
+			case workflow.AgentFinished:
+				progress.Text = ""
+				progress.Error = boundWorkflowText(progress.Error, maxWorkflowStepErrorSize)
+				event = progress
+			}
 			select {
 			case app.events <- workflowEventReceived{Event: event}:
 			case <-ctx.Done():

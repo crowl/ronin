@@ -36,6 +36,7 @@ type AgentFinished struct {
 	Invocation int
 	Text       string
 	Error      string
+	Cancelled  bool
 }
 type Finished struct{ Result Result }
 

@@ -58,7 +58,7 @@ func TestRenderWorkflowUsesMutedContent(t *testing.T) {
 		Name:    "implement",
 		Input:   "build it",
 		Summary: "done",
-		Entries: []workflowEntry{{Text: "Agent started"}},
+		Recent:  []workflowStep{{Name: "Planning", Status: "completed"}},
 	}
 	lines := renderBoxLinesAt(box, 80, false, box.StartedAt)
 

@@ -14,7 +14,7 @@ func TestRun(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "implement.lua")
 		if err := os.WriteFile(path, []byte(`
 ronin.log("planning")
-local result = ronin.run_agent({ prompt = ronin.input })
+local result = ronin.run_agent({ name = "Planning", prompt = ronin.input })
 ronin.done(result.text)
 `), 0o600); err != nil {
 			t.Fatalf("WriteFile() error = %v", err)
@@ -24,6 +24,9 @@ ronin.done(result.text)
 		result := workflow.Run(t.Context(), workflow.Workflow{Name: "implement", Path: path}, t.TempDir(), "build it", func(_ context.Context, req workflow.AgentRequest) (workflow.AgentResult, error) {
 			if req.Prompt != "build it" {
 				t.Fatalf("Prompt = %q, want build it", req.Prompt)
+			}
+			if req.Name != "Planning" {
+				t.Errorf("Name = %q, want Planning", req.Name)
 			}
 			if req.Progress != nil {
 				req.Progress(workflow.AgentTextDelta{Text: "done"})
@@ -45,8 +48,8 @@ ronin.done(result.text)
 		if _, ok := events[1].(workflow.Log); !ok {
 			t.Fatalf("event 1 = %T, want Log", events[1])
 		}
-		if _, ok := events[2].(workflow.AgentStarted); !ok {
-			t.Fatalf("event 2 = %T, want AgentStarted", events[2])
+		if started, ok := events[2].(workflow.AgentStarted); !ok || started.Request.Name != "Planning" {
+			t.Fatalf("event 2 = %#v, want named AgentStarted", events[2])
 		}
 		if _, ok := events[3].(workflow.AgentEventReceived); !ok {
 			t.Fatalf("event 3 = %T, want AgentEventReceived", events[3])

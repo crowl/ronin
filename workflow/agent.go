@@ -40,6 +40,8 @@ func (AgentToolEnded) agentEvent()     {}
 
 // AgentRequest describes one workflow agent invocation.
 type AgentRequest struct {
+	// Name is an optional human-readable label for workflow progress displays.
+	Name           string
 	Model          llm.Model
 	ReasoningLevel llm.ReasoningLevel
 	System         string
@@ -204,7 +206,7 @@ func (rt *agentRuntime) runAgent(invocation int, req AgentRequest) (AgentResult,
 		var err error
 		readOnlyState, err = rt.worktrees.fingerprint(req.Workspace)
 		if err != nil {
-			rt.emitEvent(AgentFinished{Invocation: invocation, Error: err.Error()})
+			rt.emitEvent(AgentFinished{Invocation: invocation, Error: err.Error(), Cancelled: errors.Is(err, context.Canceled)})
 			return AgentResult{}, fmt.Errorf("record read-only workspace state: %w", err)
 		}
 	}
@@ -229,7 +231,7 @@ func (rt *agentRuntime) runAgent(invocation int, req AgentRequest) (AgentResult,
 		}
 	}
 	if err != nil {
-		rt.emitEvent(AgentFinished{Invocation: invocation, Error: err.Error()})
+		rt.emitEvent(AgentFinished{Invocation: invocation, Error: err.Error(), Cancelled: errors.Is(err, context.Canceled)})
 		return AgentResult{}, err
 	}
 	rt.emitEvent(AgentFinished{Invocation: invocation, Text: result.Text})
@@ -264,6 +266,11 @@ func parseAgentRequest(state *lua.State, index int) (AgentRequest, error) {
 	}
 
 	req := AgentRequest{Prompt: prompt}
+	if name, _, err := readAgentStringField(state, index, "name", false); err != nil {
+		return AgentRequest{}, err
+	} else {
+		req.Name = name
+	}
 
 	if model, ok, err := readAgentStringField(state, index, "model", false); err != nil {
 		return AgentRequest{}, err
