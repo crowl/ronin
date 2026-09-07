@@ -52,6 +52,9 @@ type blockJSON struct {
 // The type tag is stored in the session_events type column: the message kind
 // for message events, or "compaction" for compaction events.
 func encodeEvent(event Event) (string, []byte, error) {
+	if err := event.validateShell(); err != nil {
+		return "", nil, err
+	}
 	switch event.Type {
 	case EventContextReset:
 		messages, err := encodeMessages(event.Compacted)
@@ -77,6 +80,15 @@ func encodeEvent(event Event) (string, []byte, error) {
 			return "", nil, err
 		}
 		return string(EventCompaction), payload, nil
+	case EventShellCommand:
+		payload, err := json.Marshal(event.ShellCommand)
+		return string(EventShellCommand), payload, err
+	case EventShellOutput:
+		payload, err := json.Marshal(event.ShellOutput)
+		return string(EventShellOutput), payload, err
+	case EventShellStatus:
+		payload, err := json.Marshal(event.ShellStatus)
+		return string(EventShellStatus), payload, err
 	case EventMessage:
 		kind, err := messageKind(event.Message)
 		if err != nil {
@@ -94,6 +106,30 @@ func encodeEvent(event Event) (string, []byte, error) {
 
 // decodeEvent reconstructs an event from its stored type tag and payload.
 func decodeEvent(eventType string, payload []byte) (Event, error) {
+	if eventType == string(EventShellCommand) {
+		var v ShellCommandEntry
+		if err := json.Unmarshal(payload, &v); err != nil {
+			return Event{}, err
+		}
+		event := Event{Type: EventShellCommand, ShellCommand: &v}
+		return event, event.validateShell()
+	}
+	if eventType == string(EventShellOutput) {
+		var v ShellOutputEntry
+		if err := json.Unmarshal(payload, &v); err != nil {
+			return Event{}, err
+		}
+		event := Event{Type: EventShellOutput, ShellOutput: &v}
+		return event, event.validateShell()
+	}
+	if eventType == string(EventShellStatus) {
+		var v ShellStatusEntry
+		if err := json.Unmarshal(payload, &v); err != nil {
+			return Event{}, err
+		}
+		event := Event{Type: EventShellStatus, ShellStatus: &v}
+		return event, event.validateShell()
+	}
 	if eventType == string(EventContextReset) {
 		var encoded eventJSON
 		if err := json.Unmarshal(payload, &encoded); err != nil {

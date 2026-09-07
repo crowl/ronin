@@ -309,13 +309,14 @@ func (s *Store) loadSnapshot(ctx context.Context, clause string, args ...any) (s
 	if err != nil || !found {
 		return record, nil, found, err
 	}
-	messages, cost, err := loadMessages(ctx, tx, record.ID)
+	messages, cost, history, err := loadHistory(ctx, tx, record.ID)
 	if err != nil {
 		return session.Session{}, nil, false, err
 	}
 	if err := tx.Commit(); err != nil {
 		return session.Session{}, nil, false, fmt.Errorf("finish session snapshot: %w", err)
 	}
+	record.History = history
 	record.Cost = cost
 	return record, messages, true, nil
 }
@@ -400,11 +401,16 @@ func loadSession(ctx context.Context, reader sessionReader, clause string, args 
 }
 
 func loadMessages(ctx context.Context, reader sessionReader, sessionID string) ([]llm.Message, llm.SessionCost, error) {
+	messages, cost, _, err := loadHistory(ctx, reader, sessionID)
+	return messages, cost, err
+}
+
+func loadHistory(ctx context.Context, reader sessionReader, sessionID string) ([]llm.Message, llm.SessionCost, []session.Event, error) {
 	rows, err := reader.QueryContext(ctx, `
 		SELECT seq, type, payload, created_at
 		FROM session_events WHERE session_id = ? ORDER BY seq`, sessionID)
 	if err != nil {
-		return nil, llm.SessionCost{}, fmt.Errorf("load events for session %q: %w", sessionID, err)
+		return nil, llm.SessionCost{}, nil, fmt.Errorf("load events for session %q: %w", sessionID, err)
 	}
 	defer rows.Close()
 
@@ -415,11 +421,11 @@ func loadMessages(ctx context.Context, reader sessionReader, sessionID string) (
 		var eventType string
 		var payload []byte
 		if err := rows.Scan(&seq, &eventType, &payload, &createdAt); err != nil {
-			return nil, llm.SessionCost{}, fmt.Errorf("scan event for session %q: %w", sessionID, err)
+			return nil, llm.SessionCost{}, nil, fmt.Errorf("scan event for session %q: %w", sessionID, err)
 		}
 		event, err := session.DecodeEvent(eventType, payload)
 		if err != nil {
-			return nil, llm.SessionCost{}, fmt.Errorf("decode event %d for session %q: %w", seq, sessionID, err)
+			return nil, llm.SessionCost{}, nil, fmt.Errorf("decode event %d for session %q: %w", seq, sessionID, err)
 		}
 		event.Seq = seq
 		event.CreatedAt = timeFromTimestamp(createdAt)
@@ -435,9 +441,9 @@ func loadMessages(ctx context.Context, reader sessionReader, sessionID string) (
 		events = append(events, event)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, llm.SessionCost{}, fmt.Errorf("load events for session %q: %w", sessionID, err)
+		return nil, llm.SessionCost{}, nil, fmt.Errorf("load events for session %q: %w", sessionID, err)
 	}
-	return session.Reconstruct(events), cost, nil
+	return session.Reconstruct(events), cost, events, nil
 }
 
 func cleanWorkingDir(workingDir string) (string, error) {

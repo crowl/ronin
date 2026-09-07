@@ -2,6 +2,8 @@ package session
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/crowl/ronin/config"
@@ -47,7 +49,10 @@ const (
 	EventModelChanged EventType = "model_changed"
 	// EventCompaction carries the effective message set that replaces prior
 	// history when reconstructing context.
-	EventCompaction EventType = "compaction"
+	EventCompaction   EventType = "compaction"
+	EventShellCommand EventType = "shell_command"
+	EventShellOutput  EventType = "shell_output"
+	EventShellStatus  EventType = "shell_status"
 )
 
 // Event is a single append-only journal entry for a session.
@@ -61,9 +66,80 @@ type Event struct {
 	PreviousModel  config.Model
 	Model          config.Model
 	ReasoningLevel string
+	ShellCommand   *ShellCommandEntry
+	ShellOutput    *ShellOutputEntry
+	ShellStatus    *ShellStatusEntry
 }
 
-// Reconstruct rebuilds the effective message history from an ordered journal.
+type ShellStream string
+
+const (
+	ShellStdout ShellStream = "stdout"
+	ShellStderr ShellStream = "stderr"
+)
+
+type ShellStatus string
+
+const (
+	ShellSucceeded   ShellStatus = "succeeded"
+	ShellFailed      ShellStatus = "failed"
+	ShellCanceled    ShellStatus = "canceled"
+	ShellStartFailed ShellStatus = "start_failed"
+)
+
+type ShellCommandEntry struct{ ID, Command, WorkingDir string }
+type ShellOutputEntry struct {
+	ID        string
+	Stream    ShellStream
+	Text      string
+	Truncated bool
+}
+type ShellStatusEntry struct {
+	ID            string
+	Status        ShellStatus
+	ExitCode      int
+	HasExitCode   bool
+	Error         string
+	DurationMS    int64
+	CleanupFailed bool
+}
+
+const (
+	MaxShellCommandBytes = 128 * 1024
+	MaxShellOutputBytes  = 128 * 1024
+	MaxShellErrorBytes   = 16 * 1024
+)
+
+func (e Event) validateShell() error {
+	switch e.Type {
+	case EventShellCommand:
+		if e.ShellCommand == nil || e.ShellCommand.ID == "" || e.ShellCommand.Command == "" {
+			return fmt.Errorf("invalid shell command event")
+		}
+		if len(e.ShellCommand.Command) > MaxShellCommandBytes || strings.IndexByte(e.ShellCommand.Command, 0) >= 0 {
+			return fmt.Errorf("shell command exceeds limits")
+		}
+	case EventShellOutput:
+		if e.ShellOutput == nil || e.ShellOutput.ID == "" || (e.ShellOutput.Stream != ShellStdout && e.ShellOutput.Stream != ShellStderr) {
+			return fmt.Errorf("invalid shell output event")
+		}
+		if len(e.ShellOutput.Text) > MaxShellOutputBytes {
+			return fmt.Errorf("shell output exceeds limits")
+		}
+	case EventShellStatus:
+		if e.ShellStatus == nil || e.ShellStatus.ID == "" {
+			return fmt.Errorf("invalid shell status event")
+		}
+		if e.ShellStatus.Status != ShellSucceeded && e.ShellStatus.Status != ShellFailed && e.ShellStatus.Status != ShellCanceled && e.ShellStatus.Status != ShellStartFailed {
+			return fmt.Errorf("invalid shell status")
+		}
+		if len(e.ShellStatus.Error) > MaxShellErrorBytes {
+			return fmt.Errorf("shell error exceeds limits")
+		}
+	}
+	return nil
+}
+
 // A compaction event resets the accumulated context to its effective set.
 func Reconstruct(events []Event) []llm.Message {
 	var messages []llm.Message
@@ -77,6 +153,8 @@ func Reconstruct(events []Event) []llm.Message {
 			messages = append([]llm.Message(nil), event.Compacted...)
 		case EventModelChanged:
 			// Model changes do not affect effective message history.
+		case EventShellCommand, EventShellOutput, EventShellStatus:
+			// Local shell history is never model context.
 		}
 	}
 	return messages
@@ -107,4 +185,6 @@ type Session struct {
 	Model          config.Model
 	ReasoningLevel string
 	Cost           llm.SessionCost
+	// History is the display journal, separate from model messages.
+	History []Event
 }

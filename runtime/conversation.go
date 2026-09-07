@@ -77,6 +77,12 @@ func NewConversation(cfg ConversationConfig) (*Conversation, error) {
 	}
 
 	messages := append([]llm.Message(nil), cfg.Messages...)
+	cfg.Session.History = append([]session.Event(nil), cfg.Session.History...)
+	if len(cfg.Session.History) == 0 {
+		for _, message := range messages {
+			cfg.Session.History = append(cfg.Session.History, session.Event{Type: session.EventMessage, Message: message})
+		}
+	}
 	var contextUsage llm.Usage
 	for _, message := range slices.Backward(messages) {
 		assistantMessage, ok := message.(llm.AssistantMessage)
@@ -274,6 +280,7 @@ func (c *Conversation) compact(ctx context.Context) error {
 		}
 		c.session.UpdatedAt = c.now().UTC()
 	}
+	c.session.History = append(c.session.History, session.Event{Type: session.EventCompaction, Compacted: messages})
 	c.messages = append([]llm.Message(nil), messages...)
 	c.contextUsage = llm.Usage{Cost: llm.Cost{Total: c.sessionCost.Total, Available: c.sessionCost.Available}}
 	return nil
@@ -324,6 +331,7 @@ func (c *Conversation) Rewind(ctx context.Context, point RewindPoint) error {
 	if err := c.sessionStore.Append(ctx, c.session.ID, event); err != nil {
 		return fmt.Errorf("save rewind: %w", err)
 	}
+	c.session.History = append(c.session.History, event)
 	c.session.UpdatedAt = c.now().UTC()
 	c.messages = messages
 	c.recalculateContextUsage()
@@ -349,6 +357,7 @@ func (c *Conversation) Fork(ctx context.Context, point RewindPoint) error {
 		return fmt.Errorf("create session fork: %w", err)
 	}
 	c.session = forked
+	c.session.History = []session.Event{{Type: session.EventContextReset, Compacted: messages}}
 	c.sessionCost = llm.SessionCost{Available: true}
 	c.messages = messages
 	c.recalculateContextUsage()
@@ -399,6 +408,7 @@ func (c *Conversation) NewConversation() error {
 	c.contextUsage = llm.Usage{Cost: llm.Cost{Available: true}}
 	c.sessionCost = llm.SessionCost{Available: true}
 	c.messages = nil
+	c.session.History = nil
 	return nil
 }
 
@@ -488,6 +498,7 @@ func (c *Conversation) appendMessage(ctx context.Context, message llm.Message) e
 		}
 		c.session.UpdatedAt = c.now().UTC()
 	}
+	c.session.History = append(c.session.History, session.Event{Type: session.EventMessage, Message: message})
 	c.messages = append(c.messages, message)
 	return nil
 }
@@ -504,6 +515,7 @@ func (c *Conversation) repairInterruptedToolCalls(ctx context.Context) error {
 		}
 		c.session.UpdatedAt = c.now().UTC()
 	}
+	c.session.History = append(c.session.History, session.Event{Type: session.EventCompaction, Compacted: messages})
 	c.messages = messages
 	return nil
 }
