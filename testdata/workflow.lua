@@ -7,7 +7,6 @@ local max_cycles = 5
 local max_concurrency = 3
 
 local roles = {
-    designer = { model = "openai:gpt-5.6-sol", reasoning = "high" },
     planner = { model = "openai:gpt-5.6-sol", reasoning = "high" },
     implementer = { model = "openai:gpt-5.6-terra", reasoning = "medium" },
     reviewer = { model = "openai:gpt-5.6-sol", reasoning = "high" },
@@ -33,9 +32,9 @@ local task_plan_schema = [[
           "id": {
             "type": "string",
             "pattern": "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$",
-            "description": "Concrete lowercase kebab-case task identifier derived from the design."
+            "description": "Concrete lowercase kebab-case task identifier derived from the requirement."
           },
-          "objective": { "type": "string", "description": "Concrete implementation objective derived from the approved design." },
+          "objective": { "type": "string", "description": "Concrete implementation objective grounded in the requirement and repository evidence." },
           "acceptance": { "type": "array", "minItems": 1, "items": { "type": "string" } },
           "depends_on": { "type": "array", "items": { "type": "string" } },
           "ownership": { "type": "array", "minItems": 1, "items": { "type": "string" } },
@@ -57,31 +56,22 @@ local task_plan_schema = [[
 }
 ]]
 
-ronin.log("Designing the implementation...")
-local design = ronin.run_agent({
-    model = roles.designer.model,
-    reasoning = roles.designer.reasoning,
-    read_only = true,
-    system = [[
-Act as the software designer. Inspect the repository, but do not modify files or
-otherwise change repository state. The original requirement is authoritative.
-Produce one minimal implementation-ready design grounded in repository evidence.
-Cover observable behavior, relevant architecture and files, boundaries and
-failure behavior, acceptance criteria, verification, and assumptions. Preserve
-existing architecture and public interfaces unless change is necessary.
-]],
-    prompt = "Software requirement:\n\n" .. requirement,
-})
-
-ronin.log("Splitting the design into independently integrable tasks...")
+ronin.log("Planning independently integrable tasks...")
 local planned = ronin.run_agent({
+    name = "Planning",
     model = roles.planner.model,
     reasoning = roles.planner.reasoning,
     read_only = true,
     output_schema = task_plan_schema,
     system = [[
 Act as a read-only implementation planner. Do not modify repository state.
-Decompose the supplied design only where tasks can be implemented and reviewed
+Inspect project instructions, repository state, relevant source, callers, and
+tests. The original requirement is authoritative. Produce the smallest concrete
+implementation plan grounded in repository evidence; preserve existing
+architecture and interfaces unless change is necessary. Include boundary and
+failure behavior in task objectives and acceptance criteria, and make important
+assumptions and cross-task integration contracts explicit in the objectives.
+Decompose the requirement only where tasks can be implemented and reviewed
 in isolated Git worktrees, then squash-integrated in listed order. Use one task
 when safe parallelization is not possible. Keep dependencies acyclic and only
 refer to earlier task IDs. Give each task concrete acceptance, anticipated file
@@ -90,8 +80,7 @@ integration_commit_message must be a valid Conventional Commit with an allowed
 type (feat, fix, refactor, test, docs, build, ci, perf, chore), an optional
 lowercase scope, a lowercase description, and no trailing period.
 ]],
-    prompt = "Original requirement:\n\n" .. requirement ..
-        "\n\nApproved design:\n\n" .. design.text,
+    prompt = "Original requirement:\n\n" .. requirement,
 })
 
 if not planned.ok or planned.output == nil or planned.output.tasks == nil then
@@ -99,15 +88,23 @@ if not planned.ok or planned.output == nil or planned.output.tasks == nil then
 end
 
 local plan = planned.output
+-- Give every lane the same task contracts without a separate design handoff.
+local plan_sections = {}
+for _, task in ipairs(plan.tasks) do
+    table.insert(plan_sections, task.id .. ": " .. task.objective ..
+        "\nDepends on: " .. table.concat(task.depends_on, ", ") ..
+        "\nOwnership: " .. table.concat(task.ownership, ", ") ..
+        "\nAcceptance:\n- " .. table.concat(task.acceptance, "\n- ") ..
+        "\nVerification:\n- " .. table.concat(task.verification, "\n- "))
+end
+local plan_context = table.concat(plan_sections, "\n\n")
 local tasks = plan.tasks
 if #tasks == 0 or #tasks > 8 then
     ronin.fail("Planner must produce between 1 and 8 tasks.")
 end
 local by_id = {}
 for index, task in ipairs(tasks) do
-    if not string.match(task.id, "^[a-z0-9][a-z0-9-]*[a-z0-9]$") and not string.match(task.id, "^[a-z0-9]$") then
-        ronin.fail("Planner produced an invalid task id: " .. task.id)
-    end
+    -- Task IDs are validated by task_plan_schema before this output reaches Lua.
     if #task.acceptance == 0 or #task.ownership == 0 or #task.verification == 0 then
         ronin.fail("Planner produced an incomplete task: " .. task.id)
     end
@@ -138,10 +135,11 @@ if not ronin.valid_commit(plan.integration_commit_message) then
     ronin.fail("Planner produced an invalid integration Conventional Commit: " .. plan.integration_commit_message)
 end
 
--- Design and planning are allowed on a dirty tree. Execution begins only after
+-- Planning is allowed on a dirty tree. Execution begins only after
 -- this gate verifies the recorded branch and HEAD are unchanged and the primary
 -- worktree is clean, including untracked files.
 ronin.git_execution_gate()
+ronin.log("Executing " .. #tasks .. " planned task(s), up to " .. max_concurrency .. " agents at a time.")
 
 local integration = ronin.create_worktree({ id = "integration", kind = "integration" })
 
@@ -181,6 +179,7 @@ local function integrate_approved_prefix()
         if next_task.status ~= "approved" then
             break
         end
+        ronin.log("Integrating approved task: " .. next_task.id)
         ronin.squash_worktree(integration.handle, next_task.workspace.handle, next_task.commit_message)
         next_task.integrated = true
         integrated_count = integrated_count + 1
@@ -189,7 +188,7 @@ end
 
 local function implementation_prompt(task)
     return "Original requirement:\n\n" .. requirement ..
-        "\n\nOverall design:\n\n" .. design.text ..
+        "\n\nImplementation plan and task contracts:\n\n" .. plan_context ..
         "\n\nAssigned task " .. task.id .. ":\n" .. task.objective ..
         "\n\nAcceptance criteria:\n- " .. table.concat(task.acceptance, "\n- ") ..
         "\n\nAnticipated ownership:\n- " .. table.concat(task.ownership, "\n- ") ..
@@ -205,16 +204,16 @@ local function start_implementation(task)
     task.status = "running"
     task.phase = "implementation"
     task.job = ronin.start_agent({
+        name = "Implementing: " .. task.id .. " (cycle " .. task.cycle .. ")",
         workspace = task.workspace.handle,
         model = roles.implementer.model,
         reasoning = roles.implementer.reasoning,
         system = [[
 Act as the implementation engineer for one isolated task lane. You own changes
 in this worktree. Inspect repository state before editing. Implement only the
-assigned task while honoring the overall design and integration contracts.
-Apply the assigned task while honoring the overall design and integration
-contracts. Preserve sound changes from prior cycles. Shell commands are not
-available in managed worktrees; report verification that remains to be run.
+assigned task while honoring the implementation plan and integration contracts.
+Preserve sound changes from prior cycles. Shell commands are not available in
+managed worktrees; report verification that remains to be run.
 ]],
         prompt = implementation_prompt(task),
     })
@@ -225,6 +224,7 @@ end
 local function start_repair(task)
     task.phase = "implementation"
     task.job = ronin.start_agent({
+        name = "Implementing: " .. task.id .. " (cycle " .. task.cycle .. ")",
         workspace = task.workspace.handle,
         model = roles.implementer.model,
         reasoning = roles.implementer.reasoning,
@@ -244,6 +244,7 @@ local function start_review(task, implementation)
     task.phase = "review"
     task.implementation = implementation
     task.job = ronin.start_agent({
+        name = "Reviewing: " .. task.id .. " (cycle " .. task.cycle .. ")",
         workspace = task.workspace.handle,
         read_only = true,
         model = roles.reviewer.model,
@@ -258,7 +259,7 @@ STATUS: APPROVED
 STATUS: CHANGES_REQUIRED
 ]],
         prompt = "Original requirement:\n\n" .. requirement ..
-            "\n\nOverall design:\n\n" .. design.text ..
+            "\n\nImplementation plan and task contracts:\n\n" .. plan_context ..
             "\n\nAssigned task:\n" .. task.objective ..
             "\n\nImplementation report:\n\n" .. implementation.text,
     })
@@ -312,12 +313,14 @@ while completed_count < #tasks and (active_count > 0 or first_failure == nil) do
     elseif ronin.approved(completed.text) then
         local sealed = ronin.seal_worktree(task.workspace.handle)
         task.head = sealed.head
+        ronin.log("Task " .. task.id .. " approved after " .. task.cycle .. " cycle(s).")
         task.status = "approved"
         task.review = completed.text
         completed_count = completed_count + 1
         integrate_approved_prefix()
     elseif task.cycle < max_cycles then
         task.cycle = task.cycle + 1
+        ronin.log("Task " .. task.id .. " requires changes; starting cycle " .. task.cycle .. ".")
         task.feedback = completed.text
         start_repair(task)
     else
@@ -348,6 +351,7 @@ local lane_tip = ronin.worktree_head(integration.handle)
 
 ronin.log("Running combined verification and initial integration repair...")
 local initial_integration = ronin.run_agent({
+    name = "Integration repair",
     workspace = integration.handle,
     model = roles.integrator.model,
     reasoning = roles.integrator.reasoning,
@@ -358,7 +362,7 @@ Do not perform optional cleanup. Shell commands are not available in managed
 worktrees; report verification that remains to be run.
 ]],
     prompt = "Original requirement:\n\n" .. requirement ..
-        "\n\nOverall design:\n\n" .. design.text ..
+        "\n\nImplementation plan and task contracts:\n\n" .. plan_context ..
         "\n\nVerify and reconcile the combined implementation.",
 })
 
@@ -368,6 +372,7 @@ local accepted = false
 for cycle = 1, max_cycles do
     ronin.log("Integration review cycle " .. cycle .. " of " .. max_cycles .. "...")
     local review = ronin.run_agent({
+        name = "Integration review (cycle " .. cycle .. ")",
         workspace = integration.handle,
         read_only = true,
         model = roles.reviewer.model,
@@ -381,12 +386,13 @@ STATUS: APPROVED
 STATUS: CHANGES_REQUIRED
 ]],
         prompt = "Original requirement:\n\n" .. requirement ..
-            "\n\nOverall design:\n\n" .. design.text ..
+            "\n\nImplementation plan and task contracts:\n\n" .. plan_context ..
             "\n\nPrior integration feedback:\n\n" .. integration_feedback,
     })
 
     if ronin.approved(review.text) then
         local acceptance = ronin.run_agent({
+            name = "Acceptance (cycle " .. cycle .. ")",
             workspace = integration.handle,
             read_only = true,
             model = roles.acceptance_evaluator.model,
@@ -401,7 +407,7 @@ STATUS: APPROVED
 STATUS: CHANGES_REQUIRED
 ]],
             prompt = "Original requirement:\n\n" .. requirement ..
-                "\n\nOverall design:\n\n" .. design.text ..
+                "\n\nImplementation plan and task contracts:\n\n" .. plan_context ..
                 "\n\nLatest integration report:\n\n" .. latest_report,
         })
         if ronin.approved(acceptance.text) then
@@ -416,6 +422,7 @@ STATUS: CHANGES_REQUIRED
 
     if cycle < max_cycles then
         local repair = ronin.run_agent({
+            name = "Integration repair (cycle " .. cycle .. ")",
             workspace = integration.handle,
             model = roles.integrator.model,
             reasoning = roles.integrator.reasoning,
@@ -426,7 +433,7 @@ editing and preserve approved behavior. Shell commands are not available in
 managed worktrees; report changes and verification that remains to be run.
 ]],
             prompt = "Original requirement:\n\n" .. requirement ..
-                "\n\nOverall design:\n\n" .. design.text ..
+                "\n\nImplementation plan and task contracts:\n\n" .. plan_context ..
                 "\n\nIntegration feedback to resolve:\n\n" .. integration_feedback,
         })
         latest_report = repair.text
@@ -437,6 +444,7 @@ if not accepted then
     ronin.fail("Integration repair loop exhausted without acceptance.\n\nLatest feedback:\n\n" .. integration_feedback)
 end
 
+ronin.log("Promoting accepted implementation...")
 ronin.squash_repairs(integration.handle, lane_tip, plan.integration_commit_message)
 ronin.promote_worktree(integration.handle)
-ronin.done("Concurrent workflow completed and fast-forwarded " .. #tasks .. " squashed lane commit(s).\n\nAcceptance:\n" .. latest_report)
+ronin.done("Completed and fast-forwarded " .. #tasks .. " squashed lane commit(s). Integration review and acceptance approved.")

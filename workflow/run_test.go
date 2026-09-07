@@ -572,7 +572,7 @@ func TestConcurrentWorkflowExampleRequiresGit(t *testing.T) {
 		}
 	})
 
-	t.Run("requires a git worktree before design", func(t *testing.T) {
+	t.Run("requires a git worktree before planning", func(t *testing.T) {
 		t.Parallel()
 		var calls int
 		_, err := runConcurrentWorkflowExample(t, t.TempDir(), func(context.Context, AgentRequest) (AgentResult, error) {
