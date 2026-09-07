@@ -3,6 +3,7 @@ package fsutil_test
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/crowl/ronin/fsutil"
@@ -28,8 +29,13 @@ func TestWriteFileAtomic(t *testing.T) {
 		if err != nil {
 			t.Fatalf("os.Stat() error = %v", err)
 		}
-		if info.Mode().Perm() != 0o640 {
-			t.Fatalf("mode = %v, want 0640", info.Mode().Perm())
+		// Windows exposes writable files as 0666, not POSIX permission bits.
+		wantMode := os.FileMode(0o640)
+		if runtime.GOOS == "windows" {
+			wantMode = 0o666
+		}
+		if info.Mode().Perm() != wantMode {
+			t.Fatalf("mode = %v, want %v", info.Mode().Perm(), wantMode)
 		}
 	})
 
@@ -55,8 +61,12 @@ func TestWriteFileAtomic(t *testing.T) {
 		if err != nil {
 			t.Fatalf("os.Stat() error = %v", err)
 		}
-		if info.Mode().Perm() != 0o755 {
-			t.Fatalf("mode = %v, want 0755", info.Mode().Perm())
+		wantMode := os.FileMode(0o755)
+		if runtime.GOOS == "windows" {
+			wantMode = 0o666
+		}
+		if info.Mode().Perm() != wantMode {
+			t.Fatalf("mode = %v, want %v", info.Mode().Perm(), wantMode)
 		}
 		if info.Mode()&os.ModeSetuid != 0 {
 			t.Fatalf("mode includes setuid bit: %v", info.Mode())

@@ -200,6 +200,8 @@ func initTestRepository(t *testing.T) string {
 	t.Helper()
 	repo := t.TempDir()
 	gitCommand(t, repo, "init", "-b", "main")
+	// Keep fixture bytes stable even when Git for Windows enables CRLF conversion.
+	gitCommand(t, repo, "config", "core.autocrlf", "false")
 	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}

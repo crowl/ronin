@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -28,7 +30,7 @@ func TestToolDescriptionIsLanguageAgnostic(t *testing.T) {
 
 func TestToolCall(t *testing.T) {
 	t.Run("captures stdout and stderr by default", func(t *testing.T) {
-		res, err := callShell(t, shell.New(t.TempDir()), shell.Args{Command: "printf out; printf err >&2"})
+		res, err := callShell(t, shell.New(t.TempDir()), shell.Args{Command: platformCommand("printf out; printf err >&2", "[Console]::Out.Write('out'); [Console]::Error.Write('err')")})
 		if err != nil {
 			t.Fatalf("Call() error = %v", err)
 		}
@@ -44,7 +46,7 @@ func TestToolCall(t *testing.T) {
 	})
 
 	t.Run("truncates output with small limit", func(t *testing.T) {
-		res, err := callShell(t, shell.New(t.TempDir()), shell.Args{Command: "printf abcdef", MaxOutputBytes: 3})
+		res, err := callShell(t, shell.New(t.TempDir()), shell.Args{Command: platformCommand("printf abcdef", "[Console]::Out.Write('abcdef')"), MaxOutputBytes: 3})
 		if err != nil {
 			t.Fatalf("Call() error = %v", err)
 		}
@@ -75,9 +77,12 @@ func TestToolCall(t *testing.T) {
 	})
 
 	t.Run("captures requested output above default limit", func(t *testing.T) {
-		res, err := callShell(t, shell.New(t.TempDir()), shell.Args{Command: "yes x | head -c 150000", MaxOutputBytes: 150000})
+		res, err := callShell(t, shell.New(t.TempDir()), shell.Args{Command: outputCommand(150000), TimeoutMS: 30_000, MaxOutputBytes: 150000})
 		if err != nil {
 			t.Fatalf("Call() error = %v", err)
+		}
+		if !res.Success || res.TimedOut {
+			t.Fatalf("output command failed: %+v", res)
 		}
 		if len(res.Stdout) != 150000 {
 			t.Fatalf("len(Stdout) = %d, want 150000", len(res.Stdout))
@@ -88,9 +93,12 @@ func TestToolCall(t *testing.T) {
 	})
 
 	t.Run("caps requested output above hard limit", func(t *testing.T) {
-		res, err := callShell(t, shell.New(t.TempDir()), shell.Args{Command: "yes x | head -c 9000000", MaxOutputBytes: 9_000_000})
+		res, err := callShell(t, shell.New(t.TempDir()), shell.Args{Command: outputCommand(9000000), TimeoutMS: 30_000, MaxOutputBytes: 9_000_000})
 		if err != nil {
 			t.Fatalf("Call() error = %v", err)
+		}
+		if !res.Success || res.TimedOut {
+			t.Fatalf("output command failed: exit=%d timed_out=%v stderr=%s", res.ExitCode, res.TimedOut, res.Stderr)
 		}
 		if len(res.Stdout) != 8*1024*1024 {
 			t.Fatalf("len(Stdout) = %d, want hard cap", len(res.Stdout))
@@ -101,7 +109,7 @@ func TestToolCall(t *testing.T) {
 	})
 
 	t.Run("timeout returns timed out result", func(t *testing.T) {
-		res, err := callShell(t, shell.New(t.TempDir()), shell.Args{Command: "sleep 1", TimeoutMS: 10})
+		res, err := callShell(t, shell.New(t.TempDir()), shell.Args{Command: platformCommand("sleep 1", "Start-Sleep -Seconds 1"), TimeoutMS: 10})
 		if err != nil {
 			t.Fatalf("Call() error = %v", err)
 		}
@@ -117,7 +125,7 @@ func TestToolCall(t *testing.T) {
 	})
 	t.Run("streams stdout and stderr", func(t *testing.T) {
 		shellTool := shell.New(t.TempDir())
-		raw, err := json.Marshal(shell.Args{Command: "printf out; printf err >&2"})
+		raw, err := json.Marshal(shell.Args{Command: platformCommand("printf out; printf err >&2", "[Console]::Out.Write('out'); [Console]::Error.Write('err')")})
 		if err != nil {
 			t.Fatalf("json.Marshal() error = %v", err)
 		}
@@ -151,6 +159,18 @@ func TestToolCall(t *testing.T) {
 			t.Fatalf("stderr artifact not found in %#v", gotArtifacts)
 		}
 	})
+}
+
+func platformCommand(unix, windows string) string {
+	if runtime.GOOS == "windows" {
+		return windows
+	}
+	return unix
+}
+
+// Finite producers avoid relying on Unix SIGPIPE semantics in PowerShell pipelines.
+func outputCommand(size int) string {
+	return platformCommand(fmt.Sprintf("head -c %d /dev/zero", size), fmt.Sprintf("[Console]::Out.Write(('x' * %d))", size))
 }
 
 func containsShellStreamArtifact(artifacts []tool.Artifact, stream tool.ShellStream, content string) bool {

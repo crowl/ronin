@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -18,6 +19,11 @@ func TestReadOnlyDetectsContentChanges(t *testing.T) {
 			name := "README.md"
 			if kind == "untracked" {
 				name = "new file\n.txt"
+				if runtime.GOOS == "windows" {
+					// Windows forbids control characters; spaces still exercise
+					// Git's NUL-delimited filename handling.
+					name = "new file with spaces.txt"
+				}
 			}
 			path := filepath.Join(repo, name)
 			if err := os.WriteFile(path, []byte("before\n"), 0600); err != nil {

@@ -65,7 +65,11 @@ func TestToolCall(t *testing.T) {
 			t.Fatalf("os.WriteFile() error = %v", err)
 		}
 
-		_, err := callWriteFile(t, writefile.New(dir, fsutil.NewMutationQueue()), writefile.Args{Path: "script.sh", Content: "new\n"})
+		before, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = callWriteFile(t, writefile.New(dir, fsutil.NewMutationQueue()), writefile.Args{Path: "script.sh", Content: "new\n"})
 		if err != nil {
 			t.Fatalf("Call() error = %v", err)
 		}
@@ -74,8 +78,8 @@ func TestToolCall(t *testing.T) {
 		if err != nil {
 			t.Fatalf("os.Stat() error = %v", err)
 		}
-		if info.Mode().Perm() != 0o755 {
-			t.Fatalf("mode = %v, want 0755", info.Mode().Perm())
+		if info.Mode().Perm() != before.Mode().Perm() {
+			t.Fatalf("mode = %v, want original %v", info.Mode().Perm(), before.Mode().Perm())
 		}
 	})
 

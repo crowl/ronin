@@ -3,6 +3,7 @@ package workflow
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -58,7 +59,7 @@ func TestPromotionSurvivesCleanupFailure(t *testing.T) {
 		t.Fatal("wrong promoted commit")
 	}
 	recovery := rt.recover()
-	if !strings.Contains(recovery, "Promotion succeeded") || !strings.Contains(recovery, lane.Path) || strings.Contains(recovery, "worktree remove \""+integration.Path+"\"") {
+	if !strings.Contains(recovery, "Promotion succeeded") || !strings.Contains(recovery, strconv.Quote(lane.Path)) || strings.Contains(recovery, "worktree remove "+strconv.Quote(integration.Path)) {
 		t.Fatalf("recovery = %s", recovery)
 	}
 	if err := rt.promote(integration); err == nil || !strings.Contains(err.Error(), "already promoted") {

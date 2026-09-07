@@ -15,12 +15,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/crowl/ronin/fsutil"
 	"github.com/crowl/ronin/tool"
 )
 
@@ -386,8 +388,13 @@ func TestStartSessionWritesBoundedServerLog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stat() error = %v", err)
 	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("log permissions = %o, want 600", info.Mode().Perm())
+	// Windows Chmod only controls the read-only attribute, not POSIX ACLs.
+	wantMode := os.FileMode(0o600)
+	if runtime.GOOS == "windows" {
+		wantMode = 0o666
+	}
+	if info.Mode().Perm() != wantMode {
+		t.Fatalf("log permissions = %o, want %o", info.Mode().Perm(), wantMode)
 	}
 }
 
@@ -476,7 +483,8 @@ func TestMCPHelperProcess(t *testing.T) {
 			if err := json.Unmarshal(request.Result, &result); err != nil || len(result.Roots) != 1 {
 				os.Exit(2)
 			}
-			if err := os.WriteFile(rootOutput, []byte(result.Roots[0].URI), 0o600); err != nil {
+			// Publish only the complete response; the parent polls for this file.
+			if err := fsutil.WriteFileAtomic(rootOutput, []byte(result.Roots[0].URI), 0o600); err != nil {
 				os.Exit(2)
 			}
 			continue

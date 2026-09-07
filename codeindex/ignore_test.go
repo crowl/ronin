@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -103,6 +104,16 @@ func TestIgnoreAgainstGit(t *testing.T) {
 	}
 	patterns := []string{"*.go", "/a.go", "a/*.go", "a/**/b.go", "**/a.go", "a/**", "**", "a**b.go", "a/***/b.go", "a/**b.go", "a/*/b.go", "a/", "a\n!a/keep.go", "a/*\n!a/keep.go", "*.go\n!a.go\na.go", "[a-c].go", "[!a-c].go", "[^a-c].go", "[]a].go", "[-a].go", "[a-].go", "[a\\-c].go", "[[:alpha:]].go", "[[:digit:]].go", "[[:bogus:]].go", "[abc", "?.go", "??.go", "\\#a.go", "\\!a.go", "a.go  ", "a.go\\ ", "a.go\\  ", "a.go\\\\ ", "\\*.go", "a.go\\", "\xef\xbb\xbf*.go\r", "#a.go", " a.go", "!", "/", "a/**/", "a/**/**/b.go", "a[!x]b.go"}
 	paths := []string{"a.go", "b.go", "c.go", "z.go", "1.go", "é.go", "].go", "-.go", "*.go", "#a.go", "!a.go", " a.go", "a.go ", "a.go\\", "a", "a/b.go", "a/keep.go", "a/x/b.go", "a/x/y/b.go", "a/xb.go", "a/x", "other/a.go", "other/a/b.go", "axxb.go", "a/x/yb.go", ".hidden.go", "a/\n/b.go"}
+	if runtime.GOOS == "windows" {
+		// Backslashes are separators to Windows Git, never literal filename
+		// bytes from our slash-normalized walker. Keep that case on Unix.
+		for i, name := range paths {
+			if name == "a.go\\" {
+				paths = append(paths[:i], paths[i+1:]...)
+				break
+			}
+		}
+	}
 	for _, pattern := range patterns {
 		t.Run(pattern, func(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte(pattern+"\n"), 0600); err != nil {
