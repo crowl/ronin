@@ -2,6 +2,7 @@ package fsutil_test
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -83,7 +84,7 @@ func TestWriteFileAtomic(t *testing.T) {
 		if err == nil {
 			t.Fatal("WriteFileAtomic() error = nil, want error")
 		}
-		if !strings.Contains(err.Error(), "write file \""+path+"\": create temporary file:") {
+		if !strings.Contains(err.Error(), fmt.Sprintf("write file %q: create temporary file:", path)) {
 			t.Fatalf("error = %v, want temporary-file creation context for %q", err, path)
 		}
 		if !errors.Is(err, os.ErrNotExist) {
@@ -111,7 +112,7 @@ func TestWriteFileAtomic(t *testing.T) {
 		if err == nil {
 			t.Fatal("WriteFileAtomic() error = nil, want error")
 		}
-		if !strings.Contains(err.Error(), "write file \""+path+"\": rename temporary file:") {
+		if !strings.Contains(err.Error(), fmt.Sprintf("write file %q: rename temporary file:", path)) {
 			t.Fatalf("error = %v, want rename context for %q", err, path)
 		}
 		var linkErr *os.LinkError
