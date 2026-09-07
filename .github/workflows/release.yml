@@ -2,95 +2,119 @@ name: Release
 
 on:
   push:
-    tags:
-      - 'v*.*.*'
+    tags: ['v*.*.*']
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
-    runs-on: ubuntu-latest
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: ubuntu-24.04, goos: linux, goarch: amd64}
+          - {runner: ubuntu-24.04-arm, goos: linux, goarch: arm64}
+          - {runner: macos-15-intel, goos: darwin, goarch: amd64}
+          - {runner: macos-15, goos: darwin, goarch: arm64}
+          - {runner: windows-2025, goos: windows, goarch: amd64, msystem: UCRT64, cc: gcc, package: mingw-w64-ucrt-x86_64-gcc}
+          - {runner: windows-11-arm, goos: windows, goarch: arm64, msystem: CLANGARM64, cc: clang, package: mingw-w64-clang-aarch64-clang}
+    runs-on: ${{ matrix.runner }}
+    env:
+      CGO_ENABLED: '1'
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
     steps:
-      - name: Check out tagged commit
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-          fetch-depth: 1
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
-
-      - name: Validate release tag
-        env:
-          TAG: ${{ github.ref_name }}
-        shell: bash
+      - name: Set up Linux static toolchain
+        if: matrix.goos == 'linux'
         run: |
-          set -euo pipefail
-          if [[ ! "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-            echo "invalid stable release tag: $TAG" >&2
-            exit 1
-          fi
-
-      - name: Test
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          echo 'CC=musl-gcc' >> "$GITHUB_ENV"
+      - name: Set up Windows C toolchain
+        if: matrix.goos == 'windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.msystem }}
+          install: ${{ matrix.package }}
+          path-type: inherit
+      - name: Test Unix
+        if: matrix.goos != 'windows'
         run: go test ./...
-
-      - name: Build and package release archives
+      - name: Test Windows
+        if: matrix.goos == 'windows'
+        shell: msys2 {0}
         env:
-          TAG: ${{ github.ref_name }}
+          CC: ${{ matrix.cc }}
+        run: go test ./...
+      - name: Build Unix
+        if: matrix.goos != 'windows'
         shell: bash
+        env:
+          REF: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          rm -rf dist build
-          mkdir -p dist build
+          version=dev
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            [[ "$REF" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+            version="$REF"
+          fi
+          mkdir -p package dist
+          flags="-s -w -X main.version=$version"
+          if [[ "$GOOS" == linux ]]; then
+            flags="$flags -linkmode external -extldflags -static"
+          fi
+          go build -trimpath -ldflags "$flags" -o package/ronin ./cmd/ronin
+          package/ronin --version
+          tar -C package -czf "dist/ronin_${version}_${GOOS}_${GOARCH}.tar.gz" ronin
+      - name: Build Windows
+        if: matrix.goos == 'windows'
+        shell: msys2 {0}
+        env:
+          CC: ${{ matrix.cc }}
+          REF: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version=dev
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            [[ "$REF" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+            version="$REF"
+          fi
+          mkdir -p package dist
+          go build -trimpath -ldflags "-s -w -X main.version=$version -linkmode external -extldflags -static" -o package/ronin.exe ./cmd/ronin
+          # Smoke test without MSYS2 DLL directories in PATH.
+          PATH=/c/Windows/System32 package/ronin.exe --version
+          powershell.exe -NoProfile -Command "Compress-Archive -Path package/ronin.exe -DestinationPath dist/ronin_${version}_${GOOS}_${GOARCH}.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ronin-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
+          if-no-files-found: error
 
-          targets=(
-            "linux amd64 tar.gz"
-            "linux arm64 tar.gz"
-            "darwin amd64 tar.gz"
-            "darwin arm64 tar.gz"
-            "windows amd64 zip"
-            "windows arm64 zip"
-          )
-
-          for target in "${targets[@]}"; do
-            read -r goos goarch archive_type <<< "$target"
-            archive="ronin_${TAG}_${goos}_${goarch}.${archive_type}"
-            package_dir="build/${goos}_${goarch}"
-            rm -rf "$package_dir"
-            mkdir -p "$package_dir"
-
-            if [[ "$goos" == "windows" ]]; then
-              binary="$package_dir/ronin.exe"
-              archive_member="ronin.exe"
-            else
-              binary="$package_dir/ronin"
-              archive_member="ronin"
-            fi
-
-            GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 \
-              go build -trimpath -ldflags "-s -w -X main.version=${TAG}" \
-              -o "$binary" ./cmd/ronin
-
-            if [[ "$archive_type" == "tar.gz" ]]; then
-              tar -C "$package_dir" -czf "dist/$archive" "$archive_member"
-            else
-              (cd "$package_dir" && zip -q -j "../../dist/$archive" ronin.exe)
-            fi
-          done
-
-          (cd dist && sha256sum *.tar.gz *.zip > checksums.txt)
-
-      - name: Create GitHub Release
+  publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ronin-*
+          path: dist
+          merge-multiple: true
+      - name: Publish all six archives
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
-        shell: bash
         run: |
           set -euo pipefail
-          gh release create "$TAG" dist/*.tar.gz dist/*.zip dist/checksums.txt \
-            --title "$TAG" \
-            --generate-notes
+          (cd dist && sha256sum *.tar.gz *.zip > checksums.txt)
+          gh release create "$TAG" dist/* --title "$TAG" --generate-notes
