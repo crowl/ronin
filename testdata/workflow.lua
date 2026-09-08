@@ -2,6 +2,16 @@ local requirement = ronin.require_input(
     "A software requirement is required. Pass inline text, --input <file>, or - for stdin."
 )
 
+-- Invocation authorizes workflow-owned, task-scoped commits, not promotion or push.
+requirement = requirement .. [[
+
+Workflow execution contract: task-scoped staging and Conventional Commits in
+managed worktrees are authorized by invocation; do not request separate commit
+approval. The workflow owns Git operations. Leave the starting branch and user
+checkout unchanged. Deliver a local result branch; do not push or promote it.
+Report actual verification evidence and clearly identify checks not run.
+]]
+
 local repository = ronin.git_preflight()
 local max_cycles = 5
 local max_concurrency = 3
@@ -401,7 +411,10 @@ STATUS: CHANGES_REQUIRED
 Act as a fresh read-only acceptance evaluator. The original requirement is the
 source of truth. Inspect the combined implementation and tests, map every
 material requested outcome to repository evidence, and reject drift or missing
-observable behavior without inventing requirements. End with exactly one
+observable behavior without inventing requirements. Include a concise final
+handoff: changed files and behavior, checks actually run with results, checks not
+run, and remaining limitations. Never equate source inspection with passing tests.
+End with exactly one
 terminal marker and use neither elsewhere:
 STATUS: APPROVED
 STATUS: CHANGES_REQUIRED
@@ -444,7 +457,13 @@ if not accepted then
     ronin.fail("Integration repair loop exhausted without acceptance.\n\nLatest feedback:\n\n" .. integration_feedback)
 end
 
-ronin.log("Promoting accepted implementation...")
-ronin.squash_repairs(integration.handle, lane_tip, plan.integration_commit_message)
-ronin.promote_worktree(integration.handle)
-ronin.done("Completed and fast-forwarded " .. #tasks .. " squashed lane commit(s). Integration review and acceptance approved.")
+ronin.log("Finalizing accepted result branch...")
+local repairs = ronin.squash_repairs(integration.handle, lane_tip, plan.integration_commit_message)
+local result = ronin.finish_worktree(integration.handle)
+local repair_count = 0
+if repairs.changed then repair_count = 1 end
+ronin.done("Completed\nResult branch: " .. result.branch ..
+    "\nCommit: " .. result.head ..
+    "\nStarting branch: " .. repository.branch .. " (unchanged)" ..
+    "\nIntegrated " .. #tasks .. " lane commit(s) and " .. repair_count .. " repair commit(s). Nothing pushed." ..
+    "\n\nAcceptance and verification report:\n" .. latest_report)

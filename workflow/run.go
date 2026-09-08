@@ -253,6 +253,8 @@ func registerRonin(state *lua.State, out io.Writer, outputErr *error, signal **c
 	state.SetField(-2, "worktree_head")
 	state.PushGoFunction(squashRepairsFunction(agent.worktrees))
 	state.SetField(-2, "squash_repairs")
+	state.PushGoFunction(finishWorktreeFunction(agent.worktrees))
+	state.SetField(-2, "finish_worktree")
 	state.PushGoFunction(promoteWorktreeFunction(agent.worktrees))
 	state.SetField(-2, "promote_worktree")
 	state.PushGoFunction(validateCommitFunction())

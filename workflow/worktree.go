@@ -55,6 +55,7 @@ type managedWorktree struct {
 }
 
 type worktreeManifest struct {
+	ResultBranch string             `json:"result_branch,omitempty"`
 	PromotedHead string             `json:"promoted_head,omitempty"`
 	RunID        string             `json:"run_id"`
 	PrimaryRoot  string             `json:"primary_root"`
@@ -256,6 +257,27 @@ func squashRepairsFunction(rt *worktreeRuntime) lua.Function {
 		state.PushBoolean(changed)
 		state.SetField(-2, "changed")
 		setLuaStringField(state, "head", head)
+		return 1
+	}
+}
+
+// finishWorktreeFunction retains the sealed integration branch as the deliverable.
+func finishWorktreeFunction(rt *worktreeRuntime) lua.Function {
+	return func(state *lua.State) int {
+		handle, err := requiredStringArgument(state, 1, "ronin.finish_worktree", "workspace")
+		if err != nil {
+			panic(lua.RuntimeError(err.Error()))
+		}
+		workspace, err := rt.workspace(handle)
+		if err == nil {
+			err = rt.finish(workspace)
+		}
+		if err != nil {
+			panic(lua.RuntimeError("ronin.finish_worktree: " + err.Error()))
+		}
+		state.NewTable()
+		setLuaStringField(state, "branch", workspace.Branch)
+		setLuaStringField(state, "head", workspace.SealedHead)
 		return 1
 	}
 }
@@ -640,6 +662,38 @@ func (rt *worktreeRuntime) squashRepairs(workspace *managedWorktree, base, messa
 	return head, true, err
 }
 
+func (rt *worktreeRuntime) finish(integration *managedWorktree) error {
+	if integration.Kind != "integration" || !integration.Sealed {
+		return fmt.Errorf("only a sealed integration workspace can be finalized; use squash_repairs first")
+	}
+	if rt.promoted {
+		return fmt.Errorf("integration workspace was already finalized")
+	}
+	if err := rt.verifySeal(integration); err != nil {
+		return err
+	}
+	current, err := rt.inspectPrimary()
+	if err != nil {
+		return err
+	}
+	if current.Root != rt.manifest.PrimaryRoot || current.Branch != rt.manifest.BaseBranch || current.Head != rt.manifest.BaseHead {
+		return fmt.Errorf("primary branch or HEAD changed before finalization")
+	}
+	// The integration branch already contains the reviewed tree. Retain that
+	// exact ref rather than creating a second, potentially divergent result.
+	rt.manifest.ResultBranch = integration.Branch
+	rt.manifest.PromotedHead = integration.SealedHead
+	rt.promoted = true
+	if err := rt.writeManifest(); err != nil {
+		return fmt.Errorf("result branch %s retained but recording finalization failed: %w", integration.Branch, err)
+	}
+	if err := rt.cleanupSuccess(); err != nil {
+		return fmt.Errorf("result branch %s retained but cleanup failed: %w", integration.Branch, err)
+	}
+	rt.cleanupComplete = true
+	return nil
+}
+
 func (rt *worktreeRuntime) promote(integration *managedWorktree) error {
 	if integration.Kind != "integration" {
 		return fmt.Errorf("only the integration workspace can be promoted")
@@ -691,12 +745,16 @@ func (rt *worktreeRuntime) recover() string {
 	}
 	if rt.promoted {
 		var b strings.Builder
-		fmt.Fprintf(&b, "Promotion succeeded at %s; cleanup remains incomplete. Do not promote again.\nManifest: %s\nManual cleanup after inspection:\n", rt.manifest.PromotedHead, rt.manifestPath)
+		if rt.manifest.ResultBranch != "" {
+			fmt.Fprintf(&b, "Result branch %s retained at %s; cleanup remains incomplete. Do not finalize again.\nManifest: %s\nManual cleanup after inspection:\n", rt.manifest.ResultBranch, rt.manifest.PromotedHead, rt.manifestPath)
+		} else {
+			fmt.Fprintf(&b, "Promotion succeeded at %s; cleanup remains incomplete. Do not promote again.\nManifest: %s\nManual cleanup after inspection:\n", rt.manifest.PromotedHead, rt.manifestPath)
+		}
 		for _, workspace := range rt.manifest.Worktrees {
 			if !workspace.WorktreeRemoved {
 				fmt.Fprintf(&b, "- git -C %q worktree remove %q\n", rt.manifest.PrimaryRoot, workspace.Path)
 			}
-			if !workspace.BranchRemoved {
+			if !workspace.BranchRemoved && workspace.Branch != rt.manifest.ResultBranch {
 				fmt.Fprintf(&b, "- git -C %q branch -D %q\n", rt.manifest.PrimaryRoot, workspace.Branch)
 			}
 		}
@@ -758,6 +816,9 @@ func (rt *worktreeRuntime) cleanupSuccess() error {
 			continue
 		}
 		workspace.WorktreeRemoved = true
+		if workspace.Branch == rt.manifest.ResultBranch {
+			continue
+		}
 		if _, err := rt.git(rt.manifest.PrimaryRoot, "branch", "-D", workspace.Branch); err != nil {
 			errs = append(errs, fmt.Errorf("remove branch %s: %w", workspace.Branch, err))
 		} else {

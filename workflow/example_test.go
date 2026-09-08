@@ -40,6 +40,8 @@ func TestExamplePlannerHandoffAndNamedRepairCycles(t *testing.T) {
 	repo := initTestRepository(t)
 	gitCommand(t, repo, "config", "user.name", "Test")
 	gitCommand(t, repo, "config", "user.email", "test@example.com")
+	baseHead := strings.TrimSpace(gitCommand(t, repo, "rev-parse", "HEAD"))
+	baseBranch := strings.TrimSpace(gitCommand(t, repo, "branch", "--show-current"))
 	var mu sync.Mutex
 	var names []string
 	output, err := runConcurrentWorkflowExample(t, repo, func(_ context.Context, req AgentRequest) (AgentResult, error) {
@@ -67,6 +69,9 @@ func TestExamplePlannerHandoffAndNamedRepairCycles(t *testing.T) {
 			if !strings.Contains(req.Prompt, "Fix acceptance finding") {
 				return AgentResult{}, errors.New("missing acceptance feedback")
 			}
+			if err := os.WriteFile(filepath.Join(req.Workspace, "repair.txt"), []byte("reconciled\n"), 0o600); err != nil {
+				return AgentResult{}, err
+			}
 		case "Acceptance (cycle 1)":
 			return AgentResult{Text: "Fix acceptance finding\nSTATUS: CHANGES_REQUIRED"}, nil
 		}
@@ -80,15 +85,37 @@ func TestExamplePlannerHandoffAndNamedRepairCycles(t *testing.T) {
 	if strings.Join(names, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("invocations = %q, want %q", names, want)
 	}
-	if strings.Contains(output, "internal report") || strings.Contains(done.Error(), "internal report") {
-		t.Fatalf("agent reports leaked into final feedback: %s, %v", output, done)
+	if strings.Contains(output, "internal report") || !strings.Contains(done.Error(), "internal report") {
+		t.Fatalf("acceptance report missing from final handoff or leaked into progress: %s, %v", output, done)
 	}
-	content, err := os.ReadFile(filepath.Join(repo, "feature.txt"))
-	if err != nil || string(content) != "implemented\n" {
-		t.Fatalf("promoted content = %q, %v", content, err)
+	if got := strings.TrimSpace(gitCommand(t, repo, "rev-parse", "HEAD")); got != baseHead {
+		t.Fatalf("starting HEAD changed to %s", got)
 	}
-	if branches := gitCommand(t, repo, "branch", "--format=%(refname:short)"); strings.Contains(branches, "ronin/") {
-		t.Fatalf("workflow branches remain: %s", branches)
+	if got := strings.TrimSpace(gitCommand(t, repo, "branch", "--show-current")); got != baseBranch {
+		t.Fatalf("checkout changed to %s", got)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "feature.txt")); !os.IsNotExist(err) {
+		t.Fatalf("result leaked into primary worktree: %v", err)
+	}
+	branches := strings.Fields(gitCommand(t, repo, "branch", "--list", "ronin/*", "--format=%(refname:short)"))
+	if len(branches) != 1 {
+		t.Fatalf("want only result branch retained, got %v", branches)
+	}
+	branch := branches[0]
+	if got := gitCommand(t, repo, "show", branch+":feature.txt"); got != "implemented\n" {
+		t.Fatalf("result content = %q", got)
+	}
+	if got := gitCommand(t, repo, "show", branch+":repair.txt"); got != "reconciled\n" {
+		t.Fatalf("repair content = %q", got)
+	}
+	head := strings.TrimSpace(gitCommand(t, repo, "rev-parse", branch))
+	for _, want := range []string{"Result branch: " + branch, "Commit: " + head, "Starting branch: " + baseBranch + " (unchanged)", "1 lane commit(s) and 1 repair commit(s)"} {
+		if !strings.Contains(done.Error(), want) {
+			t.Errorf("handoff %q missing %q", done.Error(), want)
+		}
+	}
+	if got := gitCommand(t, repo, "worktree", "list", "--porcelain"); strings.Count(got, "worktree ") != 1 {
+		t.Fatalf("temporary worktrees remain: %s", got)
 	}
 }
 
