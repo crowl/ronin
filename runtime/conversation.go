@@ -26,6 +26,21 @@ type Tool interface {
 	Call(ctx context.Context, rawArgs json.RawMessage) (any, error)
 }
 
+// ContextResetter is optionally implemented by tools whose state depends on
+// previously delivered conversation content. ResetContext is called after a
+// successful context replacement, with no tool calls in flight.
+type ContextResetter interface {
+	ResetContext()
+}
+
+func (c *Conversation) resetToolContext() {
+	for _, t := range c.toolByName {
+		if resetter, ok := t.(ContextResetter); ok {
+			resetter.ResetContext()
+		}
+	}
+}
+
 type IncrementalTool interface {
 	Tool
 	CallIncremental(ctx context.Context, rawArgs json.RawMessage, emit func(tool.Artifact) error) (any, error)
@@ -282,6 +297,7 @@ func (c *Conversation) compact(ctx context.Context) error {
 	}
 	c.session.History = append(c.session.History, session.Event{Type: session.EventCompaction, Compacted: messages})
 	c.messages = append([]llm.Message(nil), messages...)
+	c.resetToolContext()
 	c.contextUsage = llm.Usage{Cost: llm.Cost{Total: c.sessionCost.Total, Available: c.sessionCost.Available}}
 	return nil
 }
@@ -334,6 +350,7 @@ func (c *Conversation) Rewind(ctx context.Context, point RewindPoint) error {
 	c.session.History = append(c.session.History, event)
 	c.session.UpdatedAt = c.now().UTC()
 	c.messages = messages
+	c.resetToolContext()
 	c.recalculateContextUsage()
 	return nil
 }
@@ -360,6 +377,7 @@ func (c *Conversation) Fork(ctx context.Context, point RewindPoint) error {
 	c.session.History = []session.Event{{Type: session.EventContextReset, Compacted: messages}}
 	c.sessionCost = llm.SessionCost{Available: true}
 	c.messages = messages
+	c.resetToolContext()
 	c.recalculateContextUsage()
 	return nil
 }
@@ -408,6 +426,7 @@ func (c *Conversation) NewConversation() error {
 	c.contextUsage = llm.Usage{Cost: llm.Cost{Available: true}}
 	c.sessionCost = llm.SessionCost{Available: true}
 	c.messages = nil
+	c.resetToolContext()
 	c.session.History = nil
 	return nil
 }
@@ -517,6 +536,7 @@ func (c *Conversation) repairInterruptedToolCalls(ctx context.Context) error {
 	}
 	c.session.History = append(c.session.History, session.Event{Type: session.EventCompaction, Compacted: messages})
 	c.messages = messages
+	c.resetToolContext()
 	return nil
 }
 

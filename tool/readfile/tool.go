@@ -33,7 +33,7 @@ const (
 type Args struct {
 	Path        string `json:"path" jsonschema:"Path to read. Relative paths resolve from the current working directory; absolute paths are allowed."`
 	Mode        string `json:"mode,omitempty" jsonschema:"Read mode: auto, full, or metadata. Defaults to auto; auto may omit repeated unchanged full reads."`
-	KnownSHA256 string `json:"known_sha256,omitempty" jsonschema:"Optional SHA-256 already known by the model. Auto mode may omit content when it matches."`
+	KnownSHA256 string `json:"known_sha256,omitempty" jsonschema:"Optional SHA-256 of complete file content already available in your current context. A match omits content in auto mode for full-file reads. Do not supply a hash obtained only from code navigation or metadata; knowing a hash does not mean you have the content. Use full mode to force content."`
 	Range       *Range `json:"range,omitempty" jsonschema:"Optional 1-based line range to return."`
 	MaxBytes    int64  `json:"max_bytes,omitempty" jsonschema:"-"`
 }
@@ -127,6 +127,11 @@ type Tool struct {
 	cwd           string
 	cache         *fsutil.ReadCache
 	restrictToCWD bool
+}
+
+// ResetContext forgets read suppression when the conversation context changes.
+func (t *Tool) ResetContext() {
+	t.cache.ResetReturned()
 }
 
 func (t *Tool) Name() string {

@@ -87,6 +87,20 @@ func (c *ReadCache) MarkFull(path string, sha256 string) ReadEntry {
 	return entry
 }
 
+// ResetReturned forgets which contents were delivered while preserving file IDs.
+// Call it when the consumer's context is replaced or compacted.
+func (c *ReadCache) ResetReturned() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for key, entry := range c.entries {
+		entry.FullReturned = false
+		c.entries[key] = entry
+	}
+}
+
 func readEntryKey(path string, sha256 string) string {
 	return path + "\x00" + sha256
 }
