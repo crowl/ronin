@@ -502,7 +502,21 @@ type anthropicErrorResponse struct {
 
 func convertMessages(messages []llm.Message) ([]anthropicMessage, error) {
 	converted := make([]anthropicMessage, 0, len(messages))
+	var toolResults []anthropicMessageContentBlock
+	flushToolResults := func() {
+		if len(toolResults) > 0 {
+			converted = append(converted, anthropicMessage{Role: "user", Content: toolResults})
+			toolResults = nil
+		}
+	}
 	for _, msg := range messages {
+		// Anthropic expects consecutive tool results together in one user message.
+		// Flush at every other message, even if its conversion emits no content.
+		switch msg.(type) {
+		case llm.ToolOutputMessage, llm.ToolErrorMessage:
+		default:
+			flushToolResults()
+		}
 		switch typedMsg := msg.(type) {
 		case llm.UserMessage:
 			converted = append(converted, anthropicMessage{
@@ -523,23 +537,17 @@ func convertMessages(messages []llm.Message) ([]anthropicMessage, error) {
 				Content: []anthropicMessageContentBlock{anthropicTextBlock{Type: "text", Text: typedMsg.Text()}},
 			})
 		case llm.ToolOutputMessage:
-			converted = append(converted, anthropicMessage{
-				Role: "user",
-				Content: []anthropicMessageContentBlock{anthropicToolResultBlock{
-					Type:      "tool_result",
-					ToolUseID: typedMsg.ToolCallID,
-					Content:   typedMsg.ToolOutput,
-				}},
+			toolResults = append(toolResults, anthropicToolResultBlock{
+				Type:      "tool_result",
+				ToolUseID: typedMsg.ToolCallID,
+				Content:   typedMsg.ToolOutput,
 			})
 		case llm.ToolErrorMessage:
-			converted = append(converted, anthropicMessage{
-				Role: "user",
-				Content: []anthropicMessageContentBlock{anthropicToolResultBlock{
-					Type:      "tool_result",
-					ToolUseID: typedMsg.ToolCallID,
-					Content:   "error: " + errorText(typedMsg.Error),
-					IsError:   true,
-				}},
+			toolResults = append(toolResults, anthropicToolResultBlock{
+				Type:      "tool_result",
+				ToolUseID: typedMsg.ToolCallID,
+				Content:   "error: " + errorText(typedMsg.Error),
+				IsError:   true,
 			})
 		case llm.ErrorMessage:
 			converted = append(converted, anthropicMessage{
@@ -550,6 +558,7 @@ func convertMessages(messages []llm.Message) ([]anthropicMessage, error) {
 			return nil, fmt.Errorf("unsupported message %T", msg)
 		}
 	}
+	flushToolResults()
 	return converted, nil
 }
 
