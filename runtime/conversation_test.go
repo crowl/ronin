@@ -1000,9 +1000,9 @@ func (f *fakeModelClient) PredictNext(_ context.Context, req llm.PredictNextRequ
 	f.predictCalls++
 	return eventsCh, errsCh
 }
-func (f *fakeModelClient) PredictNextStructured(context.Context, llm.PredictNextStructuredRequest) (json.RawMessage, error) {
+func (f *fakeModelClient) PredictNextStructured(context.Context, llm.PredictNextStructuredRequest) (*llm.StructuredResult, error) {
 	f.structuredCalls++
-	return f.structuredRaw, nil
+	return &llm.StructuredResult{JSON: f.structuredRaw}, nil
 }
 
 type fakeCompactor struct {

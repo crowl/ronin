@@ -2,7 +2,6 @@ package llm_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
@@ -135,6 +134,6 @@ func (l *fakeModelClient) PredictNext(context.Context, llm.PredictNextRequest) (
 	panic("not implemented")
 }
 
-func (l *fakeModelClient) PredictNextStructured(context.Context, llm.PredictNextStructuredRequest) (json.RawMessage, error) {
+func (l *fakeModelClient) PredictNextStructured(context.Context, llm.PredictNextStructuredRequest) (*llm.StructuredResult, error) {
 	panic("not implemented")
 }

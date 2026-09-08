@@ -111,7 +111,13 @@ func (s *LLM) PredictNext(ctx context.Context, req llm.PredictNextRequest) (<-ch
 	return events, errs
 }
 
-func (s *LLM) PredictNextStructured(ctx context.Context, req llm.PredictNextStructuredRequest) (json.RawMessage, error) {
+func (s *LLM) PredictNextStructured(ctx context.Context, req llm.PredictNextStructuredRequest) (result *llm.StructuredResult, err error) {
+	result = &llm.StructuredResult{}
+	defer func() {
+		if result != nil && result.Usage != nil {
+			result.Usage.Cost = llm.EstimateCost(s.model, *result.Usage)
+		}
+	}()
 	payload, err := s.buildStructuredPayload(req)
 	if err != nil {
 		return nil, err
@@ -153,22 +159,28 @@ func (s *LLM) PredictNextStructured(ctx context.Context, req llm.PredictNextStru
 	if err := json.Unmarshal(data, &structuredResp); err != nil {
 		return nil, fmt.Errorf("parse anthropic structured response: %w", err)
 	}
+	if structuredResp.Usage != nil {
+		u := structuredResp.Usage
+		result.Usage = &llm.Usage{InputTokens: u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens, OutputTokens: u.OutputTokens, CachedTokens: u.CacheReadInputTokens, CacheWriteTokens: u.CacheCreationInputTokens}
+		result.Usage.TotalTokens = result.Usage.InputTokens + result.Usage.OutputTokens
+	}
 	if err := anthropicCompletionError(structuredResp.StopReason); err != nil {
-		return nil, fmt.Errorf("anthropic structured response: %w", err)
+		return result, fmt.Errorf("anthropic structured response: %w", err)
 	}
 	for _, block := range structuredResp.Content {
 		if block.Type == "text" {
 			text := strings.TrimSpace(block.Text)
 			if text == "" {
-				return nil, errors.New("anthropic structured response contained empty text")
+				return result, errors.New("anthropic structured response contained empty text")
 			}
 			if !json.Valid([]byte(text)) {
-				return nil, errors.New("anthropic structured response text is not valid JSON")
+				return result, errors.New("anthropic structured response text is not valid JSON")
 			}
-			return json.RawMessage(text), nil
+			result.JSON = json.RawMessage(text)
+			return result, nil
 		}
 	}
-	return nil, errors.New("anthropic structured response contained no text JSON")
+	return result, errors.New("anthropic structured response contained no text JSON")
 }
 
 func (s *LLM) stream(ctx context.Context, req llm.PredictNextRequest, events chan<- llm.PredictionEvent) error {
@@ -466,7 +478,7 @@ type anthropicOutputConfigFormat struct {
 
 type anthropicResponse struct {
 	Content    []anthropicContentBlock `json:"content"`
-	Usage      anthropicUsage          `json:"usage"`
+	Usage      *anthropicUsage         `json:"usage"`
 	StopReason string                  `json:"stop_reason"`
 }
 

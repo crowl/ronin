@@ -261,8 +261,8 @@ func TestPredictNextStructured(t *testing.T) {
 		if err != nil {
 			t.Fatalf("PredictNextStructured() error = %v", err)
 		}
-		if string(got) != `{"answer":"ok"}` {
-			t.Fatalf("structured output = %s, want answer", got)
+		if string(got.JSON) != `{"answer":"ok"}` {
+			t.Fatalf("structured output = %s, want answer", got.JSON)
 		}
 		if !strings.HasSuffix(escapedPath, "/interactions") {
 			t.Fatalf("escaped path = %q, want interactions endpoint", escapedPath)

@@ -112,6 +112,6 @@ func (c *recoveryModelClient) PredictNext(_ context.Context, request llm.Predict
 	close(errs)
 	return events, errs
 }
-func (*recoveryModelClient) PredictNextStructured(context.Context, llm.PredictNextStructuredRequest) (json.RawMessage, error) {
+func (*recoveryModelClient) PredictNextStructured(context.Context, llm.PredictNextStructuredRequest) (*llm.StructuredResult, error) {
 	return nil, nil
 }

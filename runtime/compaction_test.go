@@ -232,10 +232,10 @@ func (f *fakeStructuredModelClient) PredictNext(context.Context, llm.PredictNext
 	panic("not implemented")
 }
 
-func (f *fakeStructuredModelClient) PredictNextStructured(_ context.Context, req llm.PredictNextStructuredRequest) (json.RawMessage, error) {
+func (f *fakeStructuredModelClient) PredictNextStructured(_ context.Context, req llm.PredictNextStructuredRequest) (*llm.StructuredResult, error) {
 	f.lastRequest = req
 	if f.err != nil {
 		return nil, f.err
 	}
-	return f.raw, nil
+	return &llm.StructuredResult{JSON: f.raw}, nil
 }

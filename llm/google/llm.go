@@ -103,7 +103,7 @@ func (s *LLM) PredictNext(ctx context.Context, req llm.PredictNextRequest) (<-ch
 	return events, errs
 }
 
-func (s *LLM) PredictNextStructured(ctx context.Context, req llm.PredictNextStructuredRequest) (json.RawMessage, error) {
+func (s *LLM) PredictNextStructured(ctx context.Context, req llm.PredictNextStructuredRequest) (*llm.StructuredResult, error) {
 	payload, err := s.buildStructuredPayload(req)
 	if err != nil {
 		return nil, err
@@ -153,14 +153,20 @@ func (s *LLM) PredictNextStructured(ctx context.Context, req llm.PredictNextStru
 		return nil, fmt.Errorf("parse gemini structured response: %w", err)
 	}
 
+	result := &llm.StructuredResult{}
+	if u := structuredResp.Usage; u != nil {
+		result.Usage = &llm.Usage{InputTokens: u.TotalInputTokens, OutputTokens: u.TotalOutputTokens + u.TotalThoughtTokens, CachedTokens: u.TotalCachedTokens, TotalTokens: u.TotalTokens}
+		result.Usage.Cost = llm.EstimateCost(s.model, *result.Usage)
+	}
 	text := strings.TrimSpace(structuredResp.OutputText())
 	if text == "" {
-		return nil, errors.New("gemini structured response contained no output text")
+		return result, errors.New("gemini structured response contained no output text")
 	}
 	if !json.Valid([]byte(text)) {
-		return nil, errors.New("gemini structured response output is not valid JSON")
+		return result, errors.New("gemini structured response output is not valid JSON")
 	}
-	return json.RawMessage(text), nil
+	result.JSON = json.RawMessage(text)
+	return result, nil
 }
 
 func (s *LLM) stream(ctx context.Context, req llm.PredictNextRequest, events chan<- llm.PredictionEvent) error {

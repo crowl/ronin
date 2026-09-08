@@ -438,6 +438,13 @@ func loadHistory(ctx context.Context, reader sessionReader, sessionID string) ([
 				}
 			}
 		}
+		if event.Type == session.EventUsage && event.Usage != nil {
+			if event.Usage.Usage == nil || !event.Usage.Usage.Cost.Available {
+				cost.Available = false
+			} else {
+				cost.Total += event.Usage.Usage.Cost.Total
+			}
+		}
 		events = append(events, event)
 	}
 	if err := rows.Err(); err != nil {

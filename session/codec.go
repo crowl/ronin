@@ -56,6 +56,12 @@ func encodeEvent(event Event) (string, []byte, error) {
 		return "", nil, err
 	}
 	switch event.Type {
+	case EventUsage:
+		if event.Usage == nil {
+			return "", nil, errors.New("usage event requires a record")
+		}
+		payload, err := json.Marshal(event.Usage)
+		return string(EventUsage), payload, err
 	case EventContextReset:
 		messages, err := encodeMessages(event.Compacted)
 		if err != nil {
@@ -106,6 +112,16 @@ func encodeEvent(event Event) (string, []byte, error) {
 
 // decodeEvent reconstructs an event from its stored type tag and payload.
 func decodeEvent(eventType string, payload []byte) (Event, error) {
+	if eventType == string(EventUsage) {
+		var usage *llm.StructuredUsage
+		if err := json.Unmarshal(payload, &usage); err != nil {
+			return Event{}, err
+		}
+		if usage == nil {
+			return Event{}, errors.New("usage event requires a record")
+		}
+		return Event{Type: EventUsage, Usage: usage}, nil
+	}
 	if eventType == string(EventShellCommand) {
 		var v ShellCommandEntry
 		if err := json.Unmarshal(payload, &v); err != nil {

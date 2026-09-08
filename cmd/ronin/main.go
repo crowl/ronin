@@ -837,7 +837,8 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string, mcpT
 		}
 		result := workflow.AgentResult{Text: text}
 		if req.OutputSchema != nil {
-			raw, err := structureWorkflowAgentOutput(ctx, client, text, req.OutputSchema)
+			outputCtx := llm.WithStructuredUsageRecorder(ctx, conv.RecordStructuredUsage)
+			raw, err := structureWorkflowAgentOutput(outputCtx, client, text, req.OutputSchema)
 			if err != nil {
 				return workflow.AgentResult{}, fmt.Errorf("generate structured workflow agent output: %w", err)
 			}

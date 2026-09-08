@@ -202,6 +202,9 @@ func (o *Operation) Usage(input, output, cached, written int, cost float64, cost
 		s.counts[m] = n
 		s.mu.Unlock()
 	}
+	if input > 0 {
+		o.Attributes(attribute.Float64("ronin.cache.read_share", float64(cached)/float64(input)))
+	}
 	o.Attributes(attribute.Bool("ronin.usage.available", true), attribute.Int("gen_ai.usage.input_tokens", input), attribute.Int("gen_ai.usage.output_tokens", output), attribute.Int("gen_ai.usage.cache_read.input_tokens", cached), attribute.Int("gen_ai.usage.cache_creation.input_tokens", written), attribute.Bool("ronin.cost.available", costAvailable))
 	counter, _ := otel.Meter(instrumentation).Int64Counter("ronin.token.usage", metric.WithUnit("{token}"))
 	for category, n := range map[string]int{"input": max(input-cached-written, 0), "output": output, "cache_read": cached, "cache_write": written} {

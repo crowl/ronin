@@ -40,6 +40,8 @@ type ModelSwitchStore interface {
 type EventType string
 
 const (
+	// EventUsage records auxiliary model costs without adding model context.
+	EventUsage EventType = "usage"
 	// EventMessage carries a single conversation message.
 	EventMessage EventType = "message"
 	// EventContextReset carries the effective message set that replaces prior
@@ -57,6 +59,7 @@ const (
 
 // Event is a single append-only journal entry for a session.
 type Event struct {
+	Usage          *llm.StructuredUsage
 	Seq            int64
 	Type           EventType
 	CreatedAt      time.Time

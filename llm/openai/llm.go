@@ -104,7 +104,7 @@ func (s *LLM) PredictNext(ctx context.Context, req llm.PredictNextRequest) (<-ch
 	return events, errs
 }
 
-func (s *LLM) PredictNextStructured(ctx context.Context, req llm.PredictNextStructuredRequest) (json.RawMessage, error) {
+func (s *LLM) PredictNextStructured(ctx context.Context, req llm.PredictNextStructuredRequest) (*llm.StructuredResult, error) {
 	if err := s.ValidateStructuredOutputSchema(req.Schema); err != nil {
 		return nil, err
 	}
@@ -146,23 +146,28 @@ func (s *LLM) PredictNextStructured(ctx context.Context, req llm.PredictNextStru
 	mediaType := resp.Header.Get("Content-Type")
 	reader := bufio.NewReader(resp.Body)
 	var text string
+	result := &llm.StructuredResult{}
 	if isStructuredStream(mediaType, reader) {
-		text, err = s.readStructuredStream(reader)
+		text, err = s.readStructuredStream(reader, result)
 	} else {
-		text, err = s.readStructuredResponse(reader)
+		text, err = s.readStructuredResponse(reader, result)
+	}
+	if result.Usage != nil {
+		result.Usage.Cost = llm.EstimateCost(s.model, *result.Usage)
 	}
 	if err != nil {
-		return nil, err
+		return result, err
 	}
 
 	text = strings.TrimSpace(text)
 	if text == "" {
-		return nil, fmt.Errorf("%s structured response contained no output text", s.provider())
+		return result, fmt.Errorf("%s structured response contained no output text", s.provider())
 	}
 	if !json.Valid([]byte(text)) {
-		return nil, fmt.Errorf("%s structured response output is not valid JSON", s.provider())
+		return result, fmt.Errorf("%s structured response output is not valid JSON", s.provider())
 	}
-	return json.RawMessage(text), nil
+	result.JSON = json.RawMessage(text)
+	return result, nil
 }
 
 func (s *LLM) ValidateStructuredOutputSchema(schema *jsonschema.Schema) error {
@@ -280,7 +285,7 @@ leadingWhitespace:
 		bytes.HasPrefix(prefix, []byte(":"))
 }
 
-func (s *LLM) readStructuredResponse(r io.Reader) (string, error) {
+func (s *LLM) readStructuredResponse(r io.Reader, result *llm.StructuredResult) (string, error) {
 	data, err := io.ReadAll(io.LimitReader(r, 10*1024*1024))
 	if err != nil {
 		return "", fmt.Errorf("read %s structured response: %w", s.provider(), err)
@@ -290,10 +295,14 @@ func (s *LLM) readStructuredResponse(r io.Reader) (string, error) {
 	if err := json.Unmarshal(data, &structuredResp); err != nil {
 		return "", fmt.Errorf("parse %s structured response: %w", s.provider(), err)
 	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err == nil {
+		captureStructuredUsage(raw, result)
+	}
 	return structuredResp.OutputText(), nil
 }
 
-func (s *LLM) readStructuredStream(r io.Reader) (string, error) {
+func (s *LLM) readStructuredStream(r io.Reader, result *llm.StructuredResult) (string, error) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 1024), 10*1024*1024)
 
@@ -303,7 +312,7 @@ func (s *LLM) readStructuredStream(r io.Reader) (string, error) {
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
-			terminal, err := s.appendStructuredData(strings.Join(dataLines, "\n"), &text)
+			terminal, err := s.appendStructuredData(strings.Join(dataLines, "\n"), &text, result)
 			if err != nil {
 				return "", err
 			}
@@ -319,7 +328,7 @@ func (s *LLM) readStructuredStream(r io.Reader) (string, error) {
 		}
 	}
 	if len(dataLines) > 0 {
-		terminal, err := s.appendStructuredData(strings.Join(dataLines, "\n"), &text)
+		terminal, err := s.appendStructuredData(strings.Join(dataLines, "\n"), &text, result)
 		if err != nil {
 			return "", err
 		}
@@ -334,7 +343,7 @@ func (s *LLM) readStructuredStream(r io.Reader) (string, error) {
 	return text.String(), nil
 }
 
-func (s *LLM) appendStructuredData(data string, text *strings.Builder) (bool, error) {
+func (s *LLM) appendStructuredData(data string, text *strings.Builder, result *llm.StructuredResult) (bool, error) {
 	if data == "" || data == "[DONE]" {
 		return false, nil
 	}
@@ -345,6 +354,10 @@ func (s *LLM) appendStructuredData(data string, text *strings.Builder) (bool, er
 	}
 	if err := json.Unmarshal([]byte(data), &event); err != nil {
 		return false, fmt.Errorf("parse %s structured event: %w", s.provider(), err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(data), &raw); err == nil {
+		captureStructuredUsage(raw, result)
 	}
 	if strings.Contains(event.Type, "error") {
 		return false, fmt.Errorf("%s structured error event: %s", s.provider(), data)
@@ -1006,6 +1019,17 @@ func mergePartialCall(dst, src *partialCall) {
 	dst.Emitted = dst.Emitted || src.Emitted
 }
 
+func captureStructuredUsage(raw map[string]any, result *llm.StructuredResult) {
+	usage, ok := raw["usage"].(map[string]any)
+	if response, nested := raw["response"].(map[string]any); nested {
+		usage, ok = response["usage"].(map[string]any)
+	}
+	if ok && usage != nil {
+		u := usageFromRaw(raw)
+		result.Usage = &u
+	}
+}
+
 // Routing hints are only sent to recognized first-party endpoints.
 func (s *LLM) cacheProvider() string {
 	u, err := url.Parse(s.baseURL)
@@ -1031,10 +1055,11 @@ func usageFromRaw(raw map[string]any) llm.Usage {
 	}
 	inputTokenDetails, _ := usageMap["input_tokens_details"].(map[string]any)
 	return llm.Usage{
-		InputTokens:  intField(usageMap, "input_tokens"),
-		OutputTokens: intField(usageMap, "output_tokens"),
-		CachedTokens: intField(inputTokenDetails, "cached_tokens"),
-		TotalTokens:  intField(usageMap, "total_tokens"),
+		InputTokens:      intField(usageMap, "input_tokens"),
+		OutputTokens:     intField(usageMap, "output_tokens"),
+		CacheWriteTokens: intField(inputTokenDetails, "cache_write_tokens"),
+		CachedTokens:     intField(inputTokenDetails, "cached_tokens"),
+		TotalTokens:      intField(usageMap, "total_tokens"),
 	}
 }
 

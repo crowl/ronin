@@ -943,7 +943,7 @@ func (f *fakeStructuredClient) PredictNext(context.Context, llm.PredictNextReque
 func (f *fakeStructuredClient) ValidateStructuredOutputSchema(*jsonschema.Schema) error {
 	return f.schemaValidationErr
 }
-func (f *fakeStructuredClient) PredictNextStructured(_ context.Context, req llm.PredictNextStructuredRequest) (json.RawMessage, error) {
+func (f *fakeStructuredClient) PredictNextStructured(_ context.Context, req llm.PredictNextStructuredRequest) (*llm.StructuredResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.requests = append(f.requests, req)
@@ -952,7 +952,7 @@ func (f *fakeStructuredClient) PredictNextStructured(_ context.Context, req llm.
 	}
 	output := f.outputs[0]
 	f.outputs = f.outputs[1:]
-	return output, nil
+	return &llm.StructuredResult{JSON: output}, nil
 }
 
 type fakePromptConversation struct {

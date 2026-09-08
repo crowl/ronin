@@ -296,6 +296,7 @@ func (c *Conversation) compact(ctx context.Context) error {
 	if c.compactor == nil {
 		return errors.New("compactor is not configured")
 	}
+	ctx = llm.WithStructuredUsageRecorder(ctx, c.RecordStructuredUsage)
 	messages, err := c.compactor.Compact(ctx, append([]llm.Message(nil), c.messages...))
 	if err != nil {
 		return err
@@ -650,6 +651,7 @@ func (c *Conversation) updateMetadata(ctx context.Context, updated session.Sessi
 func (c *Conversation) run(ctx context.Context, prompt string, events chan<- Event) (runErr error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	ctx = llm.WithStructuredUsageRecorder(ctx, c.RecordStructuredUsage)
 	ctx = telemetry.WithModel(ctx, c.Model().Provider, c.Model().Name)
 	ctx, promptOp := telemetry.StartScope(ctx, "prompt_turn", attribute.String("ronin.session.id", c.session.ID))
 	defer func() { promptOp.End(runErr) }()
@@ -839,6 +841,28 @@ func (c *Conversation) run(ctx context.Context, prompt string, events chan<- Eve
 		return finish(c.reportSaveFailure(ctx, events, err, appendErr))
 	}
 	return finish(err)
+}
+
+// RecordStructuredUsage persists auxiliary costs without replacing context usage.
+// Call synchronously on the conversation's execution goroutine, not concurrently
+// with Prompt or other conversation mutations.
+func (c *Conversation) RecordStructuredUsage(_ context.Context, record llm.StructuredUsage) error {
+	ctx, cancel := detachedPersistenceContext()
+	defer cancel()
+	event := session.Event{Type: session.EventUsage, CreatedAt: c.now(), Usage: &record}
+	if c.sessionStore != nil && c.session.ID != "" {
+		if err := c.sessionStore.Append(ctx, c.session.ID, event); err != nil {
+			return fmt.Errorf("save structured usage: %w", err)
+		}
+	}
+	c.session.History = append(c.session.History, event)
+	if record.Usage == nil || !record.Usage.Cost.Available {
+		c.sessionCost.Available = false
+	} else {
+		c.sessionCost.Total += record.Usage.Cost.Total
+	}
+	c.contextUsage.Cost = llm.Cost{Total: c.sessionCost.Total, Available: c.sessionCost.Available}
+	return nil
 }
 
 func (c *Conversation) recordUsage(usage llm.Usage) {
