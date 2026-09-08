@@ -2,19 +2,21 @@ package runtime
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/crowl/ronin/config"
 	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/session"
 	"github.com/crowl/ronin/telemetry"
 	"github.com/crowl/ronin/tool"
-	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -133,11 +135,16 @@ func NewConversation(cfg ConversationConfig) (*Conversation, error) {
 	}, nil
 }
 
+// conversationCacheKey derives an opaque, stable identity for a conversation.
+// Persisted sessions map deterministically to the same key so a resumed
+// conversation keeps its provider-side cache; unsaved conversations get a
+// fresh random key.
 func conversationCacheKey(sessionID string) string {
 	if sessionID == "" {
-		return uuid.NewString()
+		return uuid.New().String()
 	}
-	return uuid.NewSHA1(uuid.NameSpaceOID, []byte("ronin:"+sessionID)).String()
+	sum := sha256.Sum256([]byte("ronin:" + sessionID))
+	return hex.EncodeToString(sum[:])
 }
 
 type Conversation struct {
