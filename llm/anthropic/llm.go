@@ -280,6 +280,7 @@ func (s *LLM) buildPayload(req llm.PredictNextRequest) (*anthropicRequest, error
 		Messages:     messages,
 		Stream:       true,
 		Thinking:     thinking,
+		CacheControl: &anthropicCacheControl{Type: "ephemeral"},
 		OutputConfig: outputConfig,
 	}
 	if req.SystemPrompt != "" {
@@ -360,7 +361,12 @@ func extendedThinkingBudget(maxTokens int, level llm.ReasoningLevel) int {
 	return min(max(budget, 1024), maxTokens-1)
 }
 
+type anthropicCacheControl struct {
+	Type string `json:"type"`
+}
+
 type anthropicRequest struct {
+	CacheControl *anthropicCacheControl   `json:"cache_control,omitempty"`
 	Model        string                   `json:"model"`
 	MaxTokens    int                      `json:"max_tokens"`
 	Messages     []anthropicMessage       `json:"messages"`

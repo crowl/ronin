@@ -14,6 +14,7 @@ import (
 	"github.com/crowl/ronin/session"
 	"github.com/crowl/ronin/telemetry"
 	"github.com/crowl/ronin/tool"
+	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -113,7 +114,9 @@ func NewConversation(cfg ConversationConfig) (*Conversation, error) {
 		contextUsage.Cost.Available = true
 	}
 
+	cacheKey := conversationCacheKey(cfg.Session.ID)
 	return &Conversation{
+		cacheKey:     cacheKey,
 		cwd:          cfg.CWD,
 		systemPrompt: cfg.SystemPrompt,
 		maxTurns:     maxTurns,
@@ -130,7 +133,15 @@ func NewConversation(cfg ConversationConfig) (*Conversation, error) {
 	}, nil
 }
 
+func conversationCacheKey(sessionID string) string {
+	if sessionID == "" {
+		return uuid.NewString()
+	}
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte("ronin:"+sessionID)).String()
+}
+
 type Conversation struct {
+	cacheKey     string
 	cwd          string
 	systemPrompt string
 	maxTurns     int
@@ -374,6 +385,7 @@ func (c *Conversation) Fork(ctx context.Context, point RewindPoint) error {
 		return fmt.Errorf("create session fork: %w", err)
 	}
 	c.session = forked
+	c.cacheKey = conversationCacheKey(forked.ID)
 	c.session.History = []session.Event{{Type: session.EventContextReset, Compacted: messages}}
 	c.sessionCost = llm.SessionCost{Available: true}
 	c.messages = messages
@@ -423,6 +435,7 @@ func (c *Conversation) NewConversation() error {
 		}
 		c.session = newSession
 	}
+	c.cacheKey = conversationCacheKey(c.session.ID)
 	c.contextUsage = llm.Usage{Cost: llm.Cost{Available: true}}
 	c.sessionCost = llm.SessionCost{Available: true}
 	c.messages = nil
@@ -715,7 +728,7 @@ func (c *Conversation) run(ctx context.Context, prompt string, events chan<- Eve
 		var stopReason llm.StopReason
 		predictionFinished := false
 		requestMessages := llm.ProjectMessagesForProvider(c.messages, c.modelClient.Model().Provider)
-		request := llm.PredictNextRequest{SystemPrompt: c.systemPrompt, Tools: append([]llm.Tool(nil), c.toolDefs...), Messages: requestMessages}
+		request := llm.PredictNextRequest{CacheKey: c.cacheKey, SystemPrompt: c.systemPrompt, Tools: append([]llm.Tool(nil), c.toolDefs...), Messages: requestMessages}
 		predictionEventsCh, predictionErrCh := predictObserved(ctx, c.modelClient, request)
 		for event := range predictionEventsCh {
 			switch typed := event.(type) {

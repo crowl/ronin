@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 
@@ -446,6 +447,9 @@ func (s *LLM) buildPayload(req llm.PredictNextRequest) (*openAIRequest, error) {
 		Store:  false,
 	}
 
+	if s.cacheProvider() != "" {
+		payload.PromptCacheKey = req.CacheKey
+	}
 	if req.SystemPrompt != "" {
 		payload.Instructions = req.SystemPrompt
 	}
@@ -514,6 +518,7 @@ func (s *LLM) buildStructuredPayload(req llm.PredictNextStructuredRequest) (*ope
 }
 
 type openAIRequest struct {
+	PromptCacheKey  string            `json:"prompt_cache_key,omitempty"`
 	Model           string            `json:"model"`
 	Input           []openAIInput     `json:"input"`
 	Stream          bool              `json:"stream"`
@@ -999,6 +1004,22 @@ func mergePartialCall(dst, src *partialCall) {
 	}
 	dst.ArgumentsDone = dst.ArgumentsDone || src.ArgumentsDone
 	dst.Emitted = dst.Emitted || src.Emitted
+}
+
+// Routing hints are only sent to recognized first-party endpoints.
+func (s *LLM) cacheProvider() string {
+	u, err := url.Parse(s.baseURL)
+	if err != nil || u.Scheme != "https" {
+		return ""
+	}
+	switch {
+	case s.model.Provider == "openai" && u.Host == "api.openai.com":
+		return "openai"
+	case s.model.Provider == "xai" && u.Host == "api.x.ai":
+		return "xai"
+	default:
+		return ""
+	}
 }
 
 func usageFromRaw(raw map[string]any) llm.Usage {

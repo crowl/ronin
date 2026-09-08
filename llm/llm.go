@@ -20,6 +20,8 @@ type StructuredOutputSchemaValidator interface {
 }
 
 type PredictNextRequest struct {
+	// CacheKey is an opaque, stable identity for one conversation, not prompt content.
+	CacheKey     string
 	SystemPrompt string
 	Messages     []Message
 	Tools        []Tool
