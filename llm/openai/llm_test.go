@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -622,6 +623,137 @@ func TestPredictNextStructured(t *testing.T) {
 			t.Fatalf("error = %v, want valid JSON error", err)
 		}
 	})
+}
+
+func TestPredictNextRetriesUnexpectedEOFBeforeOutput(t *testing.T) {
+	var requests int
+	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		requests++
+		body := io.Reader(unexpectedEOFReader{})
+		if requests == 2 {
+			body = strings.NewReader("data: {\"type\":\"response.completed\",\"response\":{\"usage\":{}}}\n\n")
+		}
+		return streamResponse(body), nil
+	})
+	client := newTestClient(t, &http.Client{Transport: transport})
+
+	eventsCh, errs := client.PredictNext(t.Context(), llm.PredictNextRequest{})
+	events := drainEvents(eventsCh)
+	if err := <-errs; err != nil {
+		t.Fatalf("PredictNext() error = %v", err)
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want 2", requests)
+	}
+	started := 0
+	for _, event := range events {
+		if _, ok := event.(llm.PredictionStarted); ok {
+			started++
+		}
+	}
+	if started != 1 {
+		t.Fatalf("PredictionStarted events = %d, want 1", started)
+	}
+}
+
+func TestPredictNextDoesNotRetryUnexpectedEOFAfterOutput(t *testing.T) {
+	var requests int
+	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		requests++
+		body := io.MultiReader(
+			strings.NewReader("data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n"),
+			unexpectedEOFReader{},
+		)
+		return streamResponse(body), nil
+	})
+	client := newTestClient(t, &http.Client{Transport: transport})
+
+	eventsCh, errs := client.PredictNext(t.Context(), llm.PredictNextRequest{})
+	events := drainEvents(eventsCh)
+	if err := <-errs; !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("PredictNext() error = %v, want unexpected EOF", err)
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want 1", requests)
+	}
+	if len(events) < 3 {
+		t.Fatalf("events = %#v, want started, block started, and text delta", events)
+	}
+}
+
+func TestPredictNextExhaustsUnexpectedEOFRetries(t *testing.T) {
+	var requests int
+	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		requests++
+		return streamResponse(unexpectedEOFReader{}), nil
+	})
+	client := newTestClient(t, &http.Client{Transport: transport})
+
+	eventsCh, errs := client.PredictNext(t.Context(), llm.PredictNextRequest{})
+	_ = drainEvents(eventsCh)
+	if err := <-errs; !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("PredictNext() error = %v, want unexpected EOF", err)
+	}
+	if requests != 3 {
+		t.Fatalf("requests = %d, want 3", requests)
+	}
+}
+
+func TestPredictNextStopsRetryingUnexpectedEOFWhenCanceled(t *testing.T) {
+	var requests int
+	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		requests++
+		return streamResponse(unexpectedEOFReader{}), nil
+	})
+	client := newTestClient(t, &http.Client{Transport: transport})
+	ctx, cancel := context.WithCancel(context.Background())
+
+	eventsCh, errs := client.PredictNext(ctx, llm.PredictNextRequest{})
+	if event := <-eventsCh; event == nil {
+		t.Fatal("PredictNext() emitted no PredictionStarted event")
+	}
+	cancel()
+	_ = drainEvents(eventsCh)
+	if err := <-errs; !errors.Is(err, context.Canceled) {
+		t.Fatalf("PredictNext() error = %v, want context canceled", err)
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want 1", requests)
+	}
+}
+
+func newTestClient(t *testing.T, httpClient *http.Client) *openai.LLM {
+	t.Helper()
+	client, err := openai.NewLLM(openai.LLMConfig{
+		APIKey:         "key",
+		Model:          llm.Model{Provider: "openai", Name: "test"},
+		ReasoningLevel: llm.ReasoningLevelOff,
+		Client:         httpClient,
+	})
+	if err != nil {
+		t.Fatalf("NewLLM() error = %v", err)
+	}
+	return client
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+type unexpectedEOFReader struct{}
+
+func (unexpectedEOFReader) Read([]byte) (int, error) {
+	return 0, io.ErrUnexpectedEOF
+}
+
+func streamResponse(body io.Reader) *http.Response {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(body),
+	}
 }
 
 func predictWithStream(t *testing.T, stream string) ([]llm.PredictionEvent, error) {

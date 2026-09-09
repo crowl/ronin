@@ -16,6 +16,7 @@ import (
 	"github.com/crowl/ronin/jsonschema"
 	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/llm/internal/httpretry"
+	"github.com/crowl/ronin/llm/internal/streamretry"
 )
 
 const (
@@ -91,16 +92,9 @@ func (s *LLM) SetReasoningLevel(level llm.ReasoningLevel) error {
 }
 
 func (s *LLM) PredictNext(ctx context.Context, req llm.PredictNextRequest) (<-chan llm.PredictionEvent, <-chan error) {
-	events := make(chan llm.PredictionEvent, 32)
-	errs := make(chan error, 1)
-	go func() {
-		defer close(events)
-		defer close(errs)
-		if err := s.stream(ctx, req, events); err != nil {
-			errs <- err
-		}
-	}()
-	return events, errs
+	return streamretry.Predict(ctx, 32, func(attemptCtx context.Context, events chan<- llm.PredictionEvent) error {
+		return s.stream(attemptCtx, req, events)
+	})
 }
 
 func (s *LLM) PredictNextStructured(ctx context.Context, req llm.PredictNextStructuredRequest) (*llm.StructuredResult, error) {

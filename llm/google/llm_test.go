@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -352,6 +353,65 @@ func TestPredictNextStructured(t *testing.T) {
 			t.Fatalf("error = %v, want valid JSON error", err)
 		}
 	})
+}
+
+func TestPredictNextRetriesUnexpectedEOFBeforeOutput(t *testing.T) {
+	var requests int
+	transport := retryRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		requests++
+		body := io.Reader(retryUnexpectedEOFReader{})
+		if requests == 2 {
+			body = strings.NewReader("data: {\"event_type\":\"interaction.completed\",\"interaction\":{\"status\":\"completed\"}}\n\n")
+		}
+		return retryStreamResponse(body), nil
+	})
+	client, err := google.NewLLM(google.LLMConfig{
+		APIKey:         "key",
+		Model:          llm.Model{Provider: "google", Name: "test"},
+		ReasoningLevel: llm.ReasoningLevelOff,
+		Client:         &http.Client{Transport: transport},
+	})
+	if err != nil {
+		t.Fatalf("NewLLM() error = %v", err)
+	}
+
+	eventsCh, errs := client.PredictNext(t.Context(), llm.PredictNextRequest{})
+	events := drainEvents(eventsCh)
+	if err := <-errs; err != nil {
+		t.Fatalf("PredictNext() error = %v", err)
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want 2", requests)
+	}
+	started := 0
+	for _, event := range events {
+		if _, ok := event.(llm.PredictionStarted); ok {
+			started++
+		}
+	}
+	if started != 1 {
+		t.Fatalf("PredictionStarted events = %d, want 1", started)
+	}
+}
+
+type retryRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f retryRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+type retryUnexpectedEOFReader struct{}
+
+func (retryUnexpectedEOFReader) Read([]byte) (int, error) {
+	return 0, io.ErrUnexpectedEOF
+}
+
+func retryStreamResponse(body io.Reader) *http.Response {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(body),
+	}
 }
 
 func predictWithStream(t *testing.T, stream string) ([]llm.PredictionEvent, error) {
