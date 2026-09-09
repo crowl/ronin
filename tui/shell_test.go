@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/crowl/ronin/session"
+	"github.com/crowl/ronin/tool"
+	"github.com/crowl/ronin/tool/shell"
 )
 
 type shellConversationFake struct {
@@ -117,7 +119,7 @@ func TestShellSubmissionLifecycle(t *testing.T) {
 				if !output.Truncated || len(output.Text) != session.MaxShellOutputBytes || status.Status != session.ShellSucceeded {
 					t.Fatalf("truncation: %+v", status)
 				}
-				if !strings.Contains(app.model.boxes[app.model.shellOutputIndex].(systemMessageBox).Text, "[output truncated]") {
+				if !strings.Contains(renderedShellOutput(app.model.boxes), "[output truncated]") {
 					t.Fatal("missing truncation marker")
 				}
 			} else if status.Status != session.ShellFailed || status.ExitCode != 7 {
@@ -128,11 +130,95 @@ func TestShellSubmissionLifecycle(t *testing.T) {
 				t.Fatal(err)
 			}
 			restored.populateInitialBoxes(conversation)
-			if len(restored.boxes) < 3 {
+			if len(restored.boxes) < 2 {
 				t.Fatal("shell history not displayed")
 			}
 		})
 	}
+}
+
+func TestShellOutputDisplay(t *testing.T) {
+	m, err := newAppModel([]Command{Exit{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.startShell("printf output")
+	m.shellOutput(shellOutputReceived{Stream: tool.ShellStreamStdout, Text: "output"})
+	m.shellOutput(shellOutputReceived{Stream: tool.ShellStreamStderr, Text: "problem"})
+	m.finishShell("printf output", shell.Result{Command: "printf output", ExitCode: 7, Stdout: "output", Stderr: "problem"}, nil)
+
+	output := m.boxes[m.shellOutputIndex].(shellOutputBox)
+	lines := renderBoxLines(output, 80, false)
+	plain := strings.Join(plainLines(lines), "\n")
+	metadata := strings.ToLower(plain)
+	if strings.Contains(metadata, "stdout:") || strings.Contains(metadata, "stderr:") || strings.Contains(metadata, "exit code") {
+		t.Fatalf("shell metadata displayed:\n%s", plain)
+	}
+	if !strings.Contains(plain, "output") || !strings.Contains(plain, "problem") {
+		t.Fatalf("shell output missing:\n%s", plain)
+	}
+	if !strings.Contains(lines[len(lines)-1], errorStyle.start()) {
+		t.Fatalf("stderr is not red: %q", lines[len(lines)-1])
+	}
+}
+
+func TestRenderShellOutputStreams(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		box  shellOutputBox
+		red  bool
+	}{
+		{name: "stdout", box: shellOutputBox{Stdout: "output"}},
+		{name: "stderr", box: shellOutputBox{Stderr: "problem"}, red: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			lines := renderBoxLines(test.box, 80, false)
+			if got := strings.Join(plainLines(lines), "\n"); got != " "+test.box.Stdout+test.box.Stderr {
+				t.Fatalf("rendered output = %q", got)
+			}
+			if got := strings.Contains(lines[0], errorStyle.start()); got != test.red {
+				t.Fatalf("red style = %v, want %v: %q", got, test.red, lines[0])
+			}
+		})
+	}
+}
+
+func TestShellOutputHistoryDisplay(t *testing.T) {
+	c := &shellConversationFake{history: []session.Event{
+		{Type: session.EventShellCommand, ShellCommand: &session.ShellCommandEntry{ID: "shell-1", Command: "test"}},
+		{Type: session.EventShellOutput, ShellOutput: &session.ShellOutputEntry{ID: "shell-1", Stream: session.ShellStdout, Text: "output"}},
+		{Type: session.EventShellOutput, ShellOutput: &session.ShellOutputEntry{ID: "shell-1", Stream: session.ShellStderr, Text: "problem"}},
+		{Type: session.EventShellStatus, ShellStatus: &session.ShellStatusEntry{ID: "shell-1", Status: session.ShellFailed, ExitCode: 7, HasExitCode: true}},
+	}}
+	m, err := newAppModel([]Command{Exit{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.populateInitialBoxes(c)
+
+	if len(m.boxes) != 2 {
+		t.Fatalf("history boxes = %#v, want command and combined output", m.boxes)
+	}
+	output := m.boxes[1].(shellOutputBox)
+	lines := renderBoxLines(output, 80, false)
+	plain := strings.Join(plainLines(lines), "\n")
+	metadata := strings.ToLower(plain)
+	if strings.Contains(metadata, "stdout:") || strings.Contains(metadata, "stderr:") || strings.Contains(metadata, "exit code") {
+		t.Fatalf("shell metadata displayed:\n%s", plain)
+	}
+	if !strings.Contains(lines[len(lines)-1], errorStyle.start()) {
+		t.Fatalf("restored stderr is not red: %q", lines[len(lines)-1])
+	}
+}
+
+func renderedShellOutput(boxes []box) string {
+	var rendered []string
+	for _, box := range boxes {
+		if output, ok := box.(shellOutputBox); ok {
+			rendered = append(rendered, plainLines(renderBoxLines(output, 80, false))...)
+		}
+	}
+	return strings.Join(rendered, "\n")
 }
 
 func TestShellShutdownPersistsCancellation(t *testing.T) {

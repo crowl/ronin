@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
-	"fmt"
 	"strings"
 	"sync"
 	"unicode"
@@ -39,20 +38,6 @@ func shellText(text string) string {
 		}
 		return r
 	}, strings.ToValidUTF8(text, "�"))
-}
-
-func shellStatusText(status session.ShellStatusEntry) string {
-	text := "Shell " + string(status.Status)
-	if status.HasExitCode {
-		text += fmt.Sprintf(" (exit code %d)", status.ExitCode)
-	}
-	if status.Error != "" {
-		text += ": " + status.Error
-	}
-	if status.CleanupFailed {
-		text += " [process cleanup timed out]"
-	}
-	return shellText(text)
 }
 
 func (app *app) startShell(ctx context.Context, command string) {
@@ -135,8 +120,13 @@ func (m *appModel) shellOutput(event shellOutputReceived) {
 	if !m.shellRunning {
 		return
 	}
-	box := m.boxes[m.shellOutputIndex].(systemMessageBox)
-	box.Text += shellText(event.Text)
+	box := m.boxes[m.shellOutputIndex].(shellOutputBox)
+	switch event.Stream {
+	case tool.ShellStreamStdout:
+		box.Stdout += shellText(event.Text)
+	case tool.ShellStreamStderr:
+		box.Stderr += shellText(event.Text)
+	}
 	m.boxes[m.shellOutputIndex] = box
 	m.boxLineCache.Reset()
 }
@@ -147,14 +137,27 @@ func (m *appModel) appendShellHistory(event session.Event) {
 		m.boxes = append(m.boxes, systemMessageBox{Text: "$ " + shellText(event.ShellCommand.Command)})
 	case session.EventShellOutput:
 		output := event.ShellOutput
-		text := string(output.Stream) + ":\n" + shellText(output.Text)
-		if output.Truncated {
-			text += "\n[output truncated]"
+		if output.Text == "" && !output.Truncated {
+			return
 		}
-		if output.Text != "" || output.Truncated {
-			m.boxes = append(m.boxes, systemMessageBox{Text: text})
+		var outputBox shellOutputBox
+		if len(m.boxes) > 0 {
+			outputBox, _ = m.boxes[len(m.boxes)-1].(shellOutputBox)
 		}
+		if outputBox.ID != output.ID {
+			outputBox = shellOutputBox{ID: output.ID}
+			m.boxes = append(m.boxes, outputBox)
+		}
+		switch output.Stream {
+		case session.ShellStdout:
+			outputBox.Stdout += shellText(output.Text)
+			outputBox.StdoutTruncated = outputBox.StdoutTruncated || output.Truncated
+		case session.ShellStderr:
+			outputBox.Stderr += shellText(output.Text)
+			outputBox.StderrTruncated = outputBox.StderrTruncated || output.Truncated
+		}
+		m.boxes[len(m.boxes)-1] = outputBox
 	case session.EventShellStatus:
-		m.boxes = append(m.boxes, systemMessageBox{Text: shellStatusText(*event.ShellStatus)})
+		// Completion status remains in history but is not part of shell output.
 	}
 }

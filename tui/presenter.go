@@ -118,11 +118,34 @@ func renderBoxContentLinesAt(block box, width int, toolsExpanded bool, now time.
 		return renderWorkflowBoxLines(typedBlock, width, toolsExpanded, now)
 	case systemMessageBox:
 		return markedLines(toolMarker, typedBlock.Text, width, style{})
+	case shellOutputBox:
+		return renderShellOutputLines(typedBlock, width)
 	case errorMessageBox:
 		return markedLines("! ", typedBlock.Text, width, errorStyle)
 	default:
 		return nil
 	}
+}
+
+func renderShellOutputLines(box shellOutputBox, width int) []string {
+	var lines []string
+	appendOutput := func(value string, lineStyle style) {
+		if value == "" {
+			return
+		}
+		for _, line := range text.Wrap("", value, width) {
+			lines = append(lines, lineStyle.apply(line))
+		}
+	}
+
+	appendOutput(box.Stdout, style{})
+	appendOutput(box.Stderr, errorStyle)
+	if box.StdoutTruncated || box.StderrTruncated {
+		lines = append(lines, mutedStyle.apply("[output truncated]"))
+	}
+	appendOutput(box.Notice, mutedStyle)
+	appendOutput(box.Error, errorStyle)
+	return lines
 }
 
 func markedLines(marker, value string, width int, lineStyle style) []string {

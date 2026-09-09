@@ -131,6 +131,9 @@ func boxSignature(block box, width int, toolsExpanded bool, now time.Time) boxLi
 	case systemMessageBox:
 		signature.Kind = "system"
 		signature.Text = typedBlock.Text
+	case shellOutputBox:
+		signature.Kind = "shell-output"
+		signature.Text = fmt.Sprintf("%q:%q:%t:%t:%q:%q", typedBlock.Stdout, typedBlock.Stderr, typedBlock.StdoutTruncated, typedBlock.StderrTruncated, typedBlock.Notice, typedBlock.Error)
 	case errorMessageBox:
 		signature.Kind = "error"
 		signature.Text = typedBlock.Text

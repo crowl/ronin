@@ -332,37 +332,39 @@ func (m *appModel) startShell(command string) {
 	m.shellRunning = true
 	m.boxes = append(m.boxes, systemMessageBox{Text: "$ " + shellText(command)})
 	m.shellOutputIndex = len(m.boxes)
-	m.boxes = append(m.boxes, systemMessageBox{})
+	m.boxes = append(m.boxes, shellOutputBox{})
 	m.working = true
 	m.workingLabel = "Running shell command"
 	m.indicatorFrame = 0
 	m.saveError = ""
 }
 
-func (m *appModel) finishShell(command string, result shell.Result, err error) modelUpdate {
+func (m *appModel) finishShell(_ string, result shell.Result, err error) modelUpdate {
 	m.shellRunning = false
 	m.working = false
 	m.workingLabel = ""
-	text := "stdout:\n" + shellText(result.Stdout)
-	if result.Stderr != "" {
-		text += "\nstderr:\n" + shellText(result.Stderr)
+	box := shellOutputBox{
+		Stdout:          shellText(result.Stdout),
+		Stderr:          shellText(result.Stderr),
+		StdoutTruncated: result.StdoutTruncated,
+		StderrTruncated: result.StderrTruncated,
 	}
-	if result.StdoutTruncated || result.StderrTruncated {
-		text += "\n[output truncated]"
-	}
-	if result.Command != "" {
-		text += fmt.Sprintf("\nShell exit code %d", result.ExitCode)
-	}
+	var notices []string
 	if result.TimedOut {
-		text += " [timed out]"
+		notices = append(notices, "[timed out]")
 	}
 	if result.CleanupTimedOut {
-		text += " [process cleanup timed out]"
+		notices = append(notices, "[process cleanup timed out]")
 	}
+	box.Notice = strings.Join(notices, " ")
 	if err != nil {
-		text += "\nShell error: " + shellText(err.Error())
+		box.Error = "Shell error: " + shellText(err.Error())
 	}
-	m.boxes[m.shellOutputIndex] = systemMessageBox{Text: text}
+	if box.Stdout == "" && box.Stderr == "" && !box.StdoutTruncated && !box.StderrTruncated && box.Notice == "" && box.Error == "" {
+		m.boxes = m.boxes[:m.shellOutputIndex]
+	} else {
+		m.boxes[m.shellOutputIndex] = box
+	}
 	m.boxLineCache.Reset()
 	return modelUpdate{Render: true}
 }

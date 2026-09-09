@@ -48,6 +48,16 @@ type workflowBox struct {
 
 type systemMessageBox struct{ Text string }
 
+type shellOutputBox struct {
+	ID              string
+	Stdout          string
+	Stderr          string
+	StdoutTruncated bool
+	StderrTruncated bool
+	Notice          string
+	Error           string
+}
+
 type errorMessageBox struct{ Text string }
 
 // Box is a sealed interface to mark all application box types
@@ -59,4 +69,5 @@ func (b assistantThinkingBox) box() {}
 func (b toolCallBox) box()          {}
 func (b workflowBox) box()          {}
 func (b systemMessageBox) box()     {}
+func (b shellOutputBox) box()       {}
 func (b errorMessageBox) box()      {}
