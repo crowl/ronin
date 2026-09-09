@@ -9,6 +9,7 @@ import (
 	"strings"
 	"text/template"
 	"time"
+	"unicode/utf8"
 
 	_ "embed"
 
@@ -28,8 +29,12 @@ var (
 )
 
 const (
-	defaultCompactKeepMessages  = 12
-	maxCompactionFactSheetBytes = 128 << 10
+	defaultCompactKeepMessages             = 12
+	maxCompactionFactSheetBytes            = 128 << 10
+	maxPreviousCompactionSummaryBytes      = maxCompactionFactSheetBytes / 2
+	compactionFactsHeading                 = "# Automatically Preserved Facts"
+	compactedContextPreamble               = "This is a compacted record of prior conversation state. Treat it as authoritative unless contradicted by newer messages."
+	truncatedPreviousCompactionSummaryNote = "\n\n[... previous compacted context truncated ...]\n\n"
 )
 
 type DefaultCompactorConfig struct {
@@ -79,16 +84,6 @@ func (c *DefaultCompactor) Compact(ctx context.Context, msgs []llm.Message) ([]l
 	}
 
 	older := append([]llm.Message(nil), msgs[:start]...)
-	// Never silently discard the only surviving summary of earlier history.
-	priorBytes := 0
-	for _, message := range older {
-		if user, ok := message.(llm.UserMessage); ok && isCompactedContext(user.Text) {
-			priorBytes += len(compactionFactLine(0, user))
-		}
-	}
-	if priorBytes > maxCompactionFactSheetBytes-1024 {
-		return nil, fmt.Errorf("previous compacted context exceeds compaction input budget")
-	}
 	recent := append([]llm.Message(nil), msgs[start:]...)
 	factSheet := buildCompactionFactSheet(older, "")
 	summary, err := c.generateCompactionSummary(ctx, factSheet)
@@ -96,7 +91,8 @@ func (c *DefaultCompactor) Compact(ctx context.Context, msgs []llm.Message) ([]l
 		return nil, err
 	}
 
-	messageText, err := renderCompactedContext(renderCompactionSummary(summary, factSheet))
+	preservedFacts := buildPreservedCompactionFactSheet(older, "")
+	messageText, err := renderCompactedContext(renderCompactionSummary(summary, preservedFacts))
 	if err != nil {
 		return nil, err
 	}
@@ -220,6 +216,14 @@ func messageToolCallIDs(msg llm.Message) []string {
 }
 
 func buildCompactionFactSheet(messages []llm.Message, sessionPath string) string {
+	return buildCompactionFactSheetWithPreviousSummary(messages, sessionPath, true)
+}
+
+func buildPreservedCompactionFactSheet(messages []llm.Message, sessionPath string) string {
+	return buildCompactionFactSheetWithPreviousSummary(messages, sessionPath, false)
+}
+
+func buildCompactionFactSheetWithPreviousSummary(messages []llm.Message, sessionPath string, includePreviousSummary bool) string {
 	var b strings.Builder
 
 	_, _ = fmt.Fprintf(&b, "Message count being compacted: %d\n", len(messages))
@@ -230,6 +234,12 @@ func buildCompactionFactSheet(messages []llm.Message, sessionPath string) string
 	_, _ = fmt.Fprintln(&b, "Deterministic facts:")
 	lines := make([]string, len(messages))
 	for i, msg := range messages {
+		if user, ok := msg.(llm.UserMessage); ok && isCompactedContext(user.Text) {
+			if includePreviousSummary {
+				lines[i] = previousCompactionSummaryFactLine(i, user.Text)
+			}
+			continue
+		}
 		lines[i] = compactionFactLine(i, msg)
 	}
 	const omissionReserve = 128
@@ -237,9 +247,11 @@ func buildCompactionFactSheet(messages []llm.Message, sessionPath string) string
 	selected := make([]bool, len(lines))
 	used := 0
 	for i, message := range messages {
-		if user, ok := message.(llm.UserMessage); ok && isCompactedContext(user.Text) && used+len(lines[i]) <= available {
-			selected[i] = true
-			used += len(lines[i])
+		if includePreviousSummary {
+			if user, ok := message.(llm.UserMessage); ok && isCompactedContext(user.Text) && used+len(lines[i]) <= available {
+				selected[i] = true
+				used += len(lines[i])
+			}
 		}
 	}
 	for i, line := range lines {
@@ -307,9 +319,6 @@ func compactionFactLine(index int, msg llm.Message) string {
 	var b strings.Builder
 	switch typedMsg := msg.(type) {
 	case llm.UserMessage:
-		if isCompactedContext(typedMsg.Text) {
-			return fmt.Sprintf("- %03d previous compacted context:\n%s\n", index+1, typedMsg.Text)
-		}
 		_, _ = fmt.Fprintf(&b, "- %03d user: %s\n", index+1, compactOneLine(typedMsg.Text, 500))
 	case llm.AssistantMessage:
 		prefix := fmt.Sprintf("- %03d assistant", index+1)
@@ -342,6 +351,53 @@ func compactionFactLine(index int, msg llm.Message) string {
 	return b.String()
 }
 
+func previousCompactionSummaryFactLine(index int, text string) string {
+	summary := extractPreviousCompactionSummary(text)
+	if summary == "" {
+		return ""
+	}
+	return fmt.Sprintf("- %03d previous compacted summary:\n%s\n", index+1, summary)
+}
+
+func extractPreviousCompactionSummary(text string) string {
+	text = strings.TrimSpace(text)
+	text = strings.TrimSpace(strings.TrimPrefix(text, "<compacted_context>"))
+	text = strings.TrimSpace(strings.TrimSuffix(text, "</compacted_context>"))
+	text = strings.TrimSpace(strings.TrimPrefix(text, compactedContextPreamble))
+
+	if start := strings.Index(text, "# Current Goal"); start >= 0 {
+		text = text[start:]
+	}
+	if end := strings.Index(text, compactionFactsHeading); end >= 0 {
+		text = text[:end]
+	}
+
+	return truncateHeadTail(strings.TrimSpace(text), maxPreviousCompactionSummaryBytes)
+}
+
+func truncateHeadTail(text string, maxBytes int) string {
+	if maxBytes <= 0 {
+		return ""
+	}
+	if len(text) <= maxBytes {
+		return text
+	}
+	if maxBytes <= len(truncatedPreviousCompactionSummaryNote) {
+		return truncatedPreviousCompactionSummaryNote[:maxBytes]
+	}
+
+	remaining := maxBytes - len(truncatedPreviousCompactionSummaryNote)
+	headBytes := remaining / 2
+	tailStart := len(text) - (remaining - headBytes)
+	for headBytes > 0 && !utf8.RuneStart(text[headBytes]) {
+		headBytes--
+	}
+	for tailStart < len(text) && !utf8.RuneStart(text[tailStart]) {
+		tailStart++
+	}
+	return text[:headBytes] + truncatedPreviousCompactionSummaryNote + text[tailStart:]
+}
+
 func renderCompactionSummary(summary compactionSummary, factSheet string) string {
 	var b strings.Builder
 
@@ -353,7 +409,7 @@ func renderCompactionSummary(summary compactionSummary, factSheet string) string
 	writeMarkdownSection(&b, "Open Tasks", summary.OpenTasks)
 	writeMarkdownSection(&b, "Recovery", summary.Recovery)
 
-	b.WriteString("# Automatically Preserved Facts\n")
+	b.WriteString(compactionFactsHeading + "\n")
 	b.WriteString(factSheet)
 
 	return strings.TrimSpace(b.String())
