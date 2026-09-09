@@ -188,6 +188,52 @@ func TestToolCall(t *testing.T) {
 	})
 }
 
+func TestResultArtifacts(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{
+			name:    "multiline content is pure additions",
+			content: "first\nsecond\n",
+			want:    "@@ -0,0 +1,2 @@\n+first\n+second\n",
+		},
+		{
+			name:    "missing trailing newline is preserved",
+			content: "last line",
+			want:    "@@ -0,0 +1,1 @@\n+last line\n\\ No newline at end of file\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			artifacts := (writefile.Result{Path: "file.txt", Content: tt.content}).Artifacts()
+			if len(artifacts) != 1 {
+				t.Fatalf("len(Artifacts()) = %d, want 1", len(artifacts))
+			}
+
+			artifact, ok := artifacts[0].(tool.UnifiedDiffArtifact)
+			if !ok {
+				t.Fatalf("Artifacts()[0] type = %T, want tool.UnifiedDiffArtifact", artifacts[0])
+			}
+			if artifact.Path != "file.txt" {
+				t.Fatalf("artifact Path = %q, want file.txt", artifact.Path)
+			}
+			if artifact.Diff != tt.want {
+				t.Fatalf("artifact Diff = %q, want %q", artifact.Diff, tt.want)
+			}
+		})
+	}
+
+	t.Run("empty content has no artifact", func(t *testing.T) {
+		artifacts := (writefile.Result{Path: "empty.txt"}).Artifacts()
+		if len(artifacts) != 0 {
+			t.Fatalf("len(Artifacts()) = %d, want 0", len(artifacts))
+		}
+	})
+}
+
 func callWriteFile(t *testing.T, writeTool *writefile.Tool, args writefile.Args) (writefile.Result, error) {
 	t.Helper()
 

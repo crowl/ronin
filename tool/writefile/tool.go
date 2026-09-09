@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/crowl/ronin/diff"
 	"github.com/crowl/ronin/jsonschema"
 	"github.com/crowl/ronin/tool"
 	"github.com/crowl/ronin/tool/fsutil"
@@ -37,13 +38,21 @@ type Result struct {
 }
 
 func (r Result) Artifacts() []tool.Artifact {
-	if r.Content == "" {
+	contentDiff := diff.Diff("", nil, "", []byte(r.Content))
+	if contentDiff == nil {
 		return nil
 	}
+
+	// Drop the three-line unified diff preamble. The artifact path supplies
+	// the filename, and diffing against an empty file renders pure additions.
+	_, contentDiff, _ = bytes.Cut(contentDiff, []byte("\n"))
+	_, contentDiff, _ = bytes.Cut(contentDiff, []byte("\n"))
+	_, contentDiff, _ = bytes.Cut(contentDiff, []byte("\n"))
+
 	return []tool.Artifact{
-		tool.FileArtifact{
-			Path:    r.Path,
-			Content: r.Content,
+		tool.UnifiedDiffArtifact{
+			Path: r.Path,
+			Diff: string(contentDiff),
 		},
 	}
 }
