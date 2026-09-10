@@ -191,9 +191,24 @@ func TestToolCall(t *testing.T) {
 func TestResultArtifacts(t *testing.T) {
 	tests := []struct {
 		name    string
+		before  *string
 		content string
 		want    string
 	}{
+		{
+			name:    "overwrite shows removals and additions",
+			before:  new("old\n"),
+			content: "new\n",
+			want:    "@@ -1,1 +1,1 @@\n-old\n+new\n",
+		},
+		{
+			name:   "empty overwrite shows deletions",
+			before: new("old\n"),
+			want:   "@@ -1,1 +0,0 @@\n-old\n",
+		},
+		{name: "unchanged content", before: new("same\n"), content: "same\n"},
+		{name: "empty creation"},
+		{name: "unchanged empty file", before: new("")},
 		{
 			name:    "multiline content is pure additions",
 			content: "first\nsecond\n",
@@ -208,7 +223,23 @@ func TestResultArtifacts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			artifacts := (writefile.Result{Path: "file.txt", Content: tt.content}).Artifacts()
+			dir := t.TempDir()
+			if tt.before != nil {
+				if err := os.WriteFile(filepath.Join(dir, "file.txt"), []byte(*tt.before), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			result, err := callWriteFile(t, writefile.New(dir, fsutil.NewMutationQueue()), writefile.Args{Path: "file.txt", Content: tt.content})
+			if err != nil {
+				t.Fatal(err)
+			}
+			artifacts := result.Artifacts()
+			if tt.want == "" {
+				if len(artifacts) != 0 {
+					t.Fatalf("Artifacts() = %v, want none", artifacts)
+				}
+				return
+			}
 			if len(artifacts) != 1 {
 				t.Fatalf("len(Artifacts()) = %d, want 1", len(artifacts))
 			}

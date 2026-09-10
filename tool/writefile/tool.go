@@ -34,25 +34,18 @@ type Result struct {
 	Bytes   int    `json:"bytes"`
 
 	// Used only for rendering, excluded from context
-	Content string `json:"-"`
+	UnifiedDiff string `json:"-"`
 }
 
 func (r Result) Artifacts() []tool.Artifact {
-	contentDiff := diff.Diff("", nil, "", []byte(r.Content))
-	if contentDiff == nil {
+	if r.UnifiedDiff == "" {
 		return nil
 	}
-
-	// Drop the three-line unified diff preamble. The artifact path supplies
-	// the filename, and diffing against an empty file renders pure additions.
-	_, contentDiff, _ = bytes.Cut(contentDiff, []byte("\n"))
-	_, contentDiff, _ = bytes.Cut(contentDiff, []byte("\n"))
-	_, contentDiff, _ = bytes.Cut(contentDiff, []byte("\n"))
 
 	return []tool.Artifact{
 		tool.UnifiedDiffArtifact{
 			Path: r.Path,
-			Diff: string(contentDiff),
+			Diff: r.UnifiedDiff,
 		},
 	}
 }
@@ -126,6 +119,7 @@ func (t *Tool) call(ctx context.Context, args Args) (Result, error) {
 		created := false
 		changed := true
 
+		var currentData []byte
 		info, err := os.Lstat(path.Abs)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -140,7 +134,7 @@ func (t *Tool) call(ctx context.Context, args Args) (Result, error) {
 			if info.Mode().IsRegular() {
 				mode = info.Mode()
 
-				currentData, err := os.ReadFile(path.Abs)
+				currentData, err = os.ReadFile(path.Abs)
 				if err != nil {
 					return err
 				}
@@ -164,12 +158,19 @@ func (t *Tool) call(ctx context.Context, args Args) (Result, error) {
 			}
 		}
 
+		// Only regular files supply prior content; never follow a symlink leaf.
+		contentDiff := diff.Diff("", currentData, "", content)
+		// The artifact path supplies the filename, so omit the diff preamble.
+		for range 3 {
+			_, contentDiff, _ = bytes.Cut(contentDiff, []byte("\n"))
+		}
+
 		result = Result{
-			Path:    path.Display,
-			Created: created,
-			Changed: changed || created,
-			Bytes:   len(content),
-			Content: string(content),
+			Path:        path.Display,
+			Created:     created,
+			Changed:     changed || created,
+			Bytes:       len(content),
+			UnifiedDiff: string(contentDiff),
 		}
 		return nil
 	})
