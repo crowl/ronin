@@ -101,7 +101,7 @@ func run() (exitCode int) {
 	}
 
 	if workflowMode {
-		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
+		ctx, cancel := signal.NotifyContext(context.Background(), shutdownSignals()...)
 		defer cancel()
 
 		settings, err := config.Load()
@@ -357,7 +357,7 @@ func run() (exitCode int) {
 	}
 
 	if prompt != "" {
-		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
+		ctx, cancel := signal.NotifyContext(context.Background(), shutdownSignals()...)
 		defer cancel()
 
 		if err := runPrompt(ctx, conv, prompt, os.Stdout); err != nil {
@@ -1394,7 +1394,7 @@ func runTUI(conv *runtime.Conversation, catalog *workflow.Catalog, agent workflo
 	}
 	cmds = append(cmds, tui.Exit{})
 
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
+	ctx, cancel := signal.NotifyContext(context.Background(), shutdownSignals()...)
 	defer cancel()
 
 	if err := tui.Run(ctx, tui.Config{
