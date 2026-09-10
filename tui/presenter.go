@@ -440,6 +440,7 @@ type statusBar struct {
 	Model          llm.Model
 	ReasoningLevel llm.ReasoningLevel
 	ContextUsage   llm.Usage
+	SessionUsage   llm.Usage
 }
 
 func (p statusBar) Lines(width int) []string {
@@ -462,14 +463,14 @@ func (p statusBar) Lines(width int) []string {
 	}
 
 	cost := "$?"
-	if p.ContextUsage.Cost.Available {
-		cost = normalForegroundStyle.start() + fmt.Sprintf("$%.2f", p.ContextUsage.Cost.Total) + mutedStyle.start()
+	if p.SessionUsage.Cost.Available {
+		cost = normalForegroundStyle.start() + fmt.Sprintf("$%.2f", p.SessionUsage.Cost.Total) + mutedStyle.start()
 	}
 	usage := fmt.Sprintf(
 		"↑%s ↓%s R%s %s/%s %s",
-		statusBarTokenCountText(p.ContextUsage.InputTokens),
-		statusBarTokenCountText(p.ContextUsage.OutputTokens),
-		statusBarTokenCountText(p.ContextUsage.CachedTokens),
+		statusBarTokenCountText(p.SessionUsage.InputTokens),
+		statusBarTokenCountText(p.SessionUsage.OutputTokens),
+		statusBarTokenCountText(p.SessionUsage.CachedTokens),
 		contextPercentText,
 		statusBarTokenCountText(int(p.Model.ContextWindow)),
 		cost,

@@ -101,6 +101,20 @@ func NewConversation(cfg ConversationConfig) (*Conversation, error) {
 			cfg.Session.History = append(cfg.Session.History, session.Event{Type: session.EventMessage, Message: message})
 		}
 	}
+	var sessionUsage llm.Usage
+	// Count billed events, not effective context: resets contain copied messages.
+	for _, event := range cfg.Session.History {
+		switch event.Type {
+		case session.EventMessage:
+			if assistant, ok := event.Message.(llm.AssistantMessage); ok {
+				sessionUsage.AddTokens(assistant.Usage)
+			}
+		case session.EventUsage:
+			if event.Usage != nil && event.Usage.Usage != nil {
+				sessionUsage.AddTokens(*event.Usage.Usage)
+			}
+		}
+	}
 	var contextUsage llm.Usage
 	for _, message := range slices.Backward(messages) {
 		assistantMessage, ok := message.(llm.AssistantMessage)
@@ -125,6 +139,7 @@ func NewConversation(cfg ConversationConfig) (*Conversation, error) {
 		now:          now,
 		modelClient:  cfg.ModelClient,
 		contextUsage: contextUsage,
+		sessionUsage: sessionUsage,
 		sessionCost:  cfg.SessionCost,
 		toolDefs:     toolDefs,
 		toolByName:   toolByName,
@@ -157,6 +172,7 @@ type Conversation struct {
 	modelClient  llm.ModelClient
 	contextUsage llm.Usage
 	sessionCost  llm.SessionCost
+	sessionUsage llm.Usage
 
 	toolDefs   []llm.Tool
 	toolByName map[string]Tool
@@ -175,6 +191,14 @@ func (c *Conversation) SessionUpdatedAt() time.Time        { return c.session.Up
 func (c *Conversation) Model() llm.Model                   { return c.modelClient.Model() }
 func (c *Conversation) ReasoningLevel() llm.ReasoningLevel { return c.modelClient.ReasoningLevel() }
 func (c *Conversation) ContextUsage() llm.Usage            { return c.contextUsage }
+
+// SessionUsage returns cumulative reported usage, including auxiliary requests.
+// Compaction and rewind preserve totals; a new session or fork starts at zero.
+func (c *Conversation) SessionUsage() llm.Usage {
+	usage := c.sessionUsage
+	usage.Cost = llm.Cost{Total: c.sessionCost.Total, Available: c.sessionCost.Available}
+	return usage
+}
 
 func (c *Conversation) Messages() []llm.Message {
 	return append([]llm.Message(nil), c.messages...)
@@ -396,6 +420,7 @@ func (c *Conversation) Fork(ctx context.Context, point RewindPoint) error {
 	c.cacheKey = conversationCacheKey(forked.ID)
 	c.session.History = []session.Event{{Type: session.EventContextReset, Compacted: messages}}
 	c.sessionCost = llm.SessionCost{Available: true}
+	c.sessionUsage = llm.Usage{}
 	c.messages = messages
 	c.resetToolContext()
 	c.recalculateContextUsage()
@@ -446,6 +471,7 @@ func (c *Conversation) NewConversation() error {
 	c.cacheKey = conversationCacheKey(c.session.ID)
 	c.contextUsage = llm.Usage{Cost: llm.Cost{Available: true}}
 	c.sessionCost = llm.SessionCost{Available: true}
+	c.sessionUsage = llm.Usage{}
 	c.messages = nil
 	c.resetToolContext()
 	c.session.History = nil
@@ -863,6 +889,9 @@ func (c *Conversation) RecordStructuredUsage(_ context.Context, record llm.Struc
 		}
 	}
 	c.session.History = append(c.session.History, event)
+	if record.Usage != nil {
+		c.sessionUsage.AddTokens(*record.Usage)
+	}
 	if record.Usage == nil || !record.Usage.Cost.Available {
 		c.sessionCost.Available = false
 	} else {
@@ -873,6 +902,7 @@ func (c *Conversation) RecordStructuredUsage(_ context.Context, record llm.Struc
 }
 
 func (c *Conversation) recordUsage(usage llm.Usage) {
+	c.sessionUsage.AddTokens(usage)
 	if usage.Cost.Available {
 		c.sessionCost.Total += usage.Cost.Total
 	} else {

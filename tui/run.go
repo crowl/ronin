@@ -22,6 +22,7 @@ type Conversation interface {
 	Model() llm.Model
 	ReasoningLevel() llm.ReasoningLevel
 	ContextUsage() llm.Usage
+	SessionUsage() llm.Usage
 	Messages() []llm.Message
 	RecordWorkflowResult(llm.WorkflowResultMessage) error
 	NewConversation() error

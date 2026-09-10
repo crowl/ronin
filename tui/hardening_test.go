@@ -51,6 +51,9 @@ func TestBusyRenderingUsesSnapshot(t *testing.T) {
 type snapshotOnlyConversation struct{ fakeConversation }
 
 func (*snapshotOnlyConversation) ContextUsage() llm.Usage { panic("live usage read while busy") }
+func (*snapshotOnlyConversation) SessionUsage() llm.Usage {
+	panic("live session usage read while busy")
+}
 
 func TestAppExitJoinsReader(t *testing.T) {
 	app := newTestApp(t, testAppConfig{})

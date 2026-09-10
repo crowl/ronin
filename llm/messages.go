@@ -72,6 +72,15 @@ type Usage struct {
 	Cost             Cost
 }
 
+// AddTokens accumulates token counts without changing cost accounting.
+func (u *Usage) AddTokens(other Usage) {
+	u.InputTokens += other.InputTokens
+	u.OutputTokens += other.OutputTokens
+	u.CachedTokens += other.CachedTokens
+	u.CacheWriteTokens += other.CacheWriteTokens
+	u.TotalTokens += other.TotalTokens
+}
+
 type Cost struct {
 	Input      float64
 	Output     float64

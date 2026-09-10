@@ -223,7 +223,8 @@ func TestTUIRendering(t *testing.T) {
 			CWD:            ".",
 			Model:          llm.Model{Provider: "test", Name: "model", ContextWindow: 14678},
 			ReasoningLevel: llm.ReasoningLevelOff,
-			ContextUsage: llm.Usage{
+			ContextUsage:   llm.Usage{InputTokens: 2356, OutputTokens: 2900},
+			SessionUsage: llm.Usage{
 				InputTokens:  2356,
 				OutputTokens: 2900,
 				CachedTokens: 1000,
@@ -305,7 +306,7 @@ func TestTUIRendering(t *testing.T) {
 			CWDStatus:    "cwd",
 			UseCWDStatus: true,
 			Model:        llm.Model{Provider: "test", Name: "model", ContextWindow: 1000},
-			ContextUsage: llm.Usage{Cost: llm.Cost{Available: false}},
+			SessionUsage: llm.Usage{Cost: llm.Cost{Available: false}},
 		}.Lines(120)[0]
 		if !strings.Contains(line, "$?") {
 			t.Fatalf("status bar cost = %q, want unavailable marker", line)
@@ -1085,6 +1086,10 @@ func (c *fakeConversation) Model() llm.Model {
 
 func (c *fakeConversation) ReasoningLevel() llm.ReasoningLevel {
 	return llm.ReasoningLevelOff
+}
+
+func (c *fakeConversation) SessionUsage() llm.Usage {
+	return llm.Usage{}
 }
 
 func (c *fakeConversation) ContextUsage() llm.Usage {

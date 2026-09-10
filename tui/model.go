@@ -46,6 +46,7 @@ type appModel struct {
 	statusBarCache statusBarCache
 
 	usage         llm.Usage
+	sessionUsage  llm.Usage
 	working       bool
 	workingLabel  string
 	toolsExpanded bool
@@ -123,6 +124,7 @@ func (m *appModel) populateInitialBoxes(conversation Conversation) {
 		return
 	}
 	m.usage = conversation.ContextUsage()
+	m.sessionUsage = conversation.SessionUsage()
 	messages := conversation.Messages()
 	history := make([]session.Event, 0, len(messages))
 	for _, message := range messages {
@@ -606,7 +608,7 @@ func (m *appModel) handleConversationEvent(event runtime.Event, now time.Time) (
 	case runtime.AssistantMessageDeltaReceived:
 		m.queueTextDelta(pendingTextDeltaAssistant, typedEvent.Text)
 	case runtime.AssistantMessageEnded:
-		cost := m.usage.Cost
+		cost := m.sessionUsage.Cost
 		if typedEvent.Message.Usage.Cost.Available {
 			cost.Total += typedEvent.Message.Usage.Cost.Total
 		} else {
@@ -614,6 +616,8 @@ func (m *appModel) handleConversationEvent(event runtime.Event, now time.Time) (
 		}
 		m.usage = typedEvent.Message.Usage
 		m.usage.Cost = cost
+		m.sessionUsage.AddTokens(typedEvent.Message.Usage)
+		m.sessionUsage.Cost = cost
 		m.flushPendingTextDelta()
 	case runtime.ToolExecutionStarted:
 		m.flushPendingTextDelta()
@@ -734,6 +738,7 @@ func (m *appModel) recordCommand(item menuItem, err error) {
 func (m *appModel) lines(width int, conversation Conversation, now time.Time) ([]string, error) {
 	if !m.working {
 		m.usage = conversation.ContextUsage()
+		m.sessionUsage = conversation.SessionUsage()
 	}
 	m.flushPendingTextDelta()
 
@@ -793,6 +798,7 @@ func (m *appModel) lines(width int, conversation Conversation, now time.Time) ([
 		Model:          conversation.Model(),
 		ReasoningLevel: conversation.ReasoningLevel(),
 		ContextUsage:   m.usage,
+		SessionUsage:   m.sessionUsage,
 	}.Lines(width)...)
 
 	return lines, nil
