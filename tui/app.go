@@ -189,7 +189,7 @@ func (app *app) handleAppEvent(ctx context.Context, event event) error {
 		return app.applyUpdate(ctx, app.model.handleConversationError(typedEvent.Err))
 	case conversationPromptDone:
 		app.cancelFunc = nil
-		update, _ := app.model.finishPrompt()
+		update, _ := app.model.finishPrompt(typedEvent.Cancelled, time.Now())
 		return app.applyUpdate(ctx, update)
 	case conversationCompactionDone:
 		app.cancelFunc = nil
@@ -295,7 +295,7 @@ func (app *app) submitPrompt(ctx context.Context, prompt string) {
 		defer cancel()
 		defer func() {
 			select {
-			case app.events <- conversationPromptDone{}:
+			case app.events <- conversationPromptDone{Cancelled: errors.Is(promptCtx.Err(), context.Canceled)}:
 			case <-ctx.Done():
 			}
 		}()

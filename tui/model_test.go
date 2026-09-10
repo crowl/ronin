@@ -43,8 +43,8 @@ func TestAppModel(t *testing.T) {
 			t.Fatalf("box count\ngot:  %d\nwant: 1", len(model.boxes))
 		}
 		box, ok := model.boxes[0].(errorMessageBox)
-		if !ok || box.Text != "Operation cancelled" {
-			t.Fatalf("cancel box\ngot:  %#v\nwant: Operation cancelled", model.boxes[0])
+		if !ok || box.Text != "Cancellation requested" {
+			t.Fatalf("cancel box\ngot:  %#v\nwant: Cancellation requested", model.boxes[0])
 		}
 	})
 

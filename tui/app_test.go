@@ -612,8 +612,8 @@ func TestTUIKeyHandling(t *testing.T) {
 			keyType terminal.KeyType
 			want    string
 		}{
-			{name: "ctrl c", keyType: terminal.KeyCtrlC, want: "Operation cancelled"},
-			{name: "escape", keyType: terminal.KeyEscape, want: "Operation canceled"},
+			{name: "ctrl c", keyType: terminal.KeyCtrlC, want: "Cancellation requested"},
+			{name: "escape", keyType: terminal.KeyEscape, want: "Cancellation requested"},
 		}
 
 		for _, tt := range tests {

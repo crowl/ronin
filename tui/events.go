@@ -15,7 +15,7 @@ type workingTick struct{}
 type renderRequested struct{}
 type conversationEventReceived struct{ Event runtime.Event }
 type conversationErrorReceived struct{ Err error }
-type conversationPromptDone struct{}
+type conversationPromptDone struct{ Cancelled bool }
 type conversationCompactionDone struct{ Err error }
 type mcpActivationDone struct {
 	Item      menuItem

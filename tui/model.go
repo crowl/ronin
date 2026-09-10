@@ -228,7 +228,7 @@ func (m *appModel) handleKey(key terminal.Key) (modelUpdate, error) {
 
 	if key.Type == terminal.KeyCtrlC {
 		if m.working {
-			m.boxes = append(m.boxes, errorMessageBox{Text: "Operation cancelled"})
+			m.boxes = append(m.boxes, errorMessageBox{Text: "Cancellation requested"})
 			return modelUpdate{Render: true, Action: cancelPromptAction{}}, nil
 		}
 		return modelUpdate{Action: exitAction{}}, nil
@@ -241,7 +241,7 @@ func (m *appModel) handleKey(key terminal.Key) (modelUpdate, error) {
 			return modelUpdate{Render: true}, nil
 		}
 		if m.working {
-			m.boxes = append(m.boxes, errorMessageBox{Text: "Operation canceled"})
+			m.boxes = append(m.boxes, errorMessageBox{Text: "Cancellation requested"})
 			return modelUpdate{Render: true, Action: cancelPromptAction{}}, nil
 		}
 	}
@@ -558,8 +558,25 @@ func (m *appModel) finishCompaction(err error) modelUpdate {
 	return update
 }
 
-func (m *appModel) finishPrompt() (modelUpdate, string) {
+func (m *appModel) finishPrompt(cancelled bool, now time.Time) (modelUpdate, string) {
 	m.flushPendingTextDelta()
+	// Cancellation and other early exits can omit individual tool-end events.
+	// The prompt worker drains all events before reporting completion, so any
+	// remaining open blocks are interrupted, not still running.
+	for i, block := range m.boxes {
+		call, ok := block.(toolCallBox)
+		if !ok || !call.EndedAt.IsZero() {
+			continue
+		}
+		call.EndedAt = now
+		if call.Error == "" {
+			call.Error = "Tool execution interrupted"
+			if cancelled {
+				call.Error = "Tool execution cancelled"
+			}
+		}
+		m.boxes[i] = call
+	}
 	m.working = false
 	m.statusBarCache.Reset()
 
