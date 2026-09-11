@@ -19,6 +19,28 @@ Session data is separate from configuration. Existing sessions from versions tha
 
 To back up sessions, copy `ronin.db` while Ronin is not running. To reset all persisted sessions, remove `ronin.db` and its `-wal` and `-shm` companion files while Ronin is not running; Ronin recreates the database on its next start.
 
+## Recovering compacted context
+
+The model can use `conversation_history` to retrieve model-visible messages
+omitted by compaction. Compaction facts carry `history:` references; retrieval
+also supports text search, search pagination, and byte-offset paging of long
+messages. Each call returns at most 20 messages and 32 KiB of content, with at
+most 8 KiB per message.
+
+Retrieval never reads local `!` command events, unrelated sessions, or parent
+sessions. Rewind and fork persist an explicit retained archive alongside their
+context snapshot; discarded branches are excluded, including after restart.
+Older reset records without that archive conservatively expose only their
+retained context snapshot. A reference is not authorization: unavailable or
+discarded references return no matches.
+
+Compaction remains bounded and lossy, but original retained messages remain
+recoverable. User requirements receive priority, and known tool outputs preserve
+status fields and selected failure diagnostics separately from text excerpts.
+Context budgeting includes instructions and tool schemas, reserves output space,
+and calibrates conservative estimates upward from reported input usage. It is
+not an exact tokenizer; provider overflow recovery remains the final safeguard.
+
 ## Local shell commands
 
 In the TUI, submit text beginning with `!` to run a local shell command, for example:

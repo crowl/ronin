@@ -59,19 +59,22 @@ const (
 
 // Event is a single append-only journal entry for a session.
 type Event struct {
-	Usage          *llm.StructuredUsage
-	Seq            int64
-	Type           EventType
-	CreatedAt      time.Time
-	Message        llm.Message
-	Compacted      []llm.Message
-	ResetReason    string
-	PreviousModel  config.Model
-	Model          config.Model
-	ReasoningLevel string
-	ShellCommand   *ShellCommandEntry
-	ShellOutput    *ShellOutputEntry
-	ShellStatus    *ShellStatusEntry
+	Usage     *llm.StructuredUsage
+	Seq       int64
+	Type      EventType
+	CreatedAt time.Time
+	Message   llm.Message
+	Compacted []llm.Message
+	// RetainedHistory is the explicit model-visible archive carried across a
+	// rewind or fork. Nil on older events means only Compacted is retained.
+	RetainedHistory []llm.Message
+	ResetReason     string
+	PreviousModel   config.Model
+	Model           config.Model
+	ReasoningLevel  string
+	ShellCommand    *ShellCommandEntry
+	ShellOutput     *ShellOutputEntry
+	ShellStatus     *ShellStatusEntry
 }
 
 type ShellStream string

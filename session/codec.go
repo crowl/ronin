@@ -11,6 +11,7 @@ import (
 )
 
 type eventJSON struct {
+	Retained       []messageJSON `json:"retained_history,omitempty"`
 	Messages       []messageJSON `json:"messages,omitempty"`
 	Reason         string        `json:"reason,omitempty"`
 	PreviousModel  config.Model  `json:"previous_model"`
@@ -67,7 +68,11 @@ func encodeEvent(event Event) (string, []byte, error) {
 		if err != nil {
 			return "", nil, err
 		}
-		payload, err := json.Marshal(eventJSON{Messages: messages, Reason: event.ResetReason})
+		retained, err := encodeMessages(event.RetainedHistory)
+		if err != nil {
+			return "", nil, err
+		}
+		payload, err := json.Marshal(eventJSON{Messages: messages, Retained: retained, Reason: event.ResetReason})
 		if err != nil {
 			return "", nil, err
 		}
@@ -155,7 +160,11 @@ func decodeEvent(eventType string, payload []byte) (Event, error) {
 		if err != nil {
 			return Event{}, err
 		}
-		return Event{Type: EventContextReset, Compacted: messages, ResetReason: encoded.Reason}, nil
+		retained, err := decodeMessages(encoded.Retained)
+		if err != nil {
+			return Event{}, err
+		}
+		return Event{Type: EventContextReset, Compacted: messages, RetainedHistory: retained, ResetReason: encoded.Reason}, nil
 	}
 	if eventType == string(EventModelChanged) {
 		var encoded eventJSON

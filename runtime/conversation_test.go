@@ -96,7 +96,7 @@ func TestSetToolsAndSystemPrompt(t *testing.T) {
 		if request.SystemPrompt != "after" {
 			t.Fatalf("system prompt = %q, want after", request.SystemPrompt)
 		}
-		if len(request.Tools) != 1 || request.Tools[0].Name() != "dynamic" {
+		if len(request.Tools) != 2 || request.Tools[1].Name() != "conversation_history" || request.Tools[0].Name() != "dynamic" {
 			t.Fatalf("tools = %#v", request.Tools)
 		}
 	})
@@ -129,7 +129,7 @@ func TestSetToolsAndSystemPrompt(t *testing.T) {
 		if request.SystemPrompt != "before" {
 			t.Fatalf("system prompt = %q, want before", request.SystemPrompt)
 		}
-		if len(request.Tools) != 1 || request.Tools[0].Name() != "original" {
+		if len(request.Tools) != 2 || request.Tools[1].Name() != "conversation_history" || request.Tools[0].Name() != "original" {
 			t.Fatalf("tools = %#v", request.Tools)
 		}
 	})

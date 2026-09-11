@@ -73,7 +73,7 @@ const (
 	persistenceTimeout           = 5 * time.Second
 	autoCompactionUsagePercent   = 80
 	defaultSessionTitle          = "New session"
-	interruptedToolCallErrorText = "tool call interrupted before completion"
+	interruptedToolCallErrorText = "tool call interrupted; outcome unknown: side effects may have occurred. Inspect current state before retrying"
 )
 
 func NewConversation(cfg ConversationConfig) (*Conversation, error) {
@@ -131,7 +131,7 @@ func NewConversation(cfg ConversationConfig) (*Conversation, error) {
 	}
 
 	cacheKey := conversationCacheKey(cfg.Session.ID)
-	return &Conversation{
+	c := &Conversation{
 		cacheKey:     cacheKey,
 		cwd:          cfg.CWD,
 		systemPrompt: cfg.SystemPrompt,
@@ -147,7 +147,9 @@ func NewConversation(cfg ConversationConfig) (*Conversation, error) {
 		sessionStore: cfg.SessionStore,
 		session:      cfg.Session,
 		messages:     messages,
-	}, nil
+	}
+	c.addHistoryTool()
+	return c, nil
 }
 
 // conversationCacheKey derives an opaque, stable identity for a conversation.
@@ -171,6 +173,7 @@ type Conversation struct {
 
 	modelClient  llm.ModelClient
 	contextUsage llm.Usage
+	calibration  contextCalibration
 	sessionCost  llm.SessionCost
 	sessionUsage llm.Usage
 
@@ -212,6 +215,7 @@ func (c *Conversation) SetToolsAndSystemPrompt(tools []Tool, systemPrompt string
 	c.toolDefs = toolDefs
 	c.toolByName = toolByName
 	c.systemPrompt = systemPrompt
+	c.addHistoryTool()
 	return nil
 }
 
@@ -319,11 +323,21 @@ func (c *Conversation) SwitchReasoningLevel(lvl llm.ReasoningLevel) error {
 
 func (c *Conversation) shouldCompact() bool {
 	contextWindow := c.modelClient.Model().ContextWindow
-	return c.compactor != nil && len(c.messages) > defaultCompactKeepMessages && contextWindow > 0 && c.contextUsage.InputTokens > 0 &&
+	if c.compactor == nil || contextWindow == 0 {
+		return false
+	}
+	if compactionMessageBytes(c.messages) >= 32*1024 && len(c.messages) > 1 && c.estimatedContextTokens()*100 >= uint64(contextWindow)*autoCompactionUsagePercent {
+		return true
+	}
+	return len(c.messages) > defaultCompactKeepMessages && c.contextUsage.InputTokens > 0 &&
 		uint64(c.contextUsage.InputTokens)*100 >= uint64(contextWindow)*autoCompactionUsagePercent
 }
 
 func (c *Conversation) compact(ctx context.Context) error {
+	return c.compactContext(ctx, false)
+}
+
+func (c *Conversation) compactContext(ctx context.Context, requireReduction bool) error {
 	if c.compactor == nil {
 		return errors.New("compactor is not configured")
 	}
@@ -331,6 +345,9 @@ func (c *Conversation) compact(ctx context.Context) error {
 	messages, err := c.compactor.Compact(ctx, append([]llm.Message(nil), c.messages...))
 	if err != nil {
 		return err
+	}
+	if requireReduction && compactionMessageBytes(messages) >= compactionMessageBytes(c.messages) {
+		return errors.New("compaction cannot reduce context safely; shorten the latest prompt or large tool results, or switch to a larger-context model")
 	}
 	if c.sessionStore != nil && c.session.ID != "" {
 		if err := c.sessionStore.Append(ctx, c.session.ID, session.Event{Type: session.EventCompaction, CreatedAt: c.now(), Compacted: messages}); err != nil {
@@ -386,7 +403,7 @@ func (c *Conversation) Rewind(ctx context.Context, point RewindPoint) error {
 	if err != nil {
 		return err
 	}
-	event := session.Event{Type: session.EventContextReset, CreatedAt: c.now(), Compacted: messages, ResetReason: "rewind"}
+	event := session.Event{Type: session.EventContextReset, CreatedAt: c.now(), Compacted: messages, RetainedHistory: c.historyBefore(point), ResetReason: "rewind"}
 	if err := c.sessionStore.Append(ctx, c.session.ID, event); err != nil {
 		return fmt.Errorf("save rewind: %w", err)
 	}
@@ -410,15 +427,16 @@ func (c *Conversation) Fork(ctx context.Context, point RewindPoint) error {
 	if !ok {
 		return errors.New("session store does not support forks")
 	}
+	reset := session.Event{Type: session.EventContextReset, CreatedAt: c.now(), Compacted: messages, RetainedHistory: c.historyBefore(point), ResetReason: "fork"}
 	forked, err := forkStore.Fork(ctx, c.session.ID, session.Metadata{
 		Title: c.session.Title, Model: c.session.Model, ReasoningLevel: c.session.ReasoningLevel,
-	}, session.Event{Type: session.EventContextReset, CreatedAt: c.now(), Compacted: messages, ResetReason: "fork"})
+	}, reset)
 	if err != nil {
 		return fmt.Errorf("create session fork: %w", err)
 	}
 	c.session = forked
 	c.cacheKey = conversationCacheKey(forked.ID)
-	c.session.History = []session.Event{{Type: session.EventContextReset, Compacted: messages}}
+	c.session.History = []session.Event{reset}
 	c.sessionCost = llm.SessionCost{Available: true}
 	c.sessionUsage = llm.Usage{}
 	c.messages = messages
@@ -469,6 +487,7 @@ func (c *Conversation) NewConversation() error {
 		c.session = newSession
 	}
 	c.cacheKey = conversationCacheKey(c.session.ID)
+	c.calibration = contextCalibration{}
 	c.contextUsage = llm.Usage{Cost: llm.Cost{Available: true}}
 	c.sessionCost = llm.SessionCost{Available: true}
 	c.sessionUsage = llm.Usage{}
@@ -748,7 +767,7 @@ func (c *Conversation) run(ctx context.Context, prompt string, events chan<- Eve
 		cycleCount++
 		ctx, cycleOp = telemetry.StartScope(promptCtx, "cycle", attribute.Int("ronin.cycle.index", cycleCount))
 		if c.shouldCompact() {
-			if err := c.compact(ctx); err != nil {
+			if err := c.compactContext(ctx, true); err != nil {
 				return finish(fmt.Errorf("automatic context compaction: %w", err))
 			}
 		}
@@ -793,11 +812,19 @@ func (c *Conversation) run(ctx context.Context, prompt string, events chan<- Eve
 			case llm.PredictionFinished:
 				typed.Usage.Cost = llm.EstimateCost(c.modelClient.Model(), typed.Usage)
 				usage = typed.Usage
+				c.calibrateContext(requestBytes(request.SystemPrompt, request.Tools, request.Messages), usage)
 				stopReason = typed.StopReason
 				predictionFinished = true
 			}
 		}
 		if err := <-predictionErrCh; err != nil {
+			if errors.Is(err, llm.ErrContextLimit) && !contextRetryUsed && c.compactor != nil {
+				contextRetryUsed = true
+				if compactErr := c.compactContext(ctx, true); compactErr != nil {
+					return finish(fmt.Errorf("recover from context rejection: %w", errors.Join(err, compactErr)))
+				}
+				continue
+			}
 			return finish(fmt.Errorf("llm prediction error: %w", err))
 		}
 		if err := ctx.Err(); err != nil {
@@ -809,9 +836,6 @@ func (c *Conversation) run(ctx context.Context, prompt string, events chan<- Eve
 		blocks = tagProviderArtifacts(blocks, c.modelClient.Model().Provider)
 		message := llm.AssistantMessage{Timestamp: c.now(), Blocks: blocks, StopReason: stopReason, Usage: usage}
 		if stopReason == llm.StopReasonModelContextWindowExceeded && !contextRetryUsed && c.compactor != nil {
-			if len(c.messages) <= defaultCompactKeepMessages {
-				return finish(completionError(stopReason))
-			}
 			if appendErr := c.appendMessage(ctx, message); appendErr != nil {
 				return finish(c.reportSaveFailure(ctx, events, completionError(stopReason), appendErr))
 			}
@@ -821,7 +845,7 @@ func (c *Conversation) run(ctx context.Context, prompt string, events chan<- Eve
 				return finish(ctx.Err())
 			case events <- AssistantMessageEnded{Message: message}:
 			}
-			if err := c.compact(ctx); err != nil {
+			if err := c.compactContext(ctx, true); err != nil {
 				return finish(fmt.Errorf("compact after context window exhaustion: %w", err))
 			}
 			contextRetryUsed = true
@@ -970,6 +994,9 @@ func completionError(reason llm.StopReason) error {
 }
 
 func (c *Conversation) executeToolCall(ctx context.Context, events chan<- Event, toolCall llm.ToolCallBlock) (callErr error) {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	ctx, op := telemetry.Start(ctx, "tool", attribute.String("gen_ai.tool.name", toolCall.Name), attribute.String("gen_ai.tool.call.id", toolCall.ID))
 	observation := &toolObservation{op: op}
 	ctx = context.WithValue(ctx, toolOperationKey{}, observation)
@@ -1023,8 +1050,13 @@ func (c *Conversation) failToolCall(ctx context.Context, events chan<- Event, ex
 	if op, ok := ctx.Value(toolOperationKey{}).(*toolObservation); ok {
 		op.err = execErr
 	}
+	if errors.Is(execErr, context.Canceled) || errors.Is(execErr, context.DeadlineExceeded) {
+		execErr = fmt.Errorf("%w; outcome unknown: side effects may have occurred. Inspect current state before retrying", execErr)
+	}
 	message := llm.ToolErrorMessage{Timestamp: c.now(), ToolCallID: call.ID, ToolName: call.Name, Error: execErr}
-	if err := c.appendMessage(ctx, message); err != nil {
+	saveCtx, cancel := detachedPersistenceContext()
+	defer cancel()
+	if err := c.appendMessage(saveCtx, message); err != nil {
 		return c.reportSaveFailure(ctx, events, nil, err)
 	}
 	select {
@@ -1053,7 +1085,9 @@ func (c *Conversation) finishToolCall(ctx context.Context, events chan<- Event, 
 		observation.op.Attributes(attribute.Int("ronin.tool.result.size", len(data)))
 	}
 	message := llm.ToolOutputMessage{Timestamp: c.now(), ToolCallID: toolCall.ID, ToolName: toolCall.Name, ToolOutput: string(data)}
-	if err := c.appendMessage(ctx, message); err != nil {
+	saveCtx, cancel := detachedPersistenceContext()
+	defer cancel()
+	if err := c.appendMessage(saveCtx, message); err != nil {
 		return c.reportSaveFailure(ctx, events, nil, err)
 	}
 	var artifacts []tool.Artifact
