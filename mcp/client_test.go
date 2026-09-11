@@ -50,9 +50,6 @@ func TestConnectStdioServer(t *testing.T) {
 	if instructions[0].Server != "test" || instructions[0].Content != "Use echo to repeat text." {
 		t.Fatalf("Instructions()[0] = %#v", instructions[0])
 	}
-	if len(instructions[0].Tools) != 1 || instructions[0].Tools[0] != "echo" {
-		t.Fatalf("Instructions()[0].Tools = %#v", instructions[0].Tools)
-	}
 
 	rootFile := filepath.Join(workspace, "root.txt")
 	var root []byte

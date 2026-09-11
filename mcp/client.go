@@ -96,12 +96,7 @@ func (c *Client) Tools() []runtime.Tool {
 }
 
 func (c *Client) Instructions() []runtime.MCPInstruction {
-	instructions := make([]runtime.MCPInstruction, len(c.instructions))
-	for i, instruction := range c.instructions {
-		instructions[i] = instruction
-		instructions[i].Tools = append([]string(nil), instruction.Tools...)
-	}
-	return instructions
+	return append([]runtime.MCPInstruction(nil), c.instructions...)
 }
 
 func (c *Client) Close() error {
@@ -139,7 +134,6 @@ func (c *Client) connectServer(ctx context.Context, cwd, rootURI, serverName str
 	if err != nil {
 		return fmt.Errorf("list tools: %w", err)
 	}
-	toolNames := make([]string, 0, len(definitions))
 	for _, definition := range definitions {
 		wrapped, err := newRemoteTool(serverName, session, definition)
 		if err != nil {
@@ -151,12 +145,10 @@ func (c *Client) connectServer(ctx context.Context, cwd, rootURI, serverName str
 			}
 		}
 		c.tools = append(c.tools, wrapped)
-		toolNames = append(toolNames, definition.Name)
 	}
 	c.instructions = append(c.instructions, runtime.MCPInstruction{
 		Server:  serverName,
 		Content: strings.TrimSpace(instructions),
-		Tools:   toolNames,
 	})
 	return nil
 }
