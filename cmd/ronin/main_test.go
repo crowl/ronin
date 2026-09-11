@@ -12,10 +12,10 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/crowl/ronin/config"
+	"github.com/crowl/ronin/internal/agenttools"
 	"github.com/crowl/ronin/jsonschema"
 	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/llm/anthropic"
@@ -26,31 +26,26 @@ import (
 )
 
 func TestWorkflowAgentTools(t *testing.T) {
-	defaultTools := []runtime.Tool{
-		fakePromptTool{name: "read_file"},
-		fakePromptTool{name: "edit_file"},
-		fakePromptTool{name: "write_file"},
-		fakePromptTool{name: "shell"},
-	}
+	factory := agenttools.NewFactory()
 	mcpTools := []runtime.Tool{fakePromptTool{name: "mcp__tool"}}
 
 	t.Run("read-only agent receives navigation and read_file", func(t *testing.T) {
-		tools := workflowAgentTools(t.TempDir(), true, defaultTools, mcpTools)
+		tools := factory.New(t.TempDir(), true, false, mcpTools)
 		if got := toolNames(tools); !reflect.DeepEqual(got, []string{"read_file", "code_map", "code_find"}) {
 			t.Fatalf("tool names = %v, want [read_file code_map code_find]", got)
 		}
 	})
 
 	t.Run("writable agent receives default and MCP tools", func(t *testing.T) {
-		tools := workflowAgentTools(t.TempDir(), false, defaultTools, mcpTools)
-		want := []string{"read_file", "edit_file", "write_file", "shell", "mcp__tool"}
+		tools := factory.New(t.TempDir(), false, false, mcpTools)
+		want := []string{"code_map", "code_find", "read_file", "edit_file", "write_file", "shell", "mcp__tool"}
 		if got := toolNames(tools); !reflect.DeepEqual(got, want) {
 			t.Fatalf("tool names = %v, want %v", got, want)
 		}
 	})
 
 	t.Run("managed writable agent has file tools without shell", func(t *testing.T) {
-		tools := managedWorkflowAgentTools(t.TempDir(), false)
+		tools := factory.New(t.TempDir(), false, true, nil)
 		want := []string{"code_map", "code_find", "read_file", "edit_file", "write_file"}
 		if got := toolNames(tools); !reflect.DeepEqual(got, want) {
 			t.Fatalf("tool names = %v, want %v", got, want)
@@ -58,7 +53,7 @@ func TestWorkflowAgentTools(t *testing.T) {
 	})
 
 	t.Run("managed read-only agent receives navigation and read_file", func(t *testing.T) {
-		tools := managedWorkflowAgentTools(t.TempDir(), true)
+		tools := factory.New(t.TempDir(), true, true, nil)
 		if got := toolNames(tools); !reflect.DeepEqual(got, []string{"read_file", "code_map", "code_find"}) {
 			t.Fatalf("tool names = %v, want [read_file code_map code_find]", got)
 		}
@@ -71,79 +66,6 @@ func toolNames(tools []runtime.Tool) []string {
 		names[i] = tool.Name()
 	}
 	return names
-}
-
-func TestValidateWorkflowAgentOutputSchema(t *testing.T) {
-	client := &fakeStructuredClient{schemaValidationErr: errors.New("uniqueItems is not permitted")}
-	if err := validateWorkflowAgentOutputSchema(client, &jsonschema.Schema{Type: "object"}); err == nil || !strings.Contains(err.Error(), "uniqueItems") {
-		t.Fatalf("validateWorkflowAgentOutputSchema() error = %v", err)
-	}
-	if len(client.requests) != 0 {
-		t.Fatalf("structured calls = %d, want 0", len(client.requests))
-	}
-}
-
-func TestStructureWorkflowAgentOutput(t *testing.T) {
-	schema, err := jsonschema.FromRaw([]byte(`{
-		"type":"object",
-		"additionalProperties":false,
-		"required":["id","commit_message"],
-		"properties":{
-			"id":{"type":"string","pattern":"^[a-z]+-[a-z-]+$"},
-			"commit_message":{"type":"string","pattern":"^fix: [a-z].+[^.]$"}
-		}
-	}`))
-	if err != nil {
-		t.Fatalf("FromRaw() error = %v", err)
-	}
-
-	t.Run("retries only conversion and returns corrected output", func(t *testing.T) {
-		client := &fakeStructuredClient{outputs: []json.RawMessage{
-			json.RawMessage(`{"id":"string","commit_message":"string"}`),
-			json.RawMessage(`{"id":"planner-output","commit_message":"fix: validate planner output"}`),
-		}}
-
-		got, err := structureWorkflowAgentOutput(t.Context(), client, "authoritative report", schema)
-		if err != nil {
-			t.Fatalf("structureWorkflowAgentOutput() error = %v", err)
-		}
-		if string(got) != `{"id":"planner-output","commit_message":"fix: validate planner output"}` {
-			t.Fatalf("output = %s", got)
-		}
-		if len(client.requests) != 2 {
-			t.Fatalf("structured calls = %d, want 2", len(client.requests))
-		}
-		if got := client.requests[0].Messages[0].(llm.UserMessage).Text; got != "authoritative report" {
-			t.Fatalf("first prompt = %q", got)
-		}
-		correction := client.requests[1].Messages[0].(llm.UserMessage).Text
-		for _, want := range []string{"authoritative report", `"id":"string"`, "$.id", "Correct only the JSON conversion"} {
-			if !strings.Contains(correction, want) {
-				t.Fatalf("correction prompt missing %q:\n%s", want, correction)
-			}
-		}
-	})
-
-	t.Run("bounds corrections and reports invalid output", func(t *testing.T) {
-		client := &fakeStructuredClient{outputs: []json.RawMessage{
-			json.RawMessage(`{"id":"string","commit_message":"string"}`),
-			json.RawMessage(`{"id":"string","commit_message":"string"}`),
-			json.RawMessage(`{"id":"string","commit_message":"string"}`),
-		}}
-
-		_, err := structureWorkflowAgentOutput(t.Context(), client, "expensive report", schema)
-		if err == nil {
-			t.Fatal("structureWorkflowAgentOutput() error = nil")
-		}
-		if len(client.requests) != 3 {
-			t.Fatalf("structured calls = %d, want 3", len(client.requests))
-		}
-		for _, want := range []string{"after 2 correction attempts", "$.id", `"commit_message":"string"`, "original agent report (the agent was not rerun): expensive report"} {
-			if !strings.Contains(err.Error(), want) {
-				t.Fatalf("error missing %q: %v", want, err)
-			}
-		}
-	})
 }
 
 func TestVersion(t *testing.T) {
@@ -920,40 +842,6 @@ func (s *fakeStartupSessionStore) List(context.Context, string) ([]session.Ref, 
 }
 func (s *fakeStartupSessionStore) Delete(context.Context, string) error { return nil }
 func (s *fakeStartupSessionStore) Clear(context.Context, string) error  { return nil }
-
-type fakeStructuredClient struct {
-	mu                  sync.Mutex
-	outputs             []json.RawMessage
-	requests            []llm.PredictNextStructuredRequest
-	schemaValidationErr error
-}
-
-func (f *fakeStructuredClient) Model() llm.Model {
-	return llm.Model{Provider: "fake", Name: "structured"}
-}
-func (f *fakeStructuredClient) ReasoningLevel() llm.ReasoningLevel         { return llm.ReasoningLevelOff }
-func (f *fakeStructuredClient) SetReasoningLevel(llm.ReasoningLevel) error { return nil }
-func (f *fakeStructuredClient) PredictNext(context.Context, llm.PredictNextRequest) (<-chan llm.PredictionEvent, <-chan error) {
-	events := make(chan llm.PredictionEvent)
-	errs := make(chan error)
-	close(events)
-	close(errs)
-	return events, errs
-}
-func (f *fakeStructuredClient) ValidateStructuredOutputSchema(*jsonschema.Schema) error {
-	return f.schemaValidationErr
-}
-func (f *fakeStructuredClient) PredictNextStructured(_ context.Context, req llm.PredictNextStructuredRequest) (*llm.StructuredResult, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.requests = append(f.requests, req)
-	if len(f.outputs) == 0 {
-		return nil, errors.New("no structured output configured")
-	}
-	output := f.outputs[0]
-	f.outputs = f.outputs[1:]
-	return &llm.StructuredResult{JSON: output}, nil
-}
 
 type fakePromptConversation struct {
 	events []runtime.Event

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -19,7 +18,7 @@ import (
 	"time"
 
 	"github.com/crowl/ronin/config"
-	"github.com/crowl/ronin/jsonschema"
+	"github.com/crowl/ronin/internal/agentrun"
 	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/llm/anthropic"
 	"github.com/crowl/ronin/llm/google"
@@ -129,8 +128,7 @@ func run() (exitCode int) {
 			}
 		}()
 
-		workflowAgent, closeWorkflowAgent := newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag, mcpRegistry)
-		defer func() { _ = closeWorkflowAgent() }()
+		workflowAgent := newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag, mcpRegistry)
 		if err := runWorkflow(ctx, workflowCmd.Script, workingDir, workflowCmd.Input, workflowAgent, os.Stdout); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
 			return 1
@@ -260,7 +258,7 @@ func run() (exitCode int) {
 		shell.New(workingDir),
 	}
 
-	workflowAgent, _ := newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag, mcpRegistry)
+	workflowAgent := newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag, mcpRegistry)
 	if len(workflowCatalog.Workflows()) > 0 {
 		baseTools = append(baseTools, workflow.NewTool(workflowCatalog, workingDir, workflowAgent))
 	}
@@ -699,13 +697,13 @@ func configuredModels(provider string, configured map[string]config.ProviderMode
 	return models
 }
 
-func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string, mcpTools mcpSource) (workflow.AgentFunc, func() error) {
+func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string, mcpTools mcpSource) workflow.AgentFunc {
 	var initOnce sync.Once
 	var initErr error
 	var settings config.Settings
 	var defaultModel llm.Model
 	var defaultLevel llm.ReasoningLevel
-	var defaultTools []runtime.Tool
+	var runner *agentrun.Runner
 
 	init := func() {
 		settings, initErr = config.Load()
@@ -738,16 +736,7 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string, mcpT
 		if initErr != nil {
 			return
 		}
-		readCache := fsutil.NewReadCache()
-		mutationQueue := fsutil.NewMutationQueue()
-		defaultTools = []runtime.Tool{
-			codenav.NewMap(workingDir),
-			codenav.NewFind(workingDir),
-			readfile.New(workingDir, readCache),
-			editfile.New(workingDir, mutationQueue),
-			writefile.New(workingDir, mutationQueue),
-			shell.New(workingDir),
-		}
+		runner = agentrun.New(agentrun.Config{WorkingDir: workingDir, Model: defaultModel, ReasoningLevel: defaultLevel, MaxTurns: settings.MaxTurns, MCP: mcpTools, ResolveModel: resolveWorkflowModel})
 	}
 
 	agent := func(ctx context.Context, req workflow.AgentRequest) (workflow.AgentResult, error) {
@@ -756,120 +745,9 @@ func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string, mcpT
 			return workflow.AgentResult{}, initErr
 		}
 
-		agentModel := defaultModel
-		if req.Model.Provider != "" || req.Model.Name != "" {
-			resolved, err := resolveWorkflowModel(req.Model)
-			if err != nil {
-				return workflow.AgentResult{}, err
-			}
-			agentModel = resolved
-		}
-
-		agentLevel := defaultLevel
-		if req.ReasoningLevel != "" {
-			agentLevel = req.ReasoningLevel
-		}
-		if !agentModel.SupportsReasoning(agentLevel) {
-			return workflow.AgentResult{}, fmt.Errorf("reasoning level %q is not supported by model %s", agentLevel, agentModel)
-		}
-
-		agentWorkingDir := workingDir
-		agentTools := workflowAgentTools(agentWorkingDir, req.ReadOnly, defaultTools, mcpTools.Tools())
-		var agentMCPInstructions []runtime.MCPInstruction
-		if !req.ReadOnly {
-			agentMCPInstructions = mcpTools.Instructions()
-		}
-		agentSystemPrompt, err := runtime.BuildSystemPrompt(runtime.SystemPromptInput{
-			CWD:             workingDir,
-			MCPInstructions: agentMCPInstructions,
-		})
-		if err != nil {
-			return workflow.AgentResult{}, fmt.Errorf("build MCP system prompt: %w", err)
-		}
-		if req.Workspace != "" {
-			agentWorkingDir = req.Workspace
-			agentTools = managedWorkflowAgentTools(agentWorkingDir, req.ReadOnly)
-			var err error
-			agentSystemPrompt, err = runtime.BuildSystemPrompt(runtime.SystemPromptInput{CWD: agentWorkingDir})
-			if err != nil {
-				return workflow.AgentResult{}, fmt.Errorf("build workspace system prompt: %w", err)
-			}
-		}
-		if req.ReadOnly {
-			agentSystemPrompt += "\n\nThis agent is read-only. Do not modify files, run commands, or otherwise change repository or external state."
-		}
-		if strings.TrimSpace(req.System) != "" {
-			agentSystemPrompt += "\n\nWorkflow agent instructions:\n" + strings.TrimSpace(req.System)
-		}
-
-		client, err := llm.LoadModelClient(agentModel, agentLevel)
-		if err != nil {
-			return workflow.AgentResult{}, fmt.Errorf("load model client: %w", err)
-		}
-		if req.OutputSchema != nil {
-			if err := validateWorkflowAgentOutputSchema(client, req.OutputSchema); err != nil {
-				return workflow.AgentResult{}, fmt.Errorf("validate structured workflow agent output schema before running agent: %w", err)
-			}
-		}
-		compactor, err := runtime.NewDefaultCompactor(runtime.DefaultCompactorConfig{
-			ModelClient: client,
-			Now:         time.Now,
-		})
-		if err != nil {
-			return workflow.AgentResult{}, fmt.Errorf("initialize compactor: %w", err)
-		}
-		conv, err := runtime.NewConversation(runtime.ConversationConfig{
-			CWD:          agentWorkingDir,
-			ModelClient:  client,
-			Compactor:    compactor,
-			Tools:        agentTools,
-			SystemPrompt: agentSystemPrompt,
-			MaxTurns:     settings.MaxTurns,
-			Now:          func() time.Time { return time.Now() },
-			Session:      session.Session{WorkingDir: agentWorkingDir},
-		})
-		if err != nil {
-			return workflow.AgentResult{}, err
-		}
-		text, err := runAgent(ctx, conv, req.Prompt, req.Progress)
-		if err != nil {
-			return workflow.AgentResult{}, err
-		}
-		result := workflow.AgentResult{Text: text}
-		if req.OutputSchema != nil {
-			outputCtx := llm.WithStructuredUsageRecorder(ctx, conv.RecordStructuredUsage)
-			raw, err := structureWorkflowAgentOutput(outputCtx, client, text, req.OutputSchema)
-			if err != nil {
-				return workflow.AgentResult{}, fmt.Errorf("generate structured workflow agent output: %w", err)
-			}
-			result.Output = raw
-		}
-		return result, nil
+		return runner.Run(ctx, req)
 	}
-	closeAgent := func() error { return nil }
-	return agent, closeAgent
-}
-
-func managedWorkflowAgentTools(workingDir string, readOnly bool) []runtime.Tool {
-	if readOnly {
-		return []runtime.Tool{readfile.NewRestricted(workingDir, fsutil.NewReadCache()), codenav.NewMap(workingDir), codenav.NewFind(workingDir)}
-	}
-	mutationQueue := fsutil.NewMutationQueue()
-	return []runtime.Tool{
-		codenav.NewMap(workingDir),
-		codenav.NewFind(workingDir),
-		readfile.NewRestricted(workingDir, fsutil.NewReadCache()),
-		editfile.NewRestricted(workingDir, mutationQueue),
-		writefile.NewRestricted(workingDir, mutationQueue),
-	}
-}
-
-func workflowAgentTools(workingDir string, readOnly bool, defaultTools, mcpTools []runtime.Tool) []runtime.Tool {
-	if readOnly {
-		return []runtime.Tool{readfile.New(workingDir, fsutil.NewReadCache()), codenav.NewMap(workingDir), codenav.NewFind(workingDir)}
-	}
-	tools := append([]runtime.Tool(nil), defaultTools...)
-	return append(tools, mcpTools...)
+	return agent
 }
 
 type workflowCommand struct {
@@ -1211,113 +1089,8 @@ func loadExplicitSkillPath(value string) (runtime.Skill, error) {
 	return runtime.LoadSkillFile(abs)
 }
 
-func validateWorkflowAgentOutputSchema(client llm.ModelClient, schema *jsonschema.Schema) error {
-	if validator, ok := client.(llm.StructuredOutputSchemaValidator); ok {
-		return validator.ValidateStructuredOutputSchema(schema)
-	}
-	return nil
-}
-
-const maxStructuredOutputCorrectionAttempts = 2
-const maxInvalidStructuredOutputBytes = 4096
-
-func structureWorkflowAgentOutput(ctx context.Context, client llm.ModelClient, report string, schema *jsonschema.Schema) (json.RawMessage, error) {
-	prompt := report
-	var lastOutput json.RawMessage
-	var lastValidationErr error
-
-	for attempt := 0; attempt <= maxStructuredOutputCorrectionAttempts; attempt++ {
-		raw, err := llm.PredictStructuredObserved(ctx, client, llm.PredictNextStructuredRequest{
-			SystemPrompt: "Convert the supplied agent report into JSON matching the requested schema. Preserve its decisions exactly and do not add new work. Return substantive values from the report, never schema examples or placeholders.",
-			Messages: []llm.Message{llm.UserMessage{
-				Timestamp: time.Now(),
-				Text:      prompt,
-			}},
-			Schema: schema,
-		}, "workflow_output")
-		if err != nil {
-			return nil, err
-		}
-		if err := jsonschema.Validate(schema, raw); err == nil {
-			return raw, nil
-		} else {
-			lastOutput = append(lastOutput[:0], raw...)
-			lastValidationErr = err
-		}
-		if attempt < maxStructuredOutputCorrectionAttempts {
-			prompt = structuredOutputCorrectionPrompt(report, raw, lastValidationErr)
-		}
-	}
-
-	return nil, fmt.Errorf(
-		"structured conversion remained invalid after %d correction attempts: %v; invalid output: %s; original agent report (the agent was not rerun): %s",
-		maxStructuredOutputCorrectionAttempts,
-		lastValidationErr,
-		boundedStructuredOutput(lastOutput),
-		boundedStructuredOutput([]byte(report)),
-	)
-}
-
-func structuredOutputCorrectionPrompt(report string, invalid json.RawMessage, validationErr error) string {
-	return "Original agent report (authoritative; preserve its decisions):\n\n" + report +
-		"\n\nThe prior JSON conversion was invalid:\n\n" + boundedStructuredOutput(invalid) +
-		"\n\nValidation failures:\n\n" + validationErr.Error() +
-		"\n\nCorrect only the JSON conversion. Use substantive values from the original report; do not use placeholder values such as `string`, and do not add new work."
-}
-
-func boundedStructuredOutput(raw []byte) string {
-	if len(raw) <= maxInvalidStructuredOutputBytes {
-		return string(raw)
-	}
-	return string(raw[:maxInvalidStructuredOutputBytes]) + fmt.Sprintf("... [truncated %d bytes]", len(raw)-maxInvalidStructuredOutputBytes)
-}
-
 type prompter interface {
 	Prompt(context.Context, string) (<-chan runtime.Event, <-chan error)
-}
-
-func runAgent(ctx context.Context, conv prompter, prompt string, progress func(workflow.AgentEvent)) (string, error) {
-	var output strings.Builder
-	events, errs := conv.Prompt(ctx, prompt)
-	for event := range events {
-		switch event := event.(type) {
-		case runtime.AssistantThinkingDeltaReceived:
-			if progress != nil {
-				progress(workflow.AgentThinkingDelta{Text: event.Text})
-			}
-		case runtime.AssistantMessageDeltaReceived:
-			output.WriteString(event.Text)
-			if progress != nil {
-				progress(workflow.AgentTextDelta{Text: event.Text})
-			}
-		case runtime.ToolExecutionStarted:
-			if progress != nil {
-				progress(workflow.AgentToolStarted{ID: event.CallID, Title: event.CallTitle})
-			}
-		case runtime.ToolExecutionOutputDeltaReceived:
-			if progress != nil {
-				progress(workflow.AgentToolOutput{ID: event.CallID, Artifact: event.Artifact})
-			}
-		case runtime.ToolExecutionResultReceived:
-			if progress != nil {
-				for _, artifact := range event.Artifacts {
-					progress(workflow.AgentToolOutput{ID: event.CallID, Artifact: artifact})
-				}
-			}
-		case runtime.ToolExecutionFailed:
-			if progress != nil {
-				progress(workflow.AgentToolFailed{ID: event.CallID, Error: event.Error.Error()})
-			}
-		case runtime.ToolExecutionEnded:
-			if progress != nil {
-				progress(workflow.AgentToolEnded{ID: event.CallID})
-			}
-		}
-	}
-	if err, ok := <-errs; ok && err != nil {
-		return "", err
-	}
-	return output.String(), nil
 }
 
 func runPrompt(ctx context.Context, conv prompter, prompt string, output io.Writer) error {
