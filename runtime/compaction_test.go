@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/crowl/ronin/session"
 	"strconv"
 	"strings"
 	"testing"
@@ -24,16 +25,10 @@ func TestDefaultCompactor(t *testing.T) {
 			"recovery":["Resume from compacted context"]
 		}`)}
 		wantTime := time.Unix(1700000000, 0)
-		compactor, err := NewDefaultCompactor(DefaultCompactorConfig{
-			ModelClient: modelClient,
-			Now:         func() time.Time { return wantTime },
-		})
-		if err != nil {
-			t.Fatalf("NewDefaultCompactor() error = %v", err)
-		}
+		compactor := &DefaultCompactor{Now: func() time.Time { return wantTime }}
 
 		messages := makeCompactionMessages(14)
-		got, err := compactor.Compact(context.Background(), messages)
+		got, err := compactor.Compact(context.Background(), modelClient, messages)
 		if err != nil {
 			t.Fatalf("Compact() error = %v", err)
 		}
@@ -41,9 +36,9 @@ func TestDefaultCompactor(t *testing.T) {
 		if len(got) != 13 {
 			t.Fatalf("len(compacted) = %d, want 13", len(got))
 		}
-		compacted, ok := got[0].(llm.UserMessage)
+		compacted, ok := got[0].(session.ContextSummary)
 		if !ok {
-			t.Fatalf("first message = %T, want llm.UserMessage", got[0])
+			t.Fatalf("first message = %T, want session.ContextSummary", got[0])
 		}
 		if !compacted.Timestamp.Equal(wantTime) {
 			t.Fatalf("timestamp = %v, want %v", compacted.Timestamp, wantTime)
@@ -80,18 +75,15 @@ func TestDefaultCompactor(t *testing.T) {
 
 	t.Run("keeps_tool_call_with_recent_tool_result", func(t *testing.T) {
 		modelClient := &fakeStructuredModelClient{raw: validCompactionSummary("goal")}
-		compactor, err := NewDefaultCompactor(DefaultCompactorConfig{ModelClient: modelClient})
-		if err != nil {
-			t.Fatalf("NewDefaultCompactor() error = %v", err)
-		}
+		compactor := &DefaultCompactor{}
 
 		call := llm.AssistantMessage{Blocks: []llm.AssistantBlock{llm.ToolCallBlock{ID: "call-1", Name: "read", Arguments: json.RawMessage(`{}`)}}}
 		result := llm.ToolOutputMessage{ToolCallID: "call-1", ToolName: "read", ToolOutput: `{"ok":true}`}
-		messages := []llm.Message{llm.UserMessage{Text: "message 1"}, call}
+		messages := []session.Message{llm.UserMessage{Text: "message 1"}, call}
 		messages = append(messages, makeCompactionMessages(11)...)
 		messages = append(messages, result)
 
-		got, err := compactor.Compact(context.Background(), messages)
+		got, err := compactor.Compact(context.Background(), modelClient, messages)
 		if err != nil {
 			t.Fatalf("Compact() error = %v", err)
 		}
@@ -110,18 +102,15 @@ func TestDefaultCompactor(t *testing.T) {
 
 	t.Run("keeps_tool_call_with_recent_tool_error", func(t *testing.T) {
 		modelClient := &fakeStructuredModelClient{raw: validCompactionSummary("goal")}
-		compactor, err := NewDefaultCompactor(DefaultCompactorConfig{ModelClient: modelClient})
-		if err != nil {
-			t.Fatalf("NewDefaultCompactor() error = %v", err)
-		}
+		compactor := &DefaultCompactor{}
 
 		call := llm.AssistantMessage{Blocks: []llm.AssistantBlock{llm.ToolCallBlock{ID: "call-1", Name: "shell", Arguments: json.RawMessage(`{}`)}}}
 		result := llm.ToolErrorMessage{ToolCallID: "call-1", ToolName: "shell", Error: errors.New("failed")}
-		messages := []llm.Message{llm.UserMessage{Text: "message 1"}, call}
+		messages := []session.Message{llm.UserMessage{Text: "message 1"}, call}
 		messages = append(messages, makeCompactionMessages(11)...)
 		messages = append(messages, result)
 
-		got, err := compactor.Compact(context.Background(), messages)
+		got, err := compactor.Compact(context.Background(), modelClient, messages)
 		if err != nil {
 			t.Fatalf("Compact() error = %v", err)
 		}
@@ -135,19 +124,16 @@ func TestDefaultCompactor(t *testing.T) {
 	})
 
 	t.Run("rejects nil model client", func(t *testing.T) {
-		if _, err := NewDefaultCompactor(DefaultCompactorConfig{}); err == nil || !strings.Contains(err.Error(), "model client") {
+		if _, err := (&DefaultCompactor{}).Compact(t.Context(), nil, nil); err == nil || !strings.Contains(err.Error(), "model client") {
 			t.Fatalf("NewDefaultCompactor() error = %v, want model client error", err)
 		}
 	})
 
 	t.Run("rejects structured output that does not match the schema", func(t *testing.T) {
 		modelClient := &fakeStructuredModelClient{raw: json.RawMessage(`{"current_goal":"goal"}`)}
-		compactor, err := NewDefaultCompactor(DefaultCompactorConfig{ModelClient: modelClient})
-		if err != nil {
-			t.Fatalf("NewDefaultCompactor() error = %v", err)
-		}
+		compactor := &DefaultCompactor{}
 
-		_, err = compactor.Compact(context.Background(), makeCompactionMessages(14))
+		_, err := compactor.Compact(context.Background(), modelClient, makeCompactionMessages(14))
 		if err == nil || !strings.Contains(err.Error(), "validate structured compaction summary") || !strings.Contains(err.Error(), "user_preferences") {
 			t.Fatalf("Compact() error = %v, want schema validation error", err)
 		}
@@ -155,12 +141,9 @@ func TestDefaultCompactor(t *testing.T) {
 
 	t.Run("returns_error_when_not_enough_messages", func(t *testing.T) {
 		modelClient := &fakeStructuredModelClient{raw: json.RawMessage(`{"current_goal":"goal"}`)}
-		compactor, err := NewDefaultCompactor(DefaultCompactorConfig{ModelClient: modelClient})
-		if err != nil {
-			t.Fatalf("NewDefaultCompactor() error = %v", err)
-		}
+		compactor := &DefaultCompactor{}
 
-		_, err = compactor.Compact(context.Background(), makeCompactionMessages(12))
+		_, err := compactor.Compact(context.Background(), modelClient, makeCompactionMessages(12))
 		if err == nil || !strings.Contains(err.Error(), "not enough") {
 			t.Fatalf("Compact() error = %v, want not enough error", err)
 		}
@@ -169,12 +152,9 @@ func TestDefaultCompactor(t *testing.T) {
 	t.Run("propagates_structured_prediction_error", func(t *testing.T) {
 		wantErr := errors.New("structured failed")
 		modelClient := &fakeStructuredModelClient{err: wantErr}
-		compactor, err := NewDefaultCompactor(DefaultCompactorConfig{ModelClient: modelClient})
-		if err != nil {
-			t.Fatalf("NewDefaultCompactor() error = %v", err)
-		}
+		compactor := &DefaultCompactor{}
 
-		_, err = compactor.Compact(context.Background(), makeCompactionMessages(14))
+		_, err := compactor.Compact(context.Background(), modelClient, makeCompactionMessages(14))
 		if !errors.Is(err, wantErr) {
 			t.Fatalf("Compact() error = %v, want wrapped structured error", err)
 		}
@@ -182,7 +162,7 @@ func TestDefaultCompactor(t *testing.T) {
 }
 
 func TestCompactionFactSheetIsBoundedAndKeepsRecentFacts(t *testing.T) {
-	messages := make([]llm.Message, 0, 400)
+	messages := make([]session.Message, 0, 400)
 	for i := range 400 {
 		messages = append(messages, llm.UserMessage{Text: strconv.Itoa(i) + " " + strings.Repeat("x", 500)})
 	}
@@ -202,8 +182,8 @@ func validCompactionSummary(goal string) json.RawMessage {
 	return json.RawMessage(`{"current_goal":` + strconv.Quote(goal) + `,"user_preferences":[],"decisions":[],"files_and_code_state":[],"tests_and_tool_results":[],"open_tasks":[],"recovery":[]}`)
 }
 
-func makeCompactionMessages(count int) []llm.Message {
-	messages := make([]llm.Message, 0, count)
+func makeCompactionMessages(count int) []session.Message {
+	messages := make([]session.Message, 0, count)
 	for i := range count {
 		messages = append(messages, llm.UserMessage{Text: "message " + string(rune('1'+i))})
 	}

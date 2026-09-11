@@ -801,7 +801,7 @@ func (r *failingReader) Read([]byte) (int, error) {
 
 type fakeStartupSessionStore struct {
 	loaded   session.Session
-	messages []llm.Message
+	messages []session.Message
 	loadedOK bool
 	loadErr  error
 
@@ -816,13 +816,13 @@ type fakeStartupSessionStore struct {
 	createdMetadata   session.Metadata
 }
 
-func (s *fakeStartupSessionStore) Latest(_ context.Context, workingDir string) (session.Session, []llm.Message, bool, error) {
+func (s *fakeStartupSessionStore) Latest(_ context.Context, workingDir string) (session.Session, []session.Message, bool, error) {
 	s.latestCalls++
 	s.latestWorkingDir = workingDir
 	return s.loaded, s.messages, s.loadedOK, s.loadErr
 }
 
-func (s *fakeStartupSessionStore) Load(context.Context, string) (session.Session, []llm.Message, bool, error) {
+func (s *fakeStartupSessionStore) Load(context.Context, string) (session.Session, []session.Message, bool, error) {
 	return session.Session{}, nil, false, nil
 }
 
@@ -831,6 +831,13 @@ func (s *fakeStartupSessionStore) Create(_ context.Context, workingDir string, m
 	s.createdWorkingDir = workingDir
 	s.createdMetadata = metadata
 	return s.created, s.createErr
+}
+
+func (*fakeStartupSessionStore) Fork(context.Context, string, session.Metadata, session.Event) (session.Session, error) {
+	return session.Session{}, errors.New("unexpected fork")
+}
+func (*fakeStartupSessionStore) SwitchModel(context.Context, string, session.Metadata, session.Event) error {
+	return errors.New("unexpected model switch")
 }
 
 func (s *fakeStartupSessionStore) Append(context.Context, string, session.Event) error { return nil }

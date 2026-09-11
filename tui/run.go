@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/crowl/ronin/session"
 	"os"
 
 	"github.com/crowl/ronin/llm"
@@ -23,8 +24,8 @@ type Conversation interface {
 	ReasoningLevel() llm.ReasoningLevel
 	ContextUsage() llm.Usage
 	SessionUsage() llm.Usage
-	Messages() []llm.Message
-	RecordWorkflowResult(llm.WorkflowResultMessage) error
+	Messages() []session.Message
+	RecordWorkflowResult(session.WorkflowResultMessage) error
 	NewConversation() error
 	CompactConversation(context.Context) error
 	SwitchModel(llm.Model) error

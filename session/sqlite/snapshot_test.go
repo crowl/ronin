@@ -56,7 +56,7 @@ func TestPublicLoadsKeepMetadataAndJournalConsistent(t *testing.T) {
 	}()
 	for i := 0; i < 100; i++ {
 		var got session.Session
-		var messages []llm.Message
+		var messages []session.Message
 		var found bool
 		if i%2 == 0 {
 			got, messages, found, err = store.Load(t.Context(), record.ID)
@@ -119,7 +119,7 @@ func TestReadSnapshotAllowsConcurrentWrites(t *testing.T) {
 			}
 			for _, latest := range []bool{false, true} {
 				var got session.Session
-				var messages []llm.Message
+				var messages []session.Message
 				var found bool
 				if latest {
 					got, messages, found, err = store.Latest(t.Context(), record.WorkingDir)

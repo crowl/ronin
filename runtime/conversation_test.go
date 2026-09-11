@@ -32,7 +32,7 @@ func TestNew(t *testing.T) {
 		wantUsage := llm.Usage{InputTokens: 30, OutputTokens: 12, CachedTokens: 5, TotalTokens: 42}
 		agt, err := runtime.NewConversation(runtime.ConversationConfig{
 			ModelClient: &fakeModelClient{},
-			Messages: []llm.Message{
+			Messages: []session.Message{
 				llm.AssistantMessage{Usage: llm.Usage{InputTokens: 1, OutputTokens: 2, TotalTokens: 3}},
 				llm.UserMessage{Text: "after first assistant"},
 				llm.AssistantMessage{Usage: wantUsage},
@@ -48,7 +48,7 @@ func TestNew(t *testing.T) {
 	})
 
 	t.Run("copies initial session messages", func(t *testing.T) {
-		messages := make([]llm.Message, 1, 4)
+		messages := make([]session.Message, 1, 4)
 		messages[0] = llm.UserMessage{Text: "original"}
 
 		agt, err := runtime.NewConversation(runtime.ConversationConfig{
@@ -263,7 +263,7 @@ func TestPromptLifecycle(t *testing.T) {
 			llm.BlockEnded{Block: llm.TextBlock{Text: "done"}},
 			llm.PredictionFinished{},
 		}}
-		messages := []llm.Message{
+		messages := []session.Message{
 			llm.AssistantMessage{Blocks: []llm.AssistantBlock{
 				llm.ToolCallBlock{ID: "completed", Name: "read_file", Arguments: json.RawMessage(`{}`)},
 				llm.ToolCallBlock{ID: "interrupted", Name: "shell", Arguments: json.RawMessage(`{}`)},
@@ -374,8 +374,8 @@ func TestPromptLifecycle(t *testing.T) {
 			model:  llm.Model{Provider: "test", Name: "bounded", ContextWindow: 100},
 			events: []llm.PredictionEvent{llm.BlockEnded{Block: llm.TextBlock{Text: "done"}}, llm.PredictionFinished{}},
 		}
-		compactor := &fakeCompactor{messages: []llm.Message{llm.UserMessage{Text: "compacted"}}}
-		messages := make([]llm.Message, 13)
+		compactor := &fakeCompactor{messages: []session.Message{llm.UserMessage{Text: "compacted"}}}
+		messages := make([]session.Message, 13)
 		for i := range messages {
 			messages[i] = llm.UserMessage{Text: fmt.Sprintf("old %d", i)}
 		}
@@ -403,7 +403,7 @@ func TestPromptLifecycle(t *testing.T) {
 	})
 
 	t.Run("compacts and retries once after context window exhaustion", func(t *testing.T) {
-		messages := make([]llm.Message, 13)
+		messages := make([]session.Message, 13)
 		for i := range messages {
 			messages[i] = llm.UserMessage{Text: fmt.Sprintf("old %d", i)}
 		}
@@ -414,7 +414,7 @@ func TestPromptLifecycle(t *testing.T) {
 				{llm.BlockEnded{Block: llm.TextBlock{Text: "done"}}, llm.PredictionFinished{}},
 			},
 		}
-		compactor := &fakeCompactor{messages: []llm.Message{llm.UserMessage{Text: "compacted"}}}
+		compactor := &fakeCompactor{messages: []session.Message{llm.UserMessage{Text: "compacted"}}}
 		agt, err := runtime.NewConversation(runtime.ConversationConfig{
 			ModelClient: modelClient, Compactor: compactor, Messages: messages,
 		})
@@ -561,7 +561,7 @@ func TestNewConversation(t *testing.T) {
 	t.Run("without persistence clears messages in memory", func(t *testing.T) {
 		agt, err := runtime.NewConversation(runtime.ConversationConfig{
 			ModelClient: &fakeModelClient{},
-			Messages:    []llm.Message{llm.UserMessage{Text: "old"}},
+			Messages:    []session.Message{llm.UserMessage{Text: "old"}},
 		})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
@@ -585,7 +585,7 @@ func TestNewConversation(t *testing.T) {
 				Model:          config.Model{Provider: "stale", Name: "old"},
 				ReasoningLevel: "off",
 			},
-			Messages: []llm.Message{llm.UserMessage{Text: "old"}},
+			Messages: []session.Message{llm.UserMessage{Text: "old"}},
 		})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
@@ -609,7 +609,7 @@ func TestNewConversation(t *testing.T) {
 			ModelClient:  &fakeModelClient{},
 			SessionStore: store,
 			Session:      session.Session{ID: "sess-1"},
-			Messages:     []llm.Message{llm.UserMessage{Text: "old"}},
+			Messages:     []session.Message{llm.UserMessage{Text: "old"}},
 		})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
@@ -722,15 +722,15 @@ func TestRewindAndFork(t *testing.T) {
 		sessions: map[string]session.Session{
 			"source": {ID: "source", Title: "Source", WorkingDir: t.TempDir(), Model: config.Model{Provider: "test", Name: "model"}, ReasoningLevel: "high"},
 		},
-		messages: map[string][]llm.Message{}, activeID: "source",
+		messages: map[string][]session.Message{}, activeID: "source",
 	}
-	messages := []llm.Message{
-		llm.UserMessage{Text: "<compacted_context>summary</compacted_context>"},
+	messages := []session.Message{
+		session.ContextSummary{Text: "<compacted_context>summary</compacted_context>"},
 		llm.UserMessage{Text: "first"},
 		llm.AssistantMessage{Blocks: []llm.AssistantBlock{llm.TextBlock{Text: "answer"}}},
 		llm.UserMessage{Text: "second"},
 	}
-	store.messages["source"] = append([]llm.Message(nil), messages...)
+	store.messages["source"] = append([]session.Message(nil), messages...)
 	conversation, err := runtime.NewConversation(runtime.ConversationConfig{
 		ModelClient: &fakeModelClient{}, SessionStore: store, Session: store.sessions["source"], Messages: messages,
 		SessionCost: llm.SessionCost{Total: 1.25, Available: true},
@@ -761,19 +761,19 @@ func TestRewindAndFork(t *testing.T) {
 		t.Fatalf("Rewind() error = %v", err)
 	}
 	got := conversation.Messages()
-	if len(got) != 1 || got[0].(llm.UserMessage).Text != "<compacted_context>summary</compacted_context>" {
+	if len(got) != 1 || got[0].(session.ContextSummary).Text != "<compacted_context>summary</compacted_context>" {
 		t.Fatalf("rewound messages = %#v", got)
 	}
 }
 
 func TestCompactConversation(t *testing.T) {
 	t.Run("updates_messages_on_success", func(t *testing.T) {
-		compacted := []llm.Message{llm.UserMessage{Text: "compacted"}}
+		compacted := []session.Message{llm.UserMessage{Text: "compacted"}}
 		compactor := &fakeCompactor{messages: compacted}
 		agt, err := runtime.NewConversation(runtime.ConversationConfig{
 			ModelClient: &fakeModelClient{},
 			Compactor:   compactor,
-			Messages:    []llm.Message{llm.UserMessage{Text: "old"}},
+			Messages:    []session.Message{llm.UserMessage{Text: "old"}},
 		})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
@@ -796,7 +796,7 @@ func TestCompactConversation(t *testing.T) {
 		agt, err := runtime.NewConversation(runtime.ConversationConfig{
 			ModelClient: &fakeModelClient{},
 			Compactor:   &fakeCompactor{err: wantErr},
-			Messages:    []llm.Message{llm.UserMessage{Text: "old"}},
+			Messages:    []session.Message{llm.UserMessage{Text: "old"}},
 		})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
@@ -813,11 +813,11 @@ func TestCompactConversation(t *testing.T) {
 	})
 
 	t.Run("propagates_caller_context", func(t *testing.T) {
-		compactor := &fakeCompactor{messages: []llm.Message{llm.UserMessage{Text: "compacted"}}}
+		compactor := &fakeCompactor{messages: []session.Message{llm.UserMessage{Text: "compacted"}}}
 		agt, err := runtime.NewConversation(runtime.ConversationConfig{
 			ModelClient: &fakeModelClient{},
 			Compactor:   compactor,
-			Messages:    []llm.Message{llm.UserMessage{Text: "old"}},
+			Messages:    []session.Message{llm.UserMessage{Text: "old"}},
 		})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
@@ -842,11 +842,8 @@ func TestCompactConversation(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("RegisterModel() error = %v", err)
 		}
-		compactor, err := runtime.NewDefaultCompactor(runtime.DefaultCompactorConfig{ModelClient: originalClient})
-		if err != nil {
-			t.Fatalf("NewDefaultCompactor() error = %v", err)
-		}
-		messages := make([]llm.Message, 14)
+		compactor := &runtime.DefaultCompactor{}
+		messages := make([]session.Message, 14)
 		for i := range messages {
 			messages[i] = llm.UserMessage{Text: fmt.Sprintf("message %d", i)}
 		}
@@ -1006,19 +1003,19 @@ func (f *fakeModelClient) PredictNextStructured(context.Context, llm.PredictNext
 }
 
 type fakeCompactor struct {
-	messages []llm.Message
-	input    []llm.Message
+	messages []session.Message
+	input    []session.Message
 	gotCtx   context.Context
 	err      error
 }
 
-func (f *fakeCompactor) Compact(ctx context.Context, messages []llm.Message) ([]llm.Message, error) {
+func (f *fakeCompactor) Compact(ctx context.Context, _ llm.ModelClient, messages []session.Message) ([]session.Message, error) {
 	f.gotCtx = ctx
-	f.input = append([]llm.Message(nil), messages...)
+	f.input = append([]session.Message(nil), messages...)
 	if f.err != nil {
 		return nil, f.err
 	}
-	return append([]llm.Message(nil), f.messages...), nil
+	return append([]session.Message(nil), f.messages...), nil
 }
 
 type fakeIncrementalTool struct {
@@ -1060,7 +1057,7 @@ func (f fakeTool) Call(context.Context, json.RawMessage) (any, error) {
 
 type fakeSessionStore struct {
 	sessions           map[string]session.Session
-	messages           map[string][]llm.Message
+	messages           map[string][]session.Message
 	activeID           string
 	saveErr            error
 	createErr          error
@@ -1068,14 +1065,14 @@ type fakeSessionStore struct {
 	metadataContextErr error
 }
 
-func (f *fakeSessionStore) Latest(context.Context, string) (session.Session, []llm.Message, bool, error) {
+func (f *fakeSessionStore) Latest(context.Context, string) (session.Session, []session.Message, bool, error) {
 	sess, ok := f.sessions[f.activeID]
-	return sess, append([]llm.Message(nil), f.messages[f.activeID]...), ok, nil
+	return sess, append([]session.Message(nil), f.messages[f.activeID]...), ok, nil
 }
 
-func (f *fakeSessionStore) Load(_ context.Context, id string) (session.Session, []llm.Message, bool, error) {
+func (f *fakeSessionStore) Load(_ context.Context, id string) (session.Session, []session.Message, bool, error) {
 	sess, ok := f.sessions[id]
-	return sess, append([]llm.Message(nil), f.messages[id]...), ok, nil
+	return sess, append([]session.Message(nil), f.messages[id]...), ok, nil
 }
 
 func (f *fakeSessionStore) Create(_ context.Context, workingDir string, metadata session.Metadata) (session.Session, error) {
@@ -1096,10 +1093,10 @@ func (f *fakeSessionStore) Append(_ context.Context, id string, event session.Ev
 		return f.saveErr
 	}
 	if f.messages == nil {
-		f.messages = make(map[string][]llm.Message)
+		f.messages = make(map[string][]session.Message)
 	}
 	if event.Type == session.EventCompaction || event.Type == session.EventContextReset {
-		f.messages[id] = append([]llm.Message(nil), event.Compacted...)
+		f.messages[id] = append([]session.Message(nil), event.Compacted...)
 	} else {
 		f.messages[id] = append(f.messages[id], event.Message)
 	}
@@ -1120,9 +1117,19 @@ func (f *fakeSessionStore) Fork(_ context.Context, parentID string, metadata ses
 		Model: metadata.Model, ReasoningLevel: metadata.ReasoningLevel, Cost: llm.SessionCost{Available: true},
 	}
 	f.sessions[child.ID] = child
-	f.messages[child.ID] = append([]llm.Message(nil), event.Compacted...)
+	f.messages[child.ID] = append([]session.Message(nil), event.Compacted...)
 	f.activeID = child.ID
 	return child, nil
+}
+
+func (f *fakeSessionStore) SwitchModel(ctx context.Context, id string, metadata session.Metadata, event session.Event) error {
+	if err := f.UpdateMetadata(ctx, id, metadata); err != nil {
+		return err
+	}
+	record := f.sessions[id]
+	record.History = append(record.History, event)
+	f.sessions[id] = record
+	return nil
 }
 
 func (f *fakeSessionStore) UpdateMetadata(ctx context.Context, id string, metadata session.Metadata) error {
@@ -1159,7 +1166,7 @@ func (f *fakeSessionStore) Clear(context.Context, string) error {
 func TestSessionPersistence(t *testing.T) {
 	t.Run("loads messages from ActiveSession when Messages is empty", func(t *testing.T) {
 		activeSess := session.Session{ID: "sess-1"}
-		agt, err := runtime.NewConversation(runtime.ConversationConfig{ModelClient: &fakeModelClient{}, Session: activeSess, Messages: []llm.Message{llm.UserMessage{Text: "restored text"}}})
+		agt, err := runtime.NewConversation(runtime.ConversationConfig{ModelClient: &fakeModelClient{}, Session: activeSess, Messages: []session.Message{llm.UserMessage{Text: "restored text"}}})
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}

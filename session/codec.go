@@ -202,7 +202,7 @@ func decodeEvent(eventType string, payload []byte) (Event, error) {
 
 func isMessageEventType(eventType string) bool {
 	switch eventType {
-	case "user_message", "assistant_message", "tool_result", "tool_error", "error", "workflow_result":
+	case "context_summary", "user_message", "assistant_message", "tool_result", "tool_error", "error", "workflow_result":
 		return true
 	default:
 		return false
@@ -210,8 +210,10 @@ func isMessageEventType(eventType string) bool {
 }
 
 // messageKind returns the journal event type column value for a message.
-func messageKind(message llm.Message) (string, error) {
+func messageKind(message Message) (string, error) {
 	switch message.(type) {
+	case ContextSummary:
+		return "context_summary", nil
 	case llm.UserMessage:
 		return "user_message", nil
 	case llm.AssistantMessage:
@@ -222,7 +224,7 @@ func messageKind(message llm.Message) (string, error) {
 		return "tool_error", nil
 	case llm.ErrorMessage:
 		return "error", nil
-	case llm.WorkflowResultMessage:
+	case WorkflowResultMessage:
 		return "workflow_result", nil
 	default:
 		return "", fmt.Errorf("unsupported message type %T", message)
@@ -230,7 +232,7 @@ func messageKind(message llm.Message) (string, error) {
 }
 
 // marshalMessage encodes a single message as an event payload.
-func marshalMessage(message llm.Message) ([]byte, error) {
+func marshalMessage(message Message) ([]byte, error) {
 	encoded, err := encodeMessage(message)
 	if err != nil {
 		return nil, err
@@ -239,7 +241,7 @@ func marshalMessage(message llm.Message) ([]byte, error) {
 }
 
 // unmarshalMessage decodes a single-message event payload.
-func unmarshalMessage(data []byte) (llm.Message, error) {
+func unmarshalMessage(data []byte) (Message, error) {
 	var encoded messageJSON
 	if err := json.Unmarshal(data, &encoded); err != nil {
 		return nil, err
@@ -247,7 +249,7 @@ func unmarshalMessage(data []byte) (llm.Message, error) {
 	return decodeMessage(encoded)
 }
 
-func encodeMessages(messages []llm.Message) ([]messageJSON, error) {
+func encodeMessages(messages []Message) ([]messageJSON, error) {
 	encoded := make([]messageJSON, 0, len(messages))
 	for i, message := range messages {
 		encodedMessage, err := encodeMessage(message)
@@ -259,8 +261,8 @@ func encodeMessages(messages []llm.Message) ([]messageJSON, error) {
 	return encoded, nil
 }
 
-func decodeMessages(encoded []messageJSON) ([]llm.Message, error) {
-	messages := make([]llm.Message, 0, len(encoded))
+func decodeMessages(encoded []messageJSON) ([]Message, error) {
+	messages := make([]Message, 0, len(encoded))
 	for i, message := range encoded {
 		decoded, err := decodeMessage(message)
 		if err != nil {
@@ -272,7 +274,7 @@ func decodeMessages(encoded []messageJSON) ([]llm.Message, error) {
 }
 
 // marshalMessages encodes a compaction event payload.
-func marshalMessages(messages []llm.Message) ([]byte, error) {
+func marshalMessages(messages []Message) ([]byte, error) {
 	encoded, err := encodeMessages(messages)
 	if err != nil {
 		return nil, err
@@ -281,7 +283,7 @@ func marshalMessages(messages []llm.Message) ([]byte, error) {
 }
 
 // unmarshalMessages decodes a compaction event payload.
-func unmarshalMessages(data []byte) ([]llm.Message, error) {
+func unmarshalMessages(data []byte) ([]Message, error) {
 	var encoded []messageJSON
 	if err := json.Unmarshal(data, &encoded); err != nil {
 		return nil, err
@@ -289,8 +291,10 @@ func unmarshalMessages(data []byte) ([]llm.Message, error) {
 	return decodeMessages(encoded)
 }
 
-func encodeMessage(message llm.Message) (messageJSON, error) {
+func encodeMessage(message Message) (messageJSON, error) {
 	switch m := message.(type) {
+	case ContextSummary:
+		return messageJSON{Type: "context_summary", Timestamp: m.Timestamp, Text: m.Text}, nil
 	case llm.UserMessage:
 		return messageJSON{Type: "user", Timestamp: m.Timestamp, Text: m.Text}, nil
 	case llm.AssistantMessage:
@@ -309,7 +313,7 @@ func encodeMessage(message llm.Message) (messageJSON, error) {
 			encoded.Blocks = append(encoded.Blocks, encodedBlock)
 		}
 		return encoded, nil
-	case llm.WorkflowResultMessage:
+	case WorkflowResultMessage:
 		return messageJSON{Type: "workflow_result", Timestamp: m.Timestamp, Name: m.Name, Input: m.Input, Status: string(m.Status), Summary: m.Summary}, nil
 	case llm.ToolOutputMessage:
 		return messageJSON{Type: "tool_output", Timestamp: m.Timestamp, ToolName: m.ToolName, ToolCallID: m.ToolCallID, ToolOutput: m.ToolOutput}, nil
@@ -322,8 +326,10 @@ func encodeMessage(message llm.Message) (messageJSON, error) {
 	}
 }
 
-func decodeMessage(encoded messageJSON) (llm.Message, error) {
+func decodeMessage(encoded messageJSON) (Message, error) {
 	switch encoded.Type {
+	case "context_summary":
+		return ContextSummary{Timestamp: encoded.Timestamp, Text: encoded.Text}, nil
 	case "user":
 		return llm.UserMessage{Timestamp: encoded.Timestamp, Text: encoded.Text}, nil
 	case "assistant":
@@ -342,7 +348,7 @@ func decodeMessage(encoded messageJSON) (llm.Message, error) {
 		}
 		return message, nil
 	case "workflow_result":
-		return llm.WorkflowResultMessage{Timestamp: encoded.Timestamp, Name: encoded.Name, Input: encoded.Input, Status: llm.WorkflowStatus(encoded.Status), Summary: encoded.Summary}, nil
+		return WorkflowResultMessage{Timestamp: encoded.Timestamp, Name: encoded.Name, Input: encoded.Input, Status: WorkflowStatus(encoded.Status), Summary: encoded.Summary}, nil
 	case "tool_output":
 		return llm.ToolOutputMessage{Timestamp: encoded.Timestamp, ToolName: encoded.ToolName, ToolCallID: encoded.ToolCallID, ToolOutput: encoded.ToolOutput}, nil
 	case "tool_error":

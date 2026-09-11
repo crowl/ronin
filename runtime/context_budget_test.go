@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -13,20 +14,33 @@ func TestContextBudgetIncludesInstructionsAndCalibration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	baseline := c.estimatedContextTokens()
+	baseline := c.estimatedContextTokens(nil)
 	c.systemPrompt = strings.Repeat("instructions ", 1000)
-	if c.estimatedContextTokens() <= baseline {
+	if c.estimatedContextTokens(nil) <= baseline {
 		t.Fatal("system instructions omitted")
 	}
-	size := requestBytes(c.systemPrompt, c.toolDefs, c.messages)
-	before := c.estimatedContextTokens()
+	messages, err := c.modelMessages()
+	if err != nil {
+		t.Fatal(err)
+	}
+	size := requestBytes(c.systemPrompt, c.toolDefs, messages)
+	before := c.estimatedContextTokens(nil)
 	c.calibrateContext(size, llm.Usage{InputTokens: size})
-	if c.estimatedContextTokens() <= before {
+	if c.estimatedContextTokens(nil) <= before {
 		t.Fatal("reported usage did not calibrate estimate")
 	}
 	c.calibrateContext(size, llm.Usage{InputTokens: 1})
-	if c.estimatedContextTokens() <= before {
+	if c.estimatedContextTokens(nil) <= before {
 		t.Fatal("one low sample erased safety margin")
+	}
+}
+
+func TestRequestBytesIncludesToolErrorText(t *testing.T) {
+	text := strings.Repeat("long tool diagnostic\n", 4000)
+	small := requestBytes("", nil, []llm.Message{llm.ToolErrorMessage{Error: errors.New("")}})
+	large := requestBytes("", nil, []llm.Message{llm.ToolErrorMessage{Error: errors.New(text)}})
+	if large-small < len(text) {
+		t.Fatalf("error text adds %d bytes, want at least %d", large-small, len(text))
 	}
 }
 

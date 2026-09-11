@@ -2,8 +2,6 @@ package runtime
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -54,7 +52,7 @@ func (t *historyTool) Call(ctx context.Context, raw json.RawMessage) (any, error
 	result := historyResult{Entries: []historyEntry{}}
 	budget := 32 * 1024
 	matched := 0
-	for _, message := range retainedHistory(t.conversation.session.History) {
+	for _, message := range session.RetainedHistory(t.conversation.session.History) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -62,7 +60,7 @@ func (t *historyTool) Call(ctx context.Context, raw json.RawMessage) (any, error
 		if output, ok := message.(llm.ToolOutputMessage); ok && output.ToolName == t.Name() {
 			continue
 		}
-		reference, content := historyMessage(message)
+		reference, content := session.HistoryMessage(message)
 		if args.Reference != "" && args.Reference != reference {
 			continue
 		}
@@ -97,57 +95,4 @@ func (t *historyTool) Call(ctx context.Context, raw json.RawMessage) (any, error
 		result.Entries = append(result.Entries, entry)
 	}
 	return result, nil
-}
-
-func historyMessage(message llm.Message) (string, string) {
-	data, err := json.Marshal(message)
-	switch m := message.(type) {
-	case llm.ToolErrorMessage:
-		data, err = json.Marshal(struct{ Name, CallID, Error string }{m.ToolName, m.ToolCallID, fmt.Sprint(m.Error)})
-	case llm.ErrorMessage:
-		data, err = json.Marshal(struct{ Error string }{fmt.Sprint(m.Error)})
-	}
-	if err != nil {
-		return "", ""
-	}
-	digest := sha256.Sum256(data)
-	return "history:" + hex.EncodeToString(digest[:16]), string(data)
-}
-
-func retainedHistory(events []session.Event) []llm.Message {
-	var messages []llm.Message
-	seen := map[string]bool{}
-	add := func(message llm.Message) {
-		if message == nil {
-			return
-		}
-		ref, _ := historyMessage(message)
-		if ref == "" || seen[ref] {
-			return
-		}
-		seen[ref] = true
-		messages = append(messages, message)
-	}
-	for _, event := range events {
-		switch event.Type {
-		case session.EventMessage:
-			add(event.Message)
-		case session.EventCompaction:
-			for _, message := range event.Compacted {
-				add(message)
-			}
-		case session.EventContextReset:
-			// Reset snapshots are authoritative. Never infer lineage from text or
-			// timestamps: doing so could reintroduce explicitly discarded messages.
-			messages = nil
-			seen = map[string]bool{}
-			for _, message := range event.RetainedHistory {
-				add(message)
-			}
-			for _, message := range event.Compacted {
-				add(message)
-			}
-		}
-	}
-	return messages
 }

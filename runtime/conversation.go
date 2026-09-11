@@ -21,7 +21,7 @@ import (
 )
 
 type Compactor interface {
-	Compact(context.Context, []llm.Message) ([]llm.Message, error)
+	Compact(context.Context, llm.ModelClient, []session.Message) ([]session.Message, error)
 }
 
 type Tool interface {
@@ -63,7 +63,7 @@ type ConversationConfig struct {
 	Now          func() time.Time
 	SessionStore session.Store
 	Session      session.Session
-	Messages     []llm.Message
+	Messages     []session.Message
 	SessionCost  llm.SessionCost
 }
 
@@ -94,27 +94,14 @@ func NewConversation(cfg ConversationConfig) (*Conversation, error) {
 		return nil, err
 	}
 
-	messages := append([]llm.Message(nil), cfg.Messages...)
+	messages := append([]session.Message(nil), cfg.Messages...)
 	cfg.Session.History = append([]session.Event(nil), cfg.Session.History...)
 	if len(cfg.Session.History) == 0 {
 		for _, message := range messages {
 			cfg.Session.History = append(cfg.Session.History, session.Event{Type: session.EventMessage, Message: message})
 		}
 	}
-	var sessionUsage llm.Usage
-	// Count billed events, not effective context: resets contain copied messages.
-	for _, event := range cfg.Session.History {
-		switch event.Type {
-		case session.EventMessage:
-			if assistant, ok := event.Message.(llm.AssistantMessage); ok {
-				sessionUsage.AddTokens(assistant.Usage)
-			}
-		case session.EventUsage:
-			if event.Usage != nil && event.Usage.Usage != nil {
-				sessionUsage.AddTokens(*event.Usage.Usage)
-			}
-		}
-	}
+	sessionUsage := session.Account(cfg.Session.History).Tokens
 	var contextUsage llm.Usage
 	for _, message := range slices.Backward(messages) {
 		assistantMessage, ok := message.(llm.AssistantMessage)
@@ -184,7 +171,7 @@ type Conversation struct {
 
 	sessionStore session.Store
 	session      session.Session
-	messages     []llm.Message
+	messages     []session.Message
 }
 
 func (c *Conversation) CWD() string                        { return c.cwd }
@@ -203,8 +190,8 @@ func (c *Conversation) SessionUsage() llm.Usage {
 	return usage
 }
 
-func (c *Conversation) Messages() []llm.Message {
-	return append([]llm.Message(nil), c.messages...)
+func (c *Conversation) Messages() []session.Message {
+	return append([]session.Message(nil), c.messages...)
 }
 
 func (c *Conversation) SetToolsAndSystemPrompt(tools []Tool, systemPrompt string) error {
@@ -269,31 +256,21 @@ func (c *Conversation) SwitchModel(model llm.Model) error {
 	updated.Model = config.Model{Provider: model.Provider, Name: model.Name}
 	updated.ReasoningLevel = string(level)
 	updated.UpdatedAt = c.now().UTC()
+	event := session.Event{
+		Type: session.EventModelChanged, CreatedAt: updated.UpdatedAt, PreviousModel: c.session.Model,
+		Model: updated.Model, ReasoningLevel: updated.ReasoningLevel,
+	}
 	if c.sessionStore != nil && c.session.ID != "" {
-		if switchStore, ok := c.sessionStore.(session.ModelSwitchStore); ok {
-			event := session.Event{
-				Type: session.EventModelChanged, CreatedAt: c.now(), PreviousModel: c.session.Model,
-				Model: updated.Model, ReasoningLevel: updated.ReasoningLevel,
-			}
-			ctx, cancel := detachedPersistenceContext()
-			defer cancel()
-			if err := switchStore.SwitchModel(ctx, c.session.ID, session.Metadata{
-				Title: updated.Title, Model: updated.Model, ReasoningLevel: updated.ReasoningLevel,
-			}, event); err != nil {
-				return fmt.Errorf("save session model: %w", err)
-			}
-		} else {
-			ctx, cancel := detachedPersistenceContext()
-			defer cancel()
-			if err := c.updateMetadata(ctx, updated); err != nil {
-				return fmt.Errorf("save session model: %w", err)
-			}
+		ctx, cancel := detachedPersistenceContext()
+		defer cancel()
+		if err := c.sessionStore.SwitchModel(ctx, c.session.ID, session.Metadata{
+			Title: updated.Title, Model: updated.Model, ReasoningLevel: updated.ReasoningLevel,
+		}, event); err != nil {
+			return fmt.Errorf("save session model: %w", err)
 		}
 	}
+	updated.History = append(updated.History, event)
 	c.modelClient = newModelClient
-	if compactor, ok := c.compactor.(*DefaultCompactor); ok {
-		compactor.modelClient = newModelClient
-	}
 	c.session = updated
 	return nil
 }
@@ -321,12 +298,12 @@ func (c *Conversation) SwitchReasoningLevel(lvl llm.ReasoningLevel) error {
 	return nil
 }
 
-func (c *Conversation) shouldCompact() bool {
+func (c *Conversation) shouldCompact(messages []llm.Message) bool {
 	contextWindow := c.modelClient.Model().ContextWindow
 	if c.compactor == nil || contextWindow == 0 {
 		return false
 	}
-	if compactionMessageBytes(c.messages) >= 32*1024 && len(c.messages) > 1 && c.estimatedContextTokens()*100 >= uint64(contextWindow)*autoCompactionUsagePercent {
+	if compactionMessageBytes(c.messages) >= 32*1024 && len(c.messages) > 1 && c.estimatedContextTokens(messages)*100 >= uint64(contextWindow)*autoCompactionUsagePercent {
 		return true
 	}
 	return len(c.messages) > defaultCompactKeepMessages && c.contextUsage.InputTokens > 0 &&
@@ -342,22 +319,16 @@ func (c *Conversation) compactContext(ctx context.Context, requireReduction bool
 		return errors.New("compactor is not configured")
 	}
 	ctx = llm.WithStructuredUsageRecorder(ctx, c.RecordStructuredUsage)
-	messages, err := c.compactor.Compact(ctx, append([]llm.Message(nil), c.messages...))
+	messages, err := c.compactor.Compact(ctx, c.modelClient, append([]session.Message(nil), c.messages...))
 	if err != nil {
 		return err
 	}
 	if requireReduction && compactionMessageBytes(messages) >= compactionMessageBytes(c.messages) {
 		return errors.New("compaction cannot reduce context safely; shorten the latest prompt or large tool results, or switch to a larger-context model")
 	}
-	if c.sessionStore != nil && c.session.ID != "" {
-		if err := c.sessionStore.Append(ctx, c.session.ID, session.Event{Type: session.EventCompaction, CreatedAt: c.now(), Compacted: messages}); err != nil {
-			return fmt.Errorf("save compacted session: %w", err)
-		}
-		c.session.UpdatedAt = c.now().UTC()
+	if err := c.replaceContext(ctx, session.Event{Type: session.EventCompaction, Compacted: messages}); err != nil {
+		return fmt.Errorf("save compacted session: %w", err)
 	}
-	c.session.History = append(c.session.History, session.Event{Type: session.EventCompaction, Compacted: messages})
-	c.messages = append([]llm.Message(nil), messages...)
-	c.resetToolContext()
 	c.contextUsage = llm.Usage{Cost: llm.Cost{Total: c.sessionCost.Total, Available: c.sessionCost.Available}}
 	return nil
 }
@@ -366,7 +337,7 @@ func (c *Conversation) CompactConversation(ctx context.Context) error {
 	return c.compact(ctx)
 }
 
-func (c *Conversation) RecordWorkflowResult(message llm.WorkflowResultMessage) error {
+func (c *Conversation) RecordWorkflowResult(message session.WorkflowResultMessage) error {
 	if message.Timestamp.IsZero() {
 		message.Timestamp = c.now()
 	}
@@ -387,7 +358,7 @@ func (c *Conversation) RewindPoints() []RewindPoint {
 	var points []RewindPoint
 	for i, message := range c.messages {
 		user, ok := message.(llm.UserMessage)
-		if !ok || isCompactedContext(user.Text) {
+		if !ok {
 			continue
 		}
 		points = append(points, RewindPoint{MessageIndex: i, Prompt: user.Text})
@@ -404,14 +375,9 @@ func (c *Conversation) Rewind(ctx context.Context, point RewindPoint) error {
 		return err
 	}
 	event := session.Event{Type: session.EventContextReset, CreatedAt: c.now(), Compacted: messages, RetainedHistory: c.historyBefore(point), ResetReason: "rewind"}
-	if err := c.sessionStore.Append(ctx, c.session.ID, event); err != nil {
+	if err := c.replaceContext(ctx, event); err != nil {
 		return fmt.Errorf("save rewind: %w", err)
 	}
-	c.session.History = append(c.session.History, event)
-	c.session.UpdatedAt = c.now().UTC()
-	c.messages = messages
-	c.resetToolContext()
-	c.recalculateContextUsage()
 	return nil
 }
 
@@ -423,12 +389,8 @@ func (c *Conversation) Fork(ctx context.Context, point RewindPoint) error {
 	if c.sessionStore == nil || c.session.ID == "" {
 		return errors.New("session store is not configured")
 	}
-	forkStore, ok := c.sessionStore.(session.ForkStore)
-	if !ok {
-		return errors.New("session store does not support forks")
-	}
 	reset := session.Event{Type: session.EventContextReset, CreatedAt: c.now(), Compacted: messages, RetainedHistory: c.historyBefore(point), ResetReason: "fork"}
-	forked, err := forkStore.Fork(ctx, c.session.ID, session.Metadata{
+	forked, err := c.sessionStore.Fork(ctx, c.session.ID, session.Metadata{
 		Title: c.session.Title, Model: c.session.Model, ReasoningLevel: c.session.ReasoningLevel,
 	}, reset)
 	if err != nil {
@@ -445,19 +407,15 @@ func (c *Conversation) Fork(ctx context.Context, point RewindPoint) error {
 	return nil
 }
 
-func (c *Conversation) messagesBefore(point RewindPoint) ([]llm.Message, error) {
+func (c *Conversation) messagesBefore(point RewindPoint) ([]session.Message, error) {
 	if point.MessageIndex < 0 || point.MessageIndex >= len(c.messages) {
 		return nil, errors.New("rewind point is no longer valid")
 	}
 	user, ok := c.messages[point.MessageIndex].(llm.UserMessage)
-	if !ok || user.Text != point.Prompt || isCompactedContext(user.Text) {
+	if !ok || user.Text != point.Prompt {
 		return nil, errors.New("rewind point is no longer valid")
 	}
-	return append([]llm.Message(nil), c.messages[:point.MessageIndex]...), nil
-}
-
-func isCompactedContext(text string) bool {
-	return strings.HasPrefix(strings.TrimSpace(text), "<compacted_context>")
+	return append([]session.Message(nil), c.messages[:point.MessageIndex]...), nil
 }
 
 func (c *Conversation) recalculateContextUsage() {
@@ -503,7 +461,7 @@ func detachedPersistenceContext() (context.Context, context.CancelFunc) {
 
 const maxTitleRunes = 60
 
-func deriveTitle(messages []llm.Message) string {
+func deriveTitle(messages []session.Message) string {
 	for _, message := range messages {
 		user, ok := message.(llm.UserMessage)
 		if !ok {
@@ -576,14 +534,10 @@ func (c *Conversation) reportSaveFailure(ctx context.Context, events chan<- Even
 	return fmt.Errorf("failed to save session: %w", saveErr)
 }
 
-func (c *Conversation) appendMessage(ctx context.Context, message llm.Message) error {
-	if c.sessionStore != nil && c.session.ID != "" {
-		if err := c.sessionStore.Append(ctx, c.session.ID, session.Event{Type: session.EventMessage, CreatedAt: c.now(), Message: message}); err != nil {
-			return err
-		}
-		c.session.UpdatedAt = c.now().UTC()
+func (c *Conversation) appendMessage(ctx context.Context, message session.Message) error {
+	if err := c.appendEvent(ctx, session.Event{Type: session.EventMessage, Message: message}); err != nil {
+		return err
 	}
-	c.session.History = append(c.session.History, session.Event{Type: session.EventMessage, Message: message})
 	c.messages = append(c.messages, message)
 	return nil
 }
@@ -593,21 +547,14 @@ func (c *Conversation) repairInterruptedToolCalls(ctx context.Context) error {
 	if !repaired {
 		return nil
 	}
-	if c.sessionStore != nil && c.session.ID != "" {
-		event := session.Event{Type: session.EventCompaction, CreatedAt: c.now(), Compacted: messages}
-		if err := c.sessionStore.Append(ctx, c.session.ID, event); err != nil {
-			return fmt.Errorf("repair interrupted tool calls: %w", err)
-		}
-		c.session.UpdatedAt = c.now().UTC()
+	if err := c.replaceContext(ctx, session.Event{Type: session.EventCompaction, Compacted: messages}); err != nil {
+		return fmt.Errorf("repair interrupted tool calls: %w", err)
 	}
-	c.session.History = append(c.session.History, session.Event{Type: session.EventCompaction, Compacted: messages})
-	c.messages = messages
-	c.resetToolContext()
 	return nil
 }
 
-func repairInterruptedToolCalls(messages []llm.Message, timestamp time.Time) ([]llm.Message, bool) {
-	repaired := make([]llm.Message, 0, len(messages))
+func repairInterruptedToolCalls(messages []session.Message, timestamp time.Time) ([]session.Message, bool) {
+	repaired := make([]session.Message, 0, len(messages))
 	var pending []llm.ToolCallBlock
 	changed := false
 
@@ -766,9 +713,17 @@ func (c *Conversation) run(ctx context.Context, prompt string, events chan<- Eve
 		}
 		cycleCount++
 		ctx, cycleOp = telemetry.StartScope(promptCtx, "cycle", attribute.Int("ronin.cycle.index", cycleCount))
-		if c.shouldCompact() {
+		requestMessages, err := c.modelMessages()
+		if err != nil {
+			return finish(err)
+		}
+		if c.shouldCompact(requestMessages) {
 			if err := c.compactContext(ctx, true); err != nil {
 				return finish(fmt.Errorf("automatic context compaction: %w", err))
+			}
+			requestMessages, err = c.modelMessages()
+			if err != nil {
+				return finish(err)
 			}
 		}
 		select {
@@ -781,7 +736,6 @@ func (c *Conversation) run(ctx context.Context, prompt string, events chan<- Eve
 		var usage llm.Usage
 		var stopReason llm.StopReason
 		predictionFinished := false
-		requestMessages := llm.ProjectMessagesForProvider(c.messages, c.modelClient.Model().Provider)
 		request := llm.PredictNextRequest{CacheKey: c.cacheKey, SystemPrompt: c.systemPrompt, Tools: append([]llm.Tool(nil), c.toolDefs...), Messages: requestMessages}
 		predictionEventsCh, predictionErrCh := predictObserved(ctx, c.modelClient, request)
 		for event := range predictionEventsCh {
@@ -907,36 +861,27 @@ func (c *Conversation) RecordStructuredUsage(_ context.Context, record llm.Struc
 	ctx, cancel := detachedPersistenceContext()
 	defer cancel()
 	event := session.Event{Type: session.EventUsage, CreatedAt: c.now(), Usage: &record}
-	if c.sessionStore != nil && c.session.ID != "" {
-		if err := c.sessionStore.Append(ctx, c.session.ID, event); err != nil {
-			return fmt.Errorf("save structured usage: %w", err)
-		}
+	if err := c.appendEvent(ctx, event); err != nil {
+		return fmt.Errorf("save structured usage: %w", err)
 	}
-	c.session.History = append(c.session.History, event)
-	if record.Usage != nil {
-		c.sessionUsage.AddTokens(*record.Usage)
-	}
-	if record.Usage == nil || !record.Usage.Cost.Available {
-		c.sessionCost.Available = false
-	} else {
-		c.sessionCost.Total += record.Usage.Cost.Total
-	}
+	c.accountUsage(event)
 	c.contextUsage.Cost = llm.Cost{Total: c.sessionCost.Total, Available: c.sessionCost.Available}
 	return nil
 }
 
 func (c *Conversation) recordUsage(usage llm.Usage) {
-	c.sessionUsage.AddTokens(usage)
-	if usage.Cost.Available {
-		c.sessionCost.Total += usage.Cost.Total
-	} else {
-		c.sessionCost.Available = false
-	}
+	c.accountUsage(session.Event{Type: session.EventMessage, Message: llm.AssistantMessage{Usage: usage}})
 	c.contextUsage = usage
 	c.contextUsage.Cost = llm.Cost{Total: c.sessionCost.Total, Available: c.sessionCost.Available}
 }
 
-func pendingToolCalls(messages []llm.Message) []llm.ToolCallBlock {
+func (c *Conversation) accountUsage(event session.Event) {
+	a := session.Accounting{Tokens: c.sessionUsage, Cost: c.sessionCost}
+	a.Apply(event)
+	c.sessionUsage, c.sessionCost = a.Tokens, a.Cost
+}
+
+func pendingToolCalls(messages []session.Message) []llm.ToolCallBlock {
 	var pending []llm.ToolCallBlock
 	for _, message := range messages {
 		switch typed := message.(type) {

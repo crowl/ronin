@@ -15,6 +15,7 @@ import (
 
 	"github.com/crowl/ronin/jsonschema"
 	"github.com/crowl/ronin/llm"
+	"github.com/crowl/ronin/session"
 )
 
 var (
@@ -37,28 +38,9 @@ const (
 	truncatedPreviousCompactionSummaryNote = "\n\n[... previous compacted context truncated ...]\n\n"
 )
 
-type DefaultCompactorConfig struct {
-	SessionID   string
-	ModelClient llm.ModelClient
-	Now         func() time.Time
-}
-
-func NewDefaultCompactor(cfg DefaultCompactorConfig) (*DefaultCompactor, error) {
-	if cfg.ModelClient == nil {
-		return nil, fmt.Errorf("model client is required")
-	}
-	return &DefaultCompactor{
-		sessionID:   cfg.SessionID,
-		modelClient: cfg.ModelClient,
-		now:         cfg.Now,
-	}, nil
-}
-
-type DefaultCompactor struct {
-	sessionID   string
-	modelClient llm.ModelClient
-	now         func() time.Time
-}
+// DefaultCompactor owns summary policy, not a selected model or session.
+// Its zero value uses the current time.
+type DefaultCompactor struct{ Now func() time.Time }
 
 type compactionSummary struct {
 	CurrentGoal         string   `json:"current_goal" jsonschema:"The user's current goal or task. Use an empty string if unknown."`
@@ -70,7 +52,10 @@ type compactionSummary struct {
 	Recovery            []string `json:"recovery" jsonschema:"Information needed to safely resume after compaction."`
 }
 
-func (c *DefaultCompactor) Compact(ctx context.Context, msgs []llm.Message) ([]llm.Message, error) {
+func (c *DefaultCompactor) Compact(ctx context.Context, client llm.ModelClient, msgs []session.Message) ([]session.Message, error) {
+	if client == nil {
+		return nil, fmt.Errorf("model client is required")
+	}
 	if len(msgs) <= 0 {
 		return nil, fmt.Errorf("not enough safely compactable messages: have %d", len(msgs))
 	}
@@ -81,7 +66,7 @@ func (c *DefaultCompactor) Compact(ctx context.Context, msgs []llm.Message) ([]l
 	keep := min(defaultCompactKeepMessages, len(msgs)-1)
 	// Retain a bounded recent tail rather than a fixed count of arbitrarily
 	// large results. Never separate a tool result from its call.
-	window := c.modelClient.Model().ContextWindow
+	window := client.Model().ContextWindow
 	budget := 32 * 1024
 	if window > 0 {
 		budget = max(1024, int(window)/8*4)
@@ -98,10 +83,10 @@ func (c *DefaultCompactor) Compact(ctx context.Context, msgs []llm.Message) ([]l
 		return nil, fmt.Errorf("no recent messages would remain after compaction")
 	}
 
-	older := append([]llm.Message(nil), msgs[:start]...)
-	recent := append([]llm.Message(nil), msgs[start:]...)
+	older := append([]session.Message(nil), msgs[:start]...)
+	recent := append([]session.Message(nil), msgs[start:]...)
 	factSheet := buildCompactionFactSheet(older, "")
-	summary, err := c.generateCompactionSummary(ctx, factSheet)
+	summary, err := c.generateCompactionSummary(ctx, client, factSheet)
 	if err != nil {
 		return nil, err
 	}
@@ -112,18 +97,18 @@ func (c *DefaultCompactor) Compact(ctx context.Context, msgs []llm.Message) ([]l
 		return nil, err
 	}
 
-	msg := llm.UserMessage{
+	msg := session.ContextSummary{
 		Timestamp: c.nowTime(),
 		Text:      messageText,
 	}
 
-	compacted := make([]llm.Message, 0, 1+len(recent))
+	compacted := make([]session.Message, 0, 1+len(recent))
 	compacted = append(compacted, msg)
 	compacted = append(compacted, recent...)
 	return compacted, nil
 }
 
-func (c *DefaultCompactor) generateCompactionSummary(ctx context.Context, factSheet string) (compactionSummary, error) {
+func (c *DefaultCompactor) generateCompactionSummary(ctx context.Context, client llm.ModelClient, factSheet string) (compactionSummary, error) {
 	var prompt bytes.Buffer
 	if err := compactionSummaryPromptTemplate.Execute(&prompt, struct{ FactSheet string }{FactSheet: factSheet}); err != nil {
 		return compactionSummary{}, fmt.Errorf("render compaction prompt: %w", err)
@@ -134,7 +119,7 @@ func (c *DefaultCompactor) generateCompactionSummary(ctx context.Context, factSh
 		Text:      prompt.String(),
 	}
 
-	raw, err := llm.PredictStructuredObserved(ctx, c.modelClient, llm.PredictNextStructuredRequest{
+	raw, err := llm.PredictStructuredObserved(ctx, client, llm.PredictNextStructuredRequest{
 		SystemPrompt: "You compact coding conversation context into precise structured JSON.",
 		Messages:     []llm.Message{msg},
 		Schema:       jsonschema.FromType[compactionSummary](),
@@ -159,13 +144,13 @@ func (c *DefaultCompactor) generateCompactionSummary(ctx context.Context, factSh
 }
 
 func (c *DefaultCompactor) nowTime() time.Time {
-	if c.now != nil {
-		return c.now()
+	if c.Now != nil {
+		return c.Now()
 	}
 	return time.Now()
 }
 
-func safeCompactionStart(messages []llm.Message, keepRecent int) int {
+func safeCompactionStart(messages []session.Message, keepRecent int) int {
 	if keepRecent <= 0 {
 		keepRecent = defaultCompactKeepMessages
 	}
@@ -216,7 +201,7 @@ func safeCompactionStart(messages []llm.Message, keepRecent int) int {
 	}
 }
 
-func messageToolCallIDs(msg llm.Message) []string {
+func messageToolCallIDs(msg session.Message) []string {
 	assistantMsg, ok := msg.(llm.AssistantMessage)
 	if !ok {
 		return nil
@@ -230,15 +215,15 @@ func messageToolCallIDs(msg llm.Message) []string {
 	return ids
 }
 
-func buildCompactionFactSheet(messages []llm.Message, sessionPath string) string {
+func buildCompactionFactSheet(messages []session.Message, sessionPath string) string {
 	return buildCompactionFactSheetWithPreviousSummary(messages, sessionPath, true)
 }
 
-func buildPreservedCompactionFactSheet(messages []llm.Message, sessionPath string) string {
+func buildPreservedCompactionFactSheet(messages []session.Message, sessionPath string) string {
 	return buildCompactionFactSheetWithPreviousSummary(messages, sessionPath, false)
 }
 
-func buildCompactionFactSheetWithPreviousSummary(messages []llm.Message, sessionPath string, includePreviousSummary bool) string {
+func buildCompactionFactSheetWithPreviousSummary(messages []session.Message, sessionPath string, includePreviousSummary bool) string {
 	var b strings.Builder
 
 	_, _ = fmt.Fprintf(&b, "Message count being compacted: %d\n", len(messages))
@@ -250,7 +235,7 @@ func buildCompactionFactSheetWithPreviousSummary(messages []llm.Message, session
 	_, _ = fmt.Fprintln(&b, "Deterministic facts:")
 	lines := make([]string, len(messages))
 	for i, msg := range messages {
-		if user, ok := msg.(llm.UserMessage); ok && isCompactedContext(user.Text) {
+		if user, ok := msg.(session.ContextSummary); ok {
 			if includePreviousSummary {
 				lines[i] = previousCompactionSummaryFactLine(i, user.Text)
 			}
@@ -264,7 +249,7 @@ func buildCompactionFactSheetWithPreviousSummary(messages []llm.Message, session
 	used := 0
 	for i, message := range messages {
 		if includePreviousSummary {
-			if user, ok := message.(llm.UserMessage); ok && isCompactedContext(user.Text) && used+len(lines[i]) <= available {
+			if _, ok := message.(session.ContextSummary); ok && used+len(lines[i]) <= available {
 				selected[i] = true
 				used += len(lines[i])
 			}
@@ -335,9 +320,9 @@ func buildCompactionFactSheetWithPreviousSummary(messages []llm.Message, session
 	return b.String()
 }
 
-func importantCompactionFact(msg llm.Message) bool {
+func importantCompactionFact(msg session.Message) bool {
 	switch typed := msg.(type) {
-	case llm.UserMessage, llm.WorkflowResultMessage, llm.ToolOutputMessage, llm.ToolErrorMessage, llm.ErrorMessage:
+	case llm.UserMessage, session.WorkflowResultMessage, llm.ToolOutputMessage, llm.ToolErrorMessage, llm.ErrorMessage:
 		return true
 	case llm.AssistantMessage:
 		return len(messageToolCallIDs(typed)) > 0
@@ -346,7 +331,7 @@ func importantCompactionFact(msg llm.Message) bool {
 	}
 }
 
-func compactionFactLine(index int, msg llm.Message) string {
+func compactionFactLine(index int, msg session.Message) string {
 	var b strings.Builder
 	switch typedMsg := msg.(type) {
 	case llm.UserMessage:
@@ -362,7 +347,7 @@ func compactionFactLine(index int, msg llm.Message) string {
 				_, _ = fmt.Fprintf(&b, "  tool_call %s args=%s\n", call.Name, compactOneLine(string(call.Arguments), 400))
 			}
 		}
-	case llm.WorkflowResultMessage:
+	case session.WorkflowResultMessage:
 		_, _ = fmt.Fprintf(&b, "- %03d workflow %s %s input=%s summary=%s\n", index+1, typedMsg.Name, typedMsg.Status, compactOneLine(typedMsg.Input, 500), compactOneLine(typedMsg.Summary, 700))
 	case llm.ToolOutputMessage:
 		_, _ = fmt.Fprintf(&b, "- %03d tool_result %s: %s\n", index+1, typedMsg.ToolName, compactOneLine(typedMsg.ToolOutput, 4000))
@@ -380,7 +365,7 @@ func compactionFactLine(index int, msg llm.Message) string {
 		}
 		_, _ = fmt.Fprintf(&b, "- %03d error: %s\n", index+1, compactOneLine(text, 700))
 	}
-	ref, _ := historyMessage(msg)
+	ref, _ := session.HistoryMessage(msg)
 	if b.Len() > 0 {
 		_, _ = fmt.Fprintf(&b, "  source=%s\n", ref)
 	}

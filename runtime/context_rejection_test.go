@@ -2,6 +2,7 @@ package runtime_test
 
 import (
 	"context"
+	"github.com/crowl/ronin/session"
 	"strings"
 	"testing"
 
@@ -12,7 +13,7 @@ import (
 func TestHTTPContextRejectionRecovery(t *testing.T) {
 	for _, always := range []bool{false, true} {
 		client := &contextRejectingClient{always: always}
-		compactor := &fakeCompactor{messages: []llm.Message{llm.UserMessage{Text: "short"}}}
+		compactor := &fakeCompactor{messages: []session.Message{llm.UserMessage{Text: "short"}}}
 		c, err := runtime.NewConversation(runtime.ConversationConfig{ModelClient: client, Compactor: compactor})
 		if err != nil {
 			t.Fatal(err)
@@ -31,7 +32,7 @@ func TestHTTPContextRejectionRecovery(t *testing.T) {
 
 func TestContextRecoveryRejectsNonReducingCompaction(t *testing.T) {
 	client := &contextRejectingClient{}
-	compactor := &fakeCompactor{messages: []llm.Message{llm.UserMessage{Text: strings.Repeat("larger", 100)}}}
+	compactor := &fakeCompactor{messages: []session.Message{llm.UserMessage{Text: strings.Repeat("larger", 100)}}}
 	c, err := runtime.NewConversation(runtime.ConversationConfig{ModelClient: client, Compactor: compactor})
 	if err != nil {
 		t.Fatal(err)

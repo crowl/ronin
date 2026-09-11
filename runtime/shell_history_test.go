@@ -55,7 +55,7 @@ func TestShellHistoryPersistenceAndModelIsolation(t *testing.T) {
 	if len(messages) != 0 || len(loaded.History) != 3 {
 		t.Fatalf("messages=%v history=%v", messages, loaded.History)
 	}
-	compactor := &fakeCompactor{messages: []llm.Message{llm.UserMessage{Text: "summary"}}}
+	compactor := &fakeCompactor{messages: []session.Message{llm.UserMessage{Text: "summary"}}}
 	c, err = runtime.NewConversation(runtime.ConversationConfig{ModelClient: client, Compactor: compactor, SessionStore: store, Session: loaded, Messages: messages})
 	if err != nil {
 		t.Fatal(err)

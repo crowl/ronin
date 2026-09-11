@@ -51,7 +51,7 @@ func TestStructuredUsagePersistenceAndTelemetry(t *testing.T) {
 			if mode == "missing" {
 				client.result.Usage = nil
 			}
-			conv, err := runtime.NewConversation(runtime.ConversationConfig{ModelClient: client, Session: saved, SessionStore: store, SessionCost: saved.Cost, Messages: []llm.Message{llm.AssistantMessage{Usage: llm.Usage{InputTokens: 700, OutputTokens: 20}}}})
+			conv, err := runtime.NewConversation(runtime.ConversationConfig{ModelClient: client, Session: saved, SessionStore: store, SessionCost: saved.Cost, Messages: []session.Message{llm.AssistantMessage{Usage: llm.Usage{InputTokens: 700, OutputTokens: 20}}}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -79,7 +79,7 @@ func TestStructuredUsagePersistenceAndTelemetry(t *testing.T) {
 			} else if loaded.Cost.Total != want.Total || got.Cost.Total != want.Total || !loaded.Cost.Available {
 				t.Fatalf("cost persisted=%+v live=%+v want=%+v", loaded.Cost, got.Cost, want)
 			}
-			if err := store.Append(t.Context(), saved.ID, session.Event{Type: session.EventCompaction, Compacted: []llm.Message{llm.UserMessage{Text: "summary"}}}); err != nil {
+			if err := store.Append(t.Context(), saved.ID, session.Event{Type: session.EventCompaction, Compacted: []session.Message{llm.UserMessage{Text: "summary"}}}); err != nil {
 				t.Fatal(err)
 			}
 			after, effective, _, err := store.Load(t.Context(), saved.ID)

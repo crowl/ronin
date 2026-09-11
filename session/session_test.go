@@ -33,7 +33,7 @@ func TestReconstruct(t *testing.T) {
 	tests := []struct {
 		name   string
 		events []session.Event
-		want   []llm.Message
+		want   []session.Message
 	}{
 		{
 			name: "plain messages",
@@ -41,23 +41,23 @@ func TestReconstruct(t *testing.T) {
 				{Type: session.EventMessage, Message: old},
 				{Type: session.EventMessage, Message: newMessage},
 			},
-			want: []llm.Message{old, newMessage},
+			want: []session.Message{old, newMessage},
 		},
 		{
 			name: "compaction resets history",
 			events: []session.Event{
 				{Type: session.EventMessage, Message: old},
-				{Type: session.EventCompaction, Compacted: []llm.Message{compacted}},
+				{Type: session.EventCompaction, Compacted: []session.Message{compacted}},
 			},
-			want: []llm.Message{compacted},
+			want: []session.Message{compacted},
 		},
 		{
 			name: "context reset replaces history",
 			events: []session.Event{
 				{Type: session.EventMessage, Message: old},
-				{Type: session.EventContextReset, Compacted: []llm.Message{compacted}, ResetReason: "rewind"},
+				{Type: session.EventContextReset, Compacted: []session.Message{compacted}, ResetReason: "rewind"},
 			},
-			want: []llm.Message{compacted},
+			want: []session.Message{compacted},
 		},
 		{
 			name: "model change preserves history",
@@ -66,16 +66,16 @@ func TestReconstruct(t *testing.T) {
 				{Type: session.EventModelChanged},
 				{Type: session.EventMessage, Message: newMessage},
 			},
-			want: []llm.Message{old, newMessage},
+			want: []session.Message{old, newMessage},
 		},
 		{
 			name: "messages continue after compaction",
 			events: []session.Event{
 				{Type: session.EventMessage, Message: old},
-				{Type: session.EventCompaction, Compacted: []llm.Message{compacted}},
+				{Type: session.EventCompaction, Compacted: []session.Message{compacted}},
 				{Type: session.EventMessage, Message: newMessage},
 			},
-			want: []llm.Message{compacted, newMessage},
+			want: []session.Message{compacted, newMessage},
 		},
 	}
 

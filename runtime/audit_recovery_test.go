@@ -3,12 +3,13 @@ package runtime
 import (
 	"context"
 	"github.com/crowl/ronin/llm"
+	"github.com/crowl/ronin/session"
 	"strings"
 	"testing"
 )
 
 func TestCompactionRetainsLongRequirementsAndResultTail(t *testing.T) {
-	facts := buildCompactionFactSheet([]llm.Message{
+	facts := buildCompactionFactSheet([]session.Message{
 		llm.UserMessage{Text: strings.Repeat("requirement detail ", 100) + "NEVER DELETE CUSTOMER DATA"},
 		llm.ToolOutputMessage{ToolName: "shell", ToolOutput: strings.Repeat("test output ", 1000) + "FAIL: regression_test"},
 	}, "")

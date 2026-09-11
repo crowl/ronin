@@ -19,20 +19,14 @@ type Store interface {
 	Create(ctx context.Context, workingDir string, metadata Metadata) (Session, error)
 	Append(ctx context.Context, sessionID string, event Event) error
 	UpdateMetadata(ctx context.Context, sessionID string, metadata Metadata) error
-	Load(ctx context.Context, sessionID string) (Session, []llm.Message, bool, error)
-	Latest(ctx context.Context, workingDir string) (Session, []llm.Message, bool, error)
+	Load(ctx context.Context, sessionID string) (Session, []Message, bool, error)
+	Latest(ctx context.Context, workingDir string) (Session, []Message, bool, error)
 	List(ctx context.Context, workingDir string) ([]Ref, error)
 	Delete(ctx context.Context, sessionID string) error
 	Clear(ctx context.Context, workingDir string) error
-}
-
-// ForkStore atomically creates a child session with its initial journal event.
-type ForkStore interface {
+	// Fork atomically creates a child session with its initial journal event.
 	Fork(ctx context.Context, parentID string, metadata Metadata, event Event) (Session, error)
-}
-
-// ModelSwitchStore atomically records a model transition and updates metadata.
-type ModelSwitchStore interface {
+	// SwitchModel atomically records a model transition and updates metadata.
 	SwitchModel(ctx context.Context, sessionID string, metadata Metadata, event Event) error
 }
 
@@ -63,11 +57,11 @@ type Event struct {
 	Seq       int64
 	Type      EventType
 	CreatedAt time.Time
-	Message   llm.Message
-	Compacted []llm.Message
+	Message   Message
+	Compacted []Message
 	// RetainedHistory is the explicit model-visible archive carried across a
-	// rewind or fork. Nil on older events means only Compacted is retained.
-	RetainedHistory []llm.Message
+	// rewind or fork. Compacted supplies the effective context independently.
+	RetainedHistory []Message
 	ResetReason     string
 	PreviousModel   config.Model
 	Model           config.Model
@@ -147,8 +141,8 @@ func (e Event) validateShell() error {
 }
 
 // A compaction event resets the accumulated context to its effective set.
-func Reconstruct(events []Event) []llm.Message {
-	var messages []llm.Message
+func Reconstruct(events []Event) []Message {
+	var messages []Message
 	for _, event := range events {
 		switch event.Type {
 		case EventMessage:
@@ -156,7 +150,7 @@ func Reconstruct(events []Event) []llm.Message {
 				messages = append(messages, event.Message)
 			}
 		case EventCompaction, EventContextReset:
-			messages = append([]llm.Message(nil), event.Compacted...)
+			messages = append([]Message(nil), event.Compacted...)
 		case EventModelChanged:
 			// Model changes do not affect effective message history.
 		case EventShellCommand, EventShellOutput, EventShellStatus:

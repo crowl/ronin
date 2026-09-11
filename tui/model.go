@@ -146,11 +146,13 @@ func (m *appModel) populateInitialBoxes(conversation Conversation) {
 			continue
 		}
 		switch msg := event.Message.(type) {
+		case session.ContextSummary:
+			m.boxes = append(m.boxes, systemMessageBox{Text: msg.Text})
 		case llm.UserMessage:
 			m.boxes = append(m.boxes, userMessageBox{Text: msg.Text})
 		case llm.ErrorMessage:
 			m.boxes = append(m.boxes, errorMessageBox{Text: msg.Error.Error()})
-		case llm.WorkflowResultMessage:
+		case session.WorkflowResultMessage:
 			m.boxes = append(m.boxes, workflowBox{Name: boundWorkflowText(msg.Name, maxWorkflowNameSize), Input: boundWorkflowText(msg.Input, maxWorkflowDetailSize), Status: boundWorkflowText(string(msg.Status), maxWorkflowStatusSize), Summary: boundWorkflowSummary(msg.Summary), StartedAt: msg.Timestamp, EndedAt: msg.Timestamp})
 		case llm.AssistantMessage:
 			for _, b := range msg.Blocks {

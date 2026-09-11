@@ -1,6 +1,8 @@
 package runtime
 
-import "github.com/crowl/ronin/llm"
+import (
+	"github.com/crowl/ronin/session"
+)
 
 func (c *Conversation) addHistoryTool() {
 	// The runtime owns this name; caller-provided tools cannot widen its scope.
@@ -16,15 +18,15 @@ func (c *Conversation) addHistoryTool() {
 	c.toolByName[t.Name()] = t
 }
 
-func (c *Conversation) historyBefore(point RewindPoint) []llm.Message {
-	target, _ := historyMessage(c.messages[point.MessageIndex])
-	retained := retainedHistory(c.session.History)
+func (c *Conversation) historyBefore(point RewindPoint) []session.Message {
+	target, _ := session.HistoryMessage(c.messages[point.MessageIndex])
+	retained := session.RetainedHistory(c.session.History)
 	for i, message := range retained {
-		ref, _ := historyMessage(message)
+		ref, _ := session.HistoryMessage(message)
 		if ref == target {
-			return append([]llm.Message(nil), retained[:i]...)
+			return append([]session.Message(nil), retained[:i]...)
 		}
 	}
 	// Old or incomplete journals cannot safely establish a larger lineage.
-	return append([]llm.Message(nil), c.messages[:point.MessageIndex]...)
+	return append([]session.Message(nil), c.messages[:point.MessageIndex]...)
 }

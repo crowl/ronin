@@ -15,7 +15,7 @@ The database is stored at:
 - `$XDG_DATA_HOME/ronin/ronin.db` when `XDG_DATA_HOME` is set;
 - `$HOME/.local/share/ronin/ronin.db` otherwise.
 
-Session data is separate from configuration. Existing sessions from versions that used files under the configuration directory are not migrated.
+Session data is separate from configuration. The current database format is version 2. Older database formats are rejected without migration or deletion. Back up the old database and choose a fresh data directory, or explicitly reset it using the instructions below.
 
 To back up sessions, copy `ronin.db` while Ronin is not running. To reset all persisted sessions, remove `ronin.db` and its `-wal` and `-shm` companion files while Ronin is not running; Ronin recreates the database on its next start.
 
@@ -30,8 +30,7 @@ most 8 KiB per message.
 Retrieval never reads local `!` command events, unrelated sessions, or parent
 sessions. Rewind and fork persist an explicit retained archive alongside their
 context snapshot; discarded branches are excluded, including after restart.
-Older reset records without that archive conservatively expose only their
-retained context snapshot. A reference is not authorization: unavailable or
+A reference is not authorization: unavailable or
 discarded references return no matches.
 
 Compaction remains bounded and lossy, but original retained messages remain

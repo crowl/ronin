@@ -27,7 +27,7 @@ func TestSessionUsageLifecycle(t *testing.T) {
 		{llm.PredictionFinished{Usage: second}},
 		{llm.PredictionFinished{Usage: first}},
 	}}
-	conv, err := runtime.NewConversation(runtime.ConversationConfig{CWD: t.TempDir(), ModelClient: client, SessionStore: store, Session: saved, SessionCost: saved.Cost, Compactor: &fakeCompactor{messages: []llm.Message{llm.UserMessage{Text: "summary"}}}})
+	conv, err := runtime.NewConversation(runtime.ConversationConfig{CWD: t.TempDir(), ModelClient: client, SessionStore: store, Session: saved, SessionCost: saved.Cost, Compactor: &fakeCompactor{messages: []session.Message{llm.UserMessage{Text: "summary"}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestSessionUsageLifecycle(t *testing.T) {
 }
 
 func TestSessionUsageFromMessages(t *testing.T) {
-	conv, err := runtime.NewConversation(runtime.ConversationConfig{ModelClient: &fakeModelClient{}, Messages: []llm.Message{
+	conv, err := runtime.NewConversation(runtime.ConversationConfig{ModelClient: &fakeModelClient{}, Messages: []session.Message{
 		llm.AssistantMessage{Usage: llm.Usage{InputTokens: 10, OutputTokens: 2}},
 		llm.AssistantMessage{Usage: llm.Usage{InputTokens: 20, OutputTokens: 3}},
 	}})

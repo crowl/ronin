@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"github.com/crowl/ronin/session"
 	"strings"
 	"testing"
 
@@ -10,17 +11,14 @@ import (
 func TestRepeatedCompactionPreservesSummaryWithoutRecursiveFacts(t *testing.T) {
 	const fact = "Keep the migration rollback instructions"
 	client := &fakeStructuredModelClient{raw: validCompactionSummary(strings.Repeat("background ", 100) + fact)}
-	compactor, err := NewDefaultCompactor(DefaultCompactorConfig{ModelClient: client})
-	if err != nil {
-		t.Fatal(err)
-	}
-	messages, err := compactor.Compact(t.Context(), makeCompactionMessages(14))
+	compactor := &DefaultCompactor{}
+	messages, err := compactor.Compact(t.Context(), client, makeCompactionMessages(14))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for range 20 {
 		messages = append(messages, llm.UserMessage{Text: "continue"})
-		messages, err = compactor.Compact(t.Context(), messages)
+		messages, err = compactor.Compact(t.Context(), client, messages)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -30,7 +28,7 @@ func TestRepeatedCompactionPreservesSummaryWithoutRecursiveFacts(t *testing.T) {
 	if !strings.Contains(prompt, fact) {
 		t.Fatal("second compaction lost the previous summary's late fact")
 	}
-	compacted := messages[0].(llm.UserMessage).Text
+	compacted := messages[0].(session.ContextSummary).Text
 	if len(compacted) > maxCompactionFactSheetBytes {
 		t.Fatalf("repeatedly compacted context length = %d, want bounded output", len(compacted))
 	}
@@ -52,15 +50,12 @@ func TestOversizedPreviousCompactionRecoversWithBoundedSummary(t *testing.T) {
 		tailFact = "TAIL_FACT"
 	)
 	client := &fakeStructuredModelClient{raw: validCompactionSummary("goal")}
-	compactor, err := NewDefaultCompactor(DefaultCompactorConfig{ModelClient: client})
-	if err != nil {
-		t.Fatal(err)
-	}
+	compactor := &DefaultCompactor{}
 	previous := "<compacted_context>\n" + compactedContextPreamble + "\n\n# Current Goal\n" + headFact + strings.Repeat("x", maxCompactionFactSheetBytes) + tailFact + "\n</compacted_context>"
 	messages := makeCompactionMessages(14)
-	messages[0] = llm.UserMessage{Text: previous}
+	messages[0] = session.ContextSummary{Text: previous}
 
-	compacted, err := compactor.Compact(t.Context(), messages)
+	compacted, err := compactor.Compact(t.Context(), client, messages)
 	if err != nil {
 		t.Fatalf("Compact() error = %v, want oversized context recovery", err)
 	}
@@ -73,7 +68,7 @@ func TestOversizedPreviousCompactionRecoversWithBoundedSummary(t *testing.T) {
 	if len(prompt) > maxCompactionFactSheetBytes+len(compactionSummaryPromptTemplateText) {
 		t.Fatalf("compaction prompt length = %d, want bounded input", len(prompt))
 	}
-	if strings.Contains(compacted[0].(llm.UserMessage).Text, headFact) {
+	if strings.Contains(compacted[0].(session.ContextSummary).Text, headFact) {
 		t.Fatal("recovered compacted context copied the legacy summary into deterministic facts")
 	}
 }

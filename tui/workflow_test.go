@@ -2,12 +2,12 @@ package tui
 
 import (
 	"context"
+	"github.com/crowl/ronin/session"
 	"strings"
 	"testing"
 	"time"
 	"unicode/utf8"
 
-	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/tool"
 	"github.com/crowl/ronin/tui/internal/terminal"
 	"github.com/crowl/ronin/tui/internal/text"
@@ -205,7 +205,7 @@ func TestWorkflowCacheTracksStepChangesAndElapsedTime(t *testing.T) {
 
 func TestWorkflowResumedSummary(t *testing.T) {
 	model := mustWorkflowModel(t)
-	model.populateInitialBoxes(&fakeConversation{messages: []llm.Message{llm.WorkflowResultMessage{Name: "review", Input: "check", Status: llm.WorkflowStatusCompleted, Summary: "approved", Timestamp: time.Now()}}})
+	model.populateInitialBoxes(&fakeConversation{messages: []session.Message{session.WorkflowResultMessage{Name: "review", Input: "check", Status: session.WorkflowStatusCompleted, Summary: "approved", Timestamp: time.Now()}}})
 	box, ok := model.boxes[0].(workflowBox)
 	if !ok || box.Summary != "approved" || len(box.Active) != 0 || box.EndedAt.IsZero() {
 		t.Fatalf("resumed workflow = %#v", model.boxes[0])

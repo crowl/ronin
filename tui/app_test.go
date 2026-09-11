@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/crowl/ronin/session"
 	"reflect"
 	"strings"
 	"testing"
@@ -1052,13 +1053,13 @@ func (t *fakeTerminal) Size() (terminal.Size, error) {
 }
 
 type fakeConversation struct {
-	messages                []llm.Message
+	messages                []session.Message
 	newConversationErr      error
 	compactConversationErr  error
 	switchModelErr          error
 	switchReasoningLevelErr error
 	recordWorkflowResultErr error
-	recordedWorkflowResult  llm.WorkflowResultMessage
+	recordedWorkflowResult  session.WorkflowResultMessage
 
 	compactBlockUntilCancel bool
 	compactStarted          chan struct{}
@@ -1068,7 +1069,7 @@ func (c *fakeConversation) CWD() string {
 	return "."
 }
 
-func (c *fakeConversation) Messages() []llm.Message {
+func (c *fakeConversation) Messages() []session.Message {
 	return c.messages
 }
 
@@ -1096,7 +1097,7 @@ func (c *fakeConversation) ContextUsage() llm.Usage {
 	return llm.Usage{}
 }
 
-func (c *fakeConversation) RecordWorkflowResult(message llm.WorkflowResultMessage) error {
+func (c *fakeConversation) RecordWorkflowResult(message session.WorkflowResultMessage) error {
 	c.recordedWorkflowResult = message
 	if c.recordWorkflowResultErr == nil {
 		c.messages = append(c.messages, message)

@@ -36,7 +36,6 @@ func TestPredictNextGroupsConsecutiveToolResults(t *testing.T) {
 		{"user boundary", []llm.Message{first, llm.UserMessage{Text: "next"}, second}, []any{message("user", result1), message("user", text("next")), message("user", result2)}},
 		{"assistant boundary", []llm.Message{first, llm.AssistantMessage{Blocks: []llm.AssistantBlock{llm.TextBlock{Text: "next"}}}, second}, []any{message("user", result1), message("assistant", text("next")), message("user", result2)}},
 		{"empty assistant boundary", []llm.Message{first, llm.AssistantMessage{}, second}, []any{message("user", result1), message("user", result2)}},
-		{"workflow boundary", []llm.Message{first, llm.WorkflowResultMessage{}, second}, []any{message("user", result1), message("user", text((llm.WorkflowResultMessage{}).Text())), message("user", result2)}},
 		{"error boundary", []llm.Message{first, llm.ErrorMessage{Error: errors.New("stopped")}, second}, []any{message("user", result1), message("user", text("error: stopped")), message("user", result2)}},
 		{"flush before trailing text", []llm.Message{first, second, llm.UserMessage{Text: "next"}}, []any{message("user", result1, result2), message("user", text("next"))}},
 	}

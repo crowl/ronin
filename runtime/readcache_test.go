@@ -22,14 +22,14 @@ func TestReadSuppressionContextLifecycle(t *testing.T) {
 				t.Fatal(err)
 			}
 			reader := readfile.New(dir, fsutil.NewReadCache())
-			store := &fakeSessionStore{sessions: map[string]session.Session{"source": {ID: "source", WorkingDir: dir}}, messages: map[string][]llm.Message{}, activeID: "source"}
-			compactor := &fakeCompactor{messages: []llm.Message{llm.UserMessage{Text: "summary"}}}
+			store := &fakeSessionStore{sessions: map[string]session.Session{"source": {ID: "source", WorkingDir: dir}}, messages: map[string][]session.Message{}, activeID: "source"}
+			compactor := &fakeCompactor{messages: []session.Message{llm.UserMessage{Text: "summary"}}}
 			if operation == "failed compact" {
 				compactor.err = errors.New("compaction failed")
 			}
 			conversation, err := runtime.NewConversation(runtime.ConversationConfig{
 				ModelClient: &fakeModelClient{}, Tools: []runtime.Tool{reader}, Compactor: compactor,
-				SessionStore: store, Session: store.sessions["source"], Messages: []llm.Message{llm.UserMessage{Text: "request"}},
+				SessionStore: store, Session: store.sessions["source"], Messages: []session.Message{llm.UserMessage{Text: "request"}},
 			})
 			if err != nil {
 				t.Fatal(err)

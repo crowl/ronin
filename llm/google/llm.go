@@ -448,13 +448,6 @@ func convertMessagesToSteps(messages []llm.Message) ([]geminiStep, error) {
 					return nil, fmt.Errorf("unsupported assistant block %T", block)
 				}
 			}
-		case llm.WorkflowResultMessage:
-			steps = append(steps, geminiStep{
-				Type: "user_input",
-				Content: []geminiContent{
-					{Type: "text", Text: typedMsg.Text()},
-				},
-			})
 		case llm.ToolOutputMessage:
 			steps = append(steps, geminiStep{
 				Type:   "function_result",

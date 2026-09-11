@@ -30,7 +30,7 @@ func TestHistoryLineageAcrossReopenAndFork(t *testing.T) {
 	events := []session.Event{
 		{Type: session.EventMessage, Message: requirement},
 		{Type: session.EventShellCommand, ShellCommand: &session.ShellCommandEntry{ID: "local", Command: "LOCAL_SECRET"}},
-		{Type: session.EventCompaction, Compacted: []llm.Message{summary}},
+		{Type: session.EventCompaction, Compacted: []session.Message{summary}},
 		{Type: session.EventMessage, Message: cutoff},
 		{Type: session.EventMessage, Message: llm.UserMessage{Text: "DISCARDED_SECRET"}},
 	}
@@ -101,8 +101,8 @@ func TestHistoryLineageAcrossReopenAndFork(t *testing.T) {
 
 func TestHistoryPagingAndReferences(t *testing.T) {
 	message := llm.UserMessage{Text: strings.Repeat("abc", 10000)}
-	ref, want := historyMessage(message)
-	c, _ := NewConversation(ConversationConfig{ModelClient: &fakeStructuredModelClient{}, Messages: []llm.Message{message}})
+	ref, want := session.HistoryMessage(message)
+	c, _ := NewConversation(ConversationConfig{ModelClient: &fakeStructuredModelClient{}, Messages: []session.Message{message}})
 	var got strings.Builder
 	offset := 0
 	for {

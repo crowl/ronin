@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/crowl/ronin/session"
 	"sync"
 	"time"
 
-	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/tui/internal/render"
 	"github.com/crowl/ronin/tui/internal/terminal"
 	"github.com/crowl/ronin/workflow"
@@ -487,9 +487,9 @@ func (app *app) runWorkflow(ctx context.Context, item workflow.Workflow, input s
 			case <-ctx.Done():
 			}
 		})
-		message := llm.WorkflowResultMessage{
+		message := session.WorkflowResultMessage{
 			Timestamp: time.Now(), Name: result.Name, Input: result.Input,
-			Status: llm.WorkflowStatus(result.Status), Summary: boundWorkflowSummary(result.Summary),
+			Status: session.WorkflowStatus(result.Status), Summary: boundWorkflowSummary(result.Summary),
 		}
 		err := app.conversation.RecordWorkflowResult(message)
 		select {

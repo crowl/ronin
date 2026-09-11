@@ -33,7 +33,7 @@ func TestStorePersistsAcrossReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	wantMessages := []llm.Message{
+	wantMessages := []session.Message{
 		llm.UserMessage{Timestamp: createdAt, Text: "before restart"},
 		llm.AssistantMessage{
 			Timestamp: createdAt.Add(time.Second),
@@ -93,7 +93,7 @@ func TestStoreForkAndModelChange(t *testing.T) {
 		t.Fatalf("Append() error = %v", err)
 	}
 
-	retained := []llm.Message{llm.UserMessage{Text: "retained"}}
+	retained := []session.Message{llm.UserMessage{Text: "retained"}}
 	child, err := store.Fork(ctx, parent.ID, session.Metadata{
 		Title: "Parent", Model: parent.Model, ReasoningLevel: parent.ReasoningLevel,
 	}, session.Event{Type: session.EventContextReset, Compacted: retained, ResetReason: "fork"})
@@ -197,7 +197,7 @@ func TestStoreRoundTripAndCompaction(t *testing.T) {
 	if err := store.Append(ctx, created.ID, session.Event{Type: session.EventMessage, Message: priced}); err != nil {
 		t.Fatalf("Append(priced) error = %v", err)
 	}
-	if err := store.Append(ctx, created.ID, session.Event{Type: session.EventCompaction, Compacted: []llm.Message{compacted}}); err != nil {
+	if err := store.Append(ctx, created.ID, session.Event{Type: session.EventCompaction, Compacted: []session.Message{compacted}}); err != nil {
 		t.Fatalf("Append(compaction) error = %v", err)
 	}
 	last := llm.ErrorMessage{Timestamp: clock.now, Error: errors.New("after")}

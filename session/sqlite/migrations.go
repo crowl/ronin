@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-const schemaVersion = 1
+const schemaVersion = 2
 
 func migrate(ctx context.Context, db *sql.DB) error {
 	var version int
@@ -17,21 +17,13 @@ func migrate(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("database schema version %d is newer than supported version %d", version, schemaVersion)
 	}
 
-	for version < schemaVersion {
-		nextVersion := version + 1
-		var migration string
-		switch nextVersion {
-		case 1:
-			migration = schema
-		default:
-			return fmt.Errorf("missing schema migration from version %d to %d", version, nextVersion)
-		}
-		if err := applyMigration(ctx, db, nextVersion, migration); err != nil {
-			return err
-		}
-		version = nextVersion
+	if version == schemaVersion {
+		return nil
 	}
-	return nil
+	if version != 0 {
+		return fmt.Errorf("incompatible database schema version %d (expected %d); select a new session database", version, schemaVersion)
+	}
+	return applyMigration(ctx, db, schemaVersion, schema)
 }
 
 func applyMigration(ctx context.Context, db *sql.DB, version int, migration string) error {

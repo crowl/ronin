@@ -302,7 +302,7 @@ func run() (exitCode int) {
 	// buildConversation creates a conversation for an existing session record.
 	// Each conversation owns its own model client so per-session model and
 	// reasoning switches stay isolated.
-	buildConversation := func(activeSession session.Session, messages []llm.Message) (*runtime.Conversation, error) {
+	buildConversation := func(activeSession session.Session, messages []session.Message) (*runtime.Conversation, error) {
 		sessionModel, sessionLevel, err := resolveSessionModel(
 			activeSession,
 			model,
@@ -317,13 +317,7 @@ func run() (exitCode int) {
 		if err != nil {
 			return nil, fmt.Errorf("load model client: %w", err)
 		}
-		compactor, err := runtime.NewDefaultCompactor(runtime.DefaultCompactorConfig{
-			ModelClient: client,
-			Now:         time.Now,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("initialize compactor: %w", err)
-		}
+		compactor := &runtime.DefaultCompactor{}
 		return runtime.NewConversation(runtime.ConversationConfig{
 			CWD:          workingDir,
 			ModelClient:  client,
@@ -922,7 +916,7 @@ func runWorkflow(ctx context.Context, script, workingDir, input string, agent wo
 	return err
 }
 
-func startupSession(ctx context.Context, store session.Store, workingDir string, metadata session.Metadata, resume bool) (session.Session, []llm.Message, error) {
+func startupSession(ctx context.Context, store session.Store, workingDir string, metadata session.Metadata, resume bool) (session.Session, []session.Message, error) {
 	if resume {
 		activeSession, messages, ok, err := store.Latest(ctx, workingDir)
 		if err != nil {

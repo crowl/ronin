@@ -282,14 +282,14 @@ func (s *Store) UpdateMetadata(ctx context.Context, sessionID string, metadata s
 	return nil
 }
 
-func (s *Store) Load(ctx context.Context, sessionID string) (session.Session, []llm.Message, bool, error) {
+func (s *Store) Load(ctx context.Context, sessionID string) (session.Session, []session.Message, bool, error) {
 	if sessionID == "" {
 		return session.Session{}, nil, false, errors.New("session id must not be empty")
 	}
 	return s.loadSnapshot(ctx, `WHERE id = ?`, sessionID)
 }
 
-func (s *Store) Latest(ctx context.Context, workingDir string) (session.Session, []llm.Message, bool, error) {
+func (s *Store) Latest(ctx context.Context, workingDir string) (session.Session, []session.Message, bool, error) {
 	workingDir, err := cleanWorkingDir(workingDir)
 	if err != nil {
 		return session.Session{}, nil, false, err
@@ -297,7 +297,7 @@ func (s *Store) Latest(ctx context.Context, workingDir string) (session.Session,
 	return s.loadSnapshot(ctx, `WHERE working_dir = ? ORDER BY updated_at DESC, rowid DESC LIMIT 1`, workingDir)
 }
 
-func (s *Store) loadSnapshot(ctx context.Context, clause string, args ...any) (session.Session, []llm.Message, bool, error) {
+func (s *Store) loadSnapshot(ctx context.Context, clause string, args ...any) (session.Session, []session.Message, bool, error) {
 	// modernc uses a deferred BEGIN for read-only transactions, even with
 	// _txlock=immediate. WAL writers can proceed while this snapshot is read.
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
@@ -400,12 +400,12 @@ func loadSession(ctx context.Context, reader sessionReader, clause string, args 
 	return record, true, nil
 }
 
-func loadMessages(ctx context.Context, reader sessionReader, sessionID string) ([]llm.Message, llm.SessionCost, error) {
+func loadMessages(ctx context.Context, reader sessionReader, sessionID string) ([]session.Message, llm.SessionCost, error) {
 	messages, cost, _, err := loadHistory(ctx, reader, sessionID)
 	return messages, cost, err
 }
 
-func loadHistory(ctx context.Context, reader sessionReader, sessionID string) ([]llm.Message, llm.SessionCost, []session.Event, error) {
+func loadHistory(ctx context.Context, reader sessionReader, sessionID string) ([]session.Message, llm.SessionCost, []session.Event, error) {
 	rows, err := reader.QueryContext(ctx, `
 		SELECT seq, type, payload, created_at
 		FROM session_events WHERE session_id = ? ORDER BY seq`, sessionID)
@@ -415,7 +415,7 @@ func loadHistory(ctx context.Context, reader sessionReader, sessionID string) ([
 	defer rows.Close()
 
 	var events []session.Event
-	cost := llm.SessionCost{Available: true}
+	accounting := session.NewAccounting()
 	for rows.Next() {
 		var seq, createdAt int64
 		var eventType string
@@ -429,28 +429,13 @@ func loadHistory(ctx context.Context, reader sessionReader, sessionID string) ([
 		}
 		event.Seq = seq
 		event.CreatedAt = timeFromTimestamp(createdAt)
-		if event.Type == session.EventMessage {
-			if assistant, ok := event.Message.(llm.AssistantMessage); ok {
-				if !assistant.Usage.Cost.Available {
-					cost.Available = false
-				} else {
-					cost.Total += assistant.Usage.Cost.Total
-				}
-			}
-		}
-		if event.Type == session.EventUsage && event.Usage != nil {
-			if event.Usage.Usage == nil || !event.Usage.Usage.Cost.Available {
-				cost.Available = false
-			} else {
-				cost.Total += event.Usage.Usage.Cost.Total
-			}
-		}
+		accounting.Apply(event)
 		events = append(events, event)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, llm.SessionCost{}, nil, fmt.Errorf("load events for session %q: %w", sessionID, err)
 	}
-	return session.Reconstruct(events), cost, events, nil
+	return session.Reconstruct(events), accounting.Cost, events, nil
 }
 
 func cleanWorkingDir(workingDir string) (string, error) {
