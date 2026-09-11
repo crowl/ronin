@@ -84,9 +84,7 @@ func (app *app) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer func() {
 		cancel()
-		if app.cancelFunc != nil {
-			app.cancelFunc()
-		}
+		app.cancelOperation()
 		if app.renderTimer != nil {
 			app.renderTimer.Stop()
 		}
@@ -188,25 +186,25 @@ func (app *app) handleAppEvent(ctx context.Context, event event) error {
 	case conversationErrorReceived:
 		return app.applyUpdate(ctx, app.model.handleConversationError(typedEvent.Err))
 	case conversationPromptDone:
-		app.cancelFunc = nil
-		update, _ := app.model.finishPrompt(typedEvent.Cancelled, time.Now())
+		app.releaseOperation()
+		update := app.model.finishPrompt(typedEvent.Cancelled, time.Now())
 		return app.applyUpdate(ctx, update)
 	case conversationCompactionDone:
-		app.cancelFunc = nil
+		app.releaseOperation()
 		return app.applyUpdate(ctx, app.model.finishCompaction(typedEvent.Err))
 	case mcpActivationDone:
-		app.cancelFunc = nil
+		app.releaseOperation()
 		return app.applyUpdate(ctx, app.model.finishMCPActivation(typedEvent.Item, typedEvent.Activated, typedEvent.Err))
 	case shellOutputReceived:
 		app.model.shellOutput(typedEvent)
 		app.requestRender()
 	case shellCommandDone:
-		app.cancelFunc = nil
+		app.releaseOperation()
 		return app.applyUpdate(ctx, app.model.finishShell(typedEvent.Command, typedEvent.Result, typedEvent.Err))
 	case workflowEventReceived:
 		return app.applyUpdate(ctx, app.model.handleWorkflowEvent(typedEvent.Event, time.Now()))
 	case workflowDone:
-		app.cancelFunc = nil
+		app.releaseOperation()
 		return app.applyUpdate(ctx, app.model.finishWorkflow(typedEvent.Err))
 	}
 	return nil
@@ -230,9 +228,7 @@ func (app *app) applyUpdate(ctx context.Context, update modelUpdate) error {
 	case exitAction:
 		return errExitRequested
 	case cancelPromptAction:
-		if app.cancelFunc != nil {
-			app.cancelFunc()
-		}
+		app.cancelOperation()
 	case submitPromptAction:
 		app.submitPrompt(ctx, action.Prompt)
 	case runCommandAction:
@@ -265,7 +261,7 @@ func (app *app) submitPrompt(ctx context.Context, prompt string) {
 		if command == "" {
 			return
 		}
-		if app.model.working {
+		if app.model.busy() {
 			app.model.boxes = append(app.model.boxes, systemMessageBox{Text: "Shell command rejected: another operation is active"})
 			app.requestRender()
 			return
@@ -273,12 +269,12 @@ func (app *app) submitPrompt(ctx context.Context, prompt string) {
 		app.startShell(ctx, command)
 		return
 	}
-	if app.model.shellRunning {
+	if app.model.shellActive() {
 		app.model.boxes = append(app.model.boxes, systemMessageBox{Text: "Prompt rejected: a shell command is running"})
 		app.requestRender()
 		return
 	}
-	if app.model.working {
+	if app.model.busy() {
 		app.model.queueSteeringPrompt(prompt)
 		app.requestRender()
 		return
@@ -286,9 +282,7 @@ func (app *app) submitPrompt(ctx context.Context, prompt string) {
 
 	app.model.startPrompt(prompt)
 
-	promptCtx, cancel := context.WithCancel(ctx)
-
-	app.cancelFunc = cancel
+	promptCtx, cancel := app.operationContext(ctx)
 	app.requestRender()
 
 	app.workers.Go(func() {
@@ -325,7 +319,7 @@ func (app *app) submitPrompt(ctx context.Context, prompt string) {
 }
 
 func (app *app) runCommand(ctx context.Context, item menuItem, command Command) error {
-	if app.model.working {
+	if app.model.busy() {
 		if _, exit := command.(Exit); exit {
 			return errExitRequested
 		}
@@ -416,7 +410,7 @@ func (app *app) runCommand(ctx context.Context, item menuItem, command Command) 
 	case InvokeWorkflow:
 		app.model.enterWorkflowInput(typedCommand.Workflow)
 	case ActivateMCP:
-		if app.model.working {
+		if app.model.busy() {
 			err = errors.New("cannot activate an MCP server while another operation is active")
 			break
 		}
@@ -433,8 +427,7 @@ func (app *app) runCommand(ctx context.Context, item menuItem, command Command) 
 func (app *app) activateMCP(ctx context.Context, item menuItem, name string) {
 	app.model.startMCPActivation(item, name)
 
-	activateCtx, cancel := context.WithCancel(ctx)
-	app.cancelFunc = cancel
+	activateCtx, cancel := app.operationContext(ctx)
 	app.requestRender()
 
 	app.workers.Go(func() {
@@ -464,8 +457,7 @@ func (app *app) runWorkflow(ctx context.Context, item workflow.Workflow, input s
 		return
 	}
 
-	workflowCtx, cancel := context.WithCancel(ctx)
-	app.cancelFunc = cancel
+	workflowCtx, cancel := app.operationContext(ctx)
 	app.requestRender()
 	app.workers.Go(func() {
 		defer cancel()
@@ -502,8 +494,7 @@ func (app *app) runWorkflow(ctx context.Context, item workflow.Workflow, input s
 func (app *app) compactConversation(ctx context.Context, item menuItem) {
 	app.model.startCompaction(item)
 
-	compactCtx, cancel := context.WithCancel(ctx)
-	app.cancelFunc = cancel
+	compactCtx, cancel := app.operationContext(ctx)
 	app.requestRender()
 
 	app.workers.Go(func() {

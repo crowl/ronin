@@ -19,7 +19,7 @@ func TestPromptCompletionFinalizesOpenTools(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			model := newTestModel(t)
-			model.working = true
+			model.beginOperation(operationPrompt, "Working")
 			start := time.Unix(100, 0)
 			end := start.Add(2 * time.Second)
 			model.boxes = []box{
@@ -27,8 +27,8 @@ func TestPromptCompletionFinalizesOpenTools(t *testing.T) {
 				toolCallBox{ToolCallID: "completed", StartedAt: start, EndedAt: start.Add(time.Second)},
 				toolCallBox{ToolCallID: "failed", StartedAt: start, EndedAt: start.Add(time.Second), Error: "existing failure"},
 			}
-			update, _ := model.finishPrompt(cancelled, end)
-			if model.working || !update.Render {
+			update := model.finishPrompt(cancelled, end)
+			if model.busy() || !update.Render {
 				t.Fatal("completion did not clear working state and request rendering")
 			}
 			call := model.boxes[0].(toolCallBox)
@@ -71,7 +71,7 @@ func TestEscapeCancellationWithoutToolEndEvent(t *testing.T) {
 					if err := app.handleKey(t.Context(), terminal.Key{Type: terminal.KeyEscape}); err != nil {
 						t.Fatal(err)
 					}
-					if !app.model.working {
+					if !app.model.busy() {
 						t.Fatal("Escape reported completion before worker finished")
 					}
 				}

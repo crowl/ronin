@@ -55,8 +55,7 @@ func (app *app) startShell(ctx context.Context, command string) {
 	id := rand.Text()
 	cwd := app.conversation.CWD()
 	app.model.startShell(command)
-	runCtx, cancel := context.WithCancel(ctx)
-	app.cancelFunc = cancel
+	runCtx, cancel := app.operationContext(ctx)
 	app.requestRender()
 	app.workers.Go(func() {
 		defer cancel()
@@ -117,7 +116,7 @@ func (app *app) startShell(ctx context.Context, command string) {
 }
 
 func (m *appModel) shellOutput(event shellOutputReceived) {
-	if !m.shellRunning {
+	if !m.shellActive() {
 		return
 	}
 	box := m.boxes[m.shellOutputIndex].(shellOutputBox)

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"github.com/crowl/ronin/session"
 	"strings"
 	"testing"
 	"time"
@@ -27,7 +28,7 @@ func TestAppModel(t *testing.T) {
 
 	t.Run("ctrl c cancels when working", func(t *testing.T) {
 		model := newTestModel(t)
-		model.working = true
+		model.beginOperation(operationPrompt, "Working")
 
 		update, err := model.handleKey(terminal.Key{Type: terminal.KeyCtrlC})
 		if err != nil {
@@ -93,8 +94,8 @@ func TestAppModel(t *testing.T) {
 		model := newTestModel(t)
 		model.startCompaction(menuItem{Value: "/compact"})
 
-		if !model.working || model.workingLabel != "Compacting" {
-			t.Fatalf("working=%v label=%q, want Compacting", model.working, model.workingLabel)
+		if !model.busy() || model.operation.label != "Compacting" {
+			t.Fatalf("working=%v label=%q, want Compacting", model.busy(), model.operation.label)
 		}
 
 		lines, err := model.lines(80, &fakeConversation{}, time.Now())
@@ -140,7 +141,7 @@ func TestAppModel(t *testing.T) {
 			t.Fatalf("idle tick changed model: update=%#v frame=%d", update, model.indicatorFrame)
 		}
 
-		model.working = true
+		model.beginOperation(operationPrompt, "Working")
 		update = model.tickWorking()
 		if !update.Render || model.indicatorFrame != 1 {
 			t.Fatalf("working tick\nupdate: %#v\nframe: %d", update, model.indicatorFrame)
@@ -227,7 +228,7 @@ func TestAppModel(t *testing.T) {
 		model := newTestModel(t)
 		now := time.Now()
 
-		messages := []llm.Message{
+		messages := []session.Message{
 			llm.UserMessage{
 				Timestamp: now,
 				Text:      "user prompt",

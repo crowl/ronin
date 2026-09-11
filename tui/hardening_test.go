@@ -29,11 +29,11 @@ func TestUnknownToolLifecycle(t *testing.T) {
 func TestCommandsRejectedWhileBusy(t *testing.T) {
 	for _, command := range []Command{StartNewConversation{}, CompactConversation{}, SwitchModel{}, SwitchReasoningLevel{}, RewindConversation{}, ForkConversation{}, InvokeWorkflow{}, ActivateMCP{}} {
 		app := newTestApp(t, testAppConfig{})
-		app.model.working = true
+		app.model.beginOperation(operationPrompt, "Working")
 		if err := app.runCommand(t.Context(), menuItem{Value: "test"}, command); err != nil {
 			t.Fatal(err)
 		}
-		if !app.model.working || len(app.model.boxes) != 2 {
+		if !app.model.busy() || len(app.model.boxes) != 2 {
 			t.Fatalf("command %T was not rejected", command)
 		}
 	}
@@ -42,7 +42,7 @@ func TestCommandsRejectedWhileBusy(t *testing.T) {
 func TestBusyRenderingUsesSnapshot(t *testing.T) {
 	app := newTestApp(t, testAppConfig{})
 	app.conversation = &snapshotOnlyConversation{}
-	app.model.working = true
+	app.model.beginOperation(operationPrompt, "Working")
 	if err := app.render(); err != nil {
 		t.Fatal(err)
 	}

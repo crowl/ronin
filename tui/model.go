@@ -47,11 +47,9 @@ type appModel struct {
 
 	usage         llm.Usage
 	sessionUsage  llm.Usage
-	working       bool
-	workingLabel  string
+	operation     operationState
 	toolsExpanded bool
 
-	shellRunning     bool
 	shellOutputIndex int
 	steeringPrompt   string
 	workflowInput    *workflow.Workflow
@@ -231,7 +229,7 @@ func (m *appModel) handleKey(key terminal.Key) (modelUpdate, error) {
 	}
 
 	if key.Type == terminal.KeyCtrlC {
-		if m.working {
+		if m.busy() {
 			m.boxes = append(m.boxes, errorMessageBox{Text: "Cancellation requested"})
 			return modelUpdate{Render: true, Action: cancelPromptAction{}}, nil
 		}
@@ -239,12 +237,12 @@ func (m *appModel) handleKey(key terminal.Key) (modelUpdate, error) {
 	}
 
 	if key.Type == terminal.KeyEscape {
-		if m.workflowInput != nil && !m.working {
+		if m.workflowInput != nil && !m.busy() {
 			m.workflowInput = nil
 			m.editor.Clear()
 			return modelUpdate{Render: true}, nil
 		}
-		if m.working {
+		if m.busy() {
 			m.boxes = append(m.boxes, errorMessageBox{Text: "Cancellation requested"})
 			return modelUpdate{Render: true, Action: cancelPromptAction{}}, nil
 		}
@@ -333,20 +331,14 @@ func (m *appModel) applyHistoryChange(conversation Conversation, prompt, message
 }
 
 func (m *appModel) startShell(command string) {
-	m.shellRunning = true
 	m.boxes = append(m.boxes, systemMessageBox{Text: "$ " + shellText(command)})
 	m.shellOutputIndex = len(m.boxes)
 	m.boxes = append(m.boxes, shellOutputBox{})
-	m.working = true
-	m.workingLabel = "Running shell command"
-	m.indicatorFrame = 0
+	m.beginOperation(operationShell, "Running shell command")
 	m.saveError = ""
 }
 
 func (m *appModel) finishShell(_ string, result shell.Result, err error) modelUpdate {
-	m.shellRunning = false
-	m.working = false
-	m.workingLabel = ""
 	box := shellOutputBox{
 		Stdout:          shellText(result.Stdout),
 		Stderr:          shellText(result.Stderr),
@@ -370,14 +362,12 @@ func (m *appModel) finishShell(_ string, result shell.Result, err error) modelUp
 		m.boxes[m.shellOutputIndex] = box
 	}
 	m.boxLineCache.Reset()
-	return modelUpdate{Render: true}
+	return m.completeOperation(false)
 }
 
 func (m *appModel) startPrompt(prompt string) {
 	m.boxes = append(m.boxes, userMessageBox{Text: prompt})
-	m.working = true
-	m.workingLabel = "Working"
-	m.indicatorFrame = 0
+	m.beginOperation(operationPrompt, "Working")
 	m.saveError = ""
 }
 
@@ -389,9 +379,7 @@ func (m *appModel) enterWorkflowInput(item workflow.Workflow) {
 
 func (m *appModel) startWorkflow(item workflow.Workflow, input string) {
 	m.boxes = append(m.boxes, workflowBox{Name: boundWorkflowText(item.Name, maxWorkflowNameSize), Input: boundWorkflowText(input, maxWorkflowDetailSize), StartedAt: time.Now()})
-	m.working = true
-	m.workingLabel = "Running workflow " + item.Name
-	m.indicatorFrame = 0
+	m.beginOperation(operationWorkflow, "Running workflow "+item.Name)
 	m.saveError = ""
 }
 
@@ -467,8 +455,6 @@ func (b *workflowBox) recordFinishedStep(step workflowStep) {
 }
 
 func (m *appModel) finishWorkflow(err error) modelUpdate {
-	m.working = false
-	m.statusBarCache.Reset()
 	if err != nil {
 		m.saveError = err.Error()
 	}
@@ -477,30 +463,19 @@ func (m *appModel) finishWorkflow(err error) modelUpdate {
 	if index != -1 {
 		box := m.boxes[index].(workflowBox)
 		if box.Status == string(workflow.StatusCancelled) {
-			m.steeringPrompt = ""
-			return modelUpdate{Render: true}
+			return m.completeOperation(true)
 		}
 	}
 
-	nextPrompt := m.steeringPrompt
-	m.steeringPrompt = ""
-	update := modelUpdate{Render: true}
-	if nextPrompt != "" {
-		update.Action = submitPromptAction{Prompt: nextPrompt}
-	}
-	return update
+	return m.completeOperation(false)
 }
 
 func (m *appModel) startMCPActivation(item menuItem, name string) {
 	m.boxes = append(m.boxes, systemMessageBox{Text: item.Value})
-	m.working = true
-	m.workingLabel = "Activating MCP " + name
-	m.indicatorFrame = 0
+	m.beginOperation(operationMCP, "Activating MCP "+name)
 }
 
 func (m *appModel) finishMCPActivation(item menuItem, activated bool, err error) modelUpdate {
-	m.working = false
-	m.statusBarCache.Reset()
 
 	if err != nil {
 		if !errors.Is(err, context.Canceled) {
@@ -512,20 +487,12 @@ func (m *appModel) finishMCPActivation(item menuItem, activated bool, err error)
 		m.boxes = append(m.boxes, systemMessageBox{Text: item.Value + " activated"})
 	}
 
-	nextPrompt := m.steeringPrompt
-	m.steeringPrompt = ""
-	update := modelUpdate{Render: true}
-	if nextPrompt != "" {
-		update.Action = submitPromptAction{Prompt: nextPrompt}
-	}
-	return update
+	return m.completeOperation(false)
 }
 
 func (m *appModel) startCompaction(item menuItem) {
 	m.boxes = append(m.boxes, systemMessageBox{Text: item.Value})
-	m.working = true
-	m.workingLabel = "Compacting"
-	m.indicatorFrame = 0
+	m.beginOperation(operationCompaction, "Compacting")
 }
 
 func (m *appModel) startNewConversation() {
@@ -545,24 +512,15 @@ func (m *appModel) queueSteeringPrompt(prompt string) {
 }
 
 func (m *appModel) finishCompaction(err error) modelUpdate {
-	m.working = false
-	m.statusBarCache.Reset()
 
 	if err != nil && !errors.Is(err, context.Canceled) {
 		m.boxes = append(m.boxes, errorMessageBox{Text: err.Error()})
 	}
 
-	nextPrompt := m.steeringPrompt
-	m.steeringPrompt = ""
-
-	update := modelUpdate{Render: true}
-	if nextPrompt != "" {
-		update.Action = submitPromptAction{Prompt: nextPrompt}
-	}
-	return update
+	return m.completeOperation(false)
 }
 
-func (m *appModel) finishPrompt(cancelled bool, now time.Time) (modelUpdate, string) {
+func (m *appModel) finishPrompt(cancelled bool, now time.Time) modelUpdate {
 	m.flushPendingTextDelta()
 	// Cancellation and other early exits can omit individual tool-end events.
 	// The prompt worker drains all events before reporting completion, so any
@@ -581,17 +539,8 @@ func (m *appModel) finishPrompt(cancelled bool, now time.Time) (modelUpdate, str
 		}
 		m.boxes[i] = call
 	}
-	m.working = false
-	m.statusBarCache.Reset()
 
-	nextPrompt := m.steeringPrompt
-	m.steeringPrompt = ""
-
-	update := modelUpdate{Render: true}
-	if nextPrompt != "" {
-		update.Action = submitPromptAction{Prompt: nextPrompt}
-	}
-	return update, nextPrompt
+	return m.completeOperation(cancelled)
 }
 
 func (m *appModel) handleConversationEvent(event runtime.Event, now time.Time) (modelUpdate, error) {
@@ -610,15 +559,12 @@ func (m *appModel) handleConversationEvent(event runtime.Event, now time.Time) (
 	case runtime.AssistantMessageDeltaReceived:
 		m.queueTextDelta(pendingTextDeltaAssistant, typedEvent.Text)
 	case runtime.AssistantMessageEnded:
-		cost := m.sessionUsage.Cost
-		if typedEvent.Message.Usage.Cost.Available {
-			cost.Total += typedEvent.Message.Usage.Cost.Total
-		} else {
-			cost.Available = false
-		}
+		accounting := session.Accounting{Tokens: m.sessionUsage, Cost: llm.SessionCost{Total: m.sessionUsage.Cost.Total, Available: m.sessionUsage.Cost.Available}}
+		accounting.Apply(session.Event{Type: session.EventMessage, Message: typedEvent.Message})
+		cost := llm.Cost{Total: accounting.Cost.Total, Available: accounting.Cost.Available}
 		m.usage = typedEvent.Message.Usage
 		m.usage.Cost = cost
-		m.sessionUsage.AddTokens(typedEvent.Message.Usage)
+		m.sessionUsage = accounting.Tokens
 		m.sessionUsage.Cost = cost
 		m.flushPendingTextDelta()
 	case runtime.ToolExecutionStarted:
@@ -719,7 +665,7 @@ func (m *appModel) handleConversationError(err error) modelUpdate {
 }
 
 func (m *appModel) tickWorking() modelUpdate {
-	if !m.working {
+	if !m.busy() {
 		return modelUpdate{}
 	}
 	m.indicatorFrame++
@@ -738,7 +684,7 @@ func (m *appModel) recordCommand(item menuItem, err error) {
 }
 
 func (m *appModel) lines(width int, conversation Conversation, now time.Time) ([]string, error) {
-	if !m.working {
+	if !m.busy() {
 		m.usage = conversation.ContextUsage()
 		m.sessionUsage = conversation.SessionUsage()
 	}
@@ -759,11 +705,11 @@ func (m *appModel) lines(width int, conversation Conversation, now time.Time) ([
 		}.Lines(width)...)
 	}
 
-	if m.working {
+	if m.busy() {
 		appendBlankLine()
 		lines = append(lines, workingIndicator{
 			Frame: m.indicatorFrame,
-			Label: m.workingLabel,
+			Label: m.operation.label,
 		}.Lines(width)...)
 	}
 

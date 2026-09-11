@@ -94,7 +94,7 @@ func TestShellSubmissionLifecycle(t *testing.T) {
 				}
 			}
 			app.workers.Wait()
-			if app.model.working || app.model.shellRunning {
+			if app.model.busy() || app.model.shellActive() {
 				t.Fatal("busy flag not cleared")
 			}
 			if test.saveFailure {

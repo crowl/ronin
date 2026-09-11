@@ -169,7 +169,7 @@ func TestTUIRendering(t *testing.T) {
 	t.Run("working indicator advances on tick not render", func(t *testing.T) {
 		renderer := &fakeRenderer{}
 		app := newTestApp(t, testAppConfig{Renderer: renderer})
-		app.model.working = true
+		app.model.beginOperation(operationPrompt, "Working")
 
 		if err := app.render(); err != nil {
 			t.Fatalf("render initial working frame: %v", err)
@@ -622,7 +622,7 @@ func TestTUIKeyHandling(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				cancelled := false
 				app := newTestApp(t, testAppConfig{})
-				app.model.working = true
+				app.model.beginOperation(operationPrompt, "Working")
 				app.cancelFunc = func() { cancelled = true }
 
 				if err := app.handleKey(t.Context(), terminal.Key{Type: tt.keyType}); err != nil {
@@ -645,7 +645,7 @@ func TestTUIKeyHandling(t *testing.T) {
 	t.Run("escape closes menu without canceling working prompt", func(t *testing.T) {
 		cancelled := false
 		app := newTestApp(t, testAppConfig{})
-		app.model.working = true
+		app.model.beginOperation(operationPrompt, "Working")
 		app.cancelFunc = func() { cancelled = true }
 
 		if err := app.handleKey(t.Context(), terminal.Key{Type: terminal.KeyRune, Rune: '/'}); err != nil {
@@ -671,7 +671,7 @@ func TestTUIKeyHandling(t *testing.T) {
 
 	t.Run("submit prompt while working queues steering prompt", func(t *testing.T) {
 		app := newTestApp(t, testAppConfig{})
-		app.model.working = true
+		app.model.beginOperation(operationPrompt, "Working")
 
 		app.submitPrompt(t.Context(), "first")
 		app.submitPrompt(t.Context(), "second")
@@ -744,8 +744,8 @@ func TestMCPActivationCommand(t *testing.T) {
 		if err := app.runCommand(t.Context(), item, item.Command); err != nil {
 			t.Fatalf("runCommand: %v", err)
 		}
-		if !app.model.working || app.model.workingLabel != "Activating MCP gopls" {
-			t.Fatalf("working=%v label=%q", app.model.working, app.model.workingLabel)
+		if !app.model.busy() || app.model.operation.label != "Activating MCP gopls" {
+			t.Fatalf("working=%v label=%q", app.model.busy(), app.model.operation.label)
 		}
 
 		done := receiveMCPActivationDone(t, app.events, time.Second)
@@ -753,7 +753,7 @@ func TestMCPActivationCommand(t *testing.T) {
 			t.Fatalf("activation done = %#v", done)
 		}
 		app.model.finishMCPActivation(done.Item, done.Activated, done.Err)
-		if app.model.working {
+		if app.model.busy() {
 			t.Fatal("working still true after activation")
 		}
 		if activator.name != "gopls" {
@@ -802,8 +802,8 @@ func TestCompactConversationCommand(t *testing.T) {
 			t.Fatalf("runCommand: %v", err)
 		}
 
-		if !app.model.working || app.model.workingLabel != "Compacting" {
-			t.Fatalf("working=%v label=%q, want working with Compacting label", app.model.working, app.model.workingLabel)
+		if !app.model.busy() || app.model.operation.label != "Compacting" {
+			t.Fatalf("working=%v label=%q, want working with Compacting label", app.model.busy(), app.model.operation.label)
 		}
 		if app.cancelFunc == nil {
 			t.Fatalf("cancelFunc not set during compaction")
@@ -815,7 +815,7 @@ func TestCompactConversationCommand(t *testing.T) {
 		}
 
 		update := app.model.finishCompaction(done.Err)
-		if app.model.working {
+		if app.model.busy() {
 			t.Fatalf("working still true after finishCompaction")
 		}
 		if update.Action != nil {
