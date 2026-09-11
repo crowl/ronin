@@ -15,7 +15,7 @@ import (
 
 type Args struct {
 	Path     string `json:"path,omitempty" jsonschema:"Workspace-relative file or directory using forward slashes. Defaults to the workspace. Paths outside it are rejected."`
-	Query    string `json:"query,omitempty" jsonschema:"Search words or symbol name; required for code_find, unused for code_map."`
+	Query    string `json:"query,omitempty" jsonschema:"Required for code_find; unused for code_map. Prefer the exact symbol name when known (e.g. formatToken); otherwise use a few literal terms (e.g. token). All terms must match; this is not semantic search. camelCase and snake_case are split into words. Put directory scope in path, not query."`
 	Language string `json:"language,omitempty" jsonschema:"Optional language filter: go, typescript, or tsx."`
 	Kind     string `json:"kind,omitempty" jsonschema:"Optional declaration kind filter, such as function, method, type, class, interface, variable, or constant."`
 	Limit    int    `json:"limit,omitempty" jsonschema:"Maximum results, 1..100; defaults to 40. Narrow path or query when truncated."`
@@ -44,7 +44,7 @@ func (t *Tool) Name() string {
 }
 func (t *Tool) Description() string {
 	if t.find {
-		return "Find Go, TypeScript, and TSX code by symbol, path, signature, or source words. Ranked, bounded results include source ranges and SHA-256. All words must match. Refreshes a local index; parser diagnostics do not disable text search. Use read_file for exact current source before editing."
+		return "Find Go, TypeScript, and TSX code by symbol, path, signature, or literal source terms, not semantic descriptions. Use path for directory scope (e.g. path=tui, query=formatToken). Exact symbol names rank first; camelCase and snake_case are also searchable as separate words. All query terms must match; if no results, try fewer terms rather than guessed synonyms. Ranked, bounded results include source ranges and SHA-256. Refreshes a local index; parser diagnostics do not disable text search. Use read_file for exact current source before editing."
 	}
 	return "Map Go, TypeScript, and TSX workspace files and declarations without reading full bodies. Use path and depth to drill down; narrow scope if truncated. Includes source ranges, SHA-256, and indexing diagnostics. Respects nested .gitignore rules and excludes dependency/build directories and symlinks."
 }

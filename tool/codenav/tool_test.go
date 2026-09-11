@@ -51,6 +51,48 @@ func TestNavigationTools(t *testing.T) {
 	}
 }
 
+func TestFindDocumentedQueryBehavior(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+	root := t.TempDir()
+	dir := filepath.Join(root, "tui")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	source := "package tui\nfunc formatToken() {}\nfunc formatTokenCount() {}\nfunc statusBarTokenCountText() {}\n"
+	if err := os.WriteFile(filepath.Join(dir, "presenter.go"), []byte(source), 0600); err != nil {
+		t.Fatal(err)
+	}
+	find := codenav.NewFind(root)
+	for _, tt := range []struct{ query, wantName, wantMatch string }{
+		{"formatToken", "formatToken", "exact_name"},
+		{"format token", "formatToken", "name"},
+		{"status token", "statusBarTokenCountText", "name"},
+		{"render token", "", ""},
+	} {
+		t.Run(tt.query, func(t *testing.T) {
+			args, err := json.Marshal(codenav.Args{Path: "tui", Query: tt.query, Kind: "function"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := find.Call(t.Context(), args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			entries := result.(codenav.Result).Entries
+			if tt.wantName == "" {
+				if len(entries) != 0 {
+					t.Fatalf("nonliteral query matched: %+v", entries)
+				}
+				return
+			}
+			if len(entries) == 0 || entries[0].Name != tt.wantName || entries[0].Match != tt.wantMatch {
+				t.Fatalf("results = %+v, want first %s (%s)", entries, tt.wantName, tt.wantMatch)
+			}
+		})
+	}
+}
+
 func TestInvalidArgumentsAndCancellation(t *testing.T) {
 	tool := codenav.NewFind(t.TempDir())
 	for _, raw := range []string{`{}`, `{"query":"x","path":"../"}`, `{"query":"x","limit":101}`, `{"query":"x","language":"rust"}`, `{"query":"x","kind":"unknown"}`, `{"query":"x","extra":true}`} {
