@@ -199,7 +199,7 @@ func TestTUIRendering(t *testing.T) {
 		}
 	})
 
-	t.Run("status bar abbreviates thousands in token counts and context window", func(t *testing.T) {
+	t.Run("status bar abbreviates thousands and millions in token counts and context window", func(t *testing.T) {
 		cases := []struct {
 			name   string
 			tokens int
@@ -210,6 +210,10 @@ func TestTUIRendering(t *testing.T) {
 			{name: "one decimal", tokens: 2356, want: "2.3K"},
 			{name: "trailing hundred", tokens: 2900, want: "2.9K"},
 			{name: "ten thousands", tokens: 14678, want: "14.6K"},
+			{name: "below million", tokens: 999_999, want: "999.9K"},
+			{name: "exact million", tokens: 1_000_000, want: "1.0M"},
+			{name: "million decimal", tokens: 1_234_567, want: "1.2M"},
+			{name: "tens of millions", tokens: 27_579_600, want: "27.5M"},
 		}
 
 		for _, tc := range cases {

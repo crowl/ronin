@@ -491,6 +491,9 @@ func statusBarTokenCountText(tokens int) string {
 	if tokens < 1000 {
 		return fmt.Sprintf("%d", tokens)
 	}
+	if tokens >= 1_000_000 {
+		return fmt.Sprintf("%d.%dM", tokens/1_000_000, (tokens%1_000_000)/100_000)
+	}
 	return fmt.Sprintf("%d.%dK", tokens/1000, (tokens%1000)/100)
 }
 
