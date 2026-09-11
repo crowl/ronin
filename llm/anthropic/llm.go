@@ -49,9 +49,11 @@ func NewLLM(cfg LLMConfig) (*LLM, error) {
 	if cfg.BaseURL == "" {
 		cfg.BaseURL = defaultBaseURL
 	}
-	if cfg.Client == nil {
-		cfg.Client = http.DefaultClient
+	client, err := httpretry.NewClient(cfg.Client)
+	if err != nil {
+		return nil, err
 	}
+	cfg.Client = client
 	return &LLM{
 		baseURL:        cfg.BaseURL,
 		apiKey:         cfg.APIKey,
@@ -207,7 +209,7 @@ func (s *LLM) stream(ctx context.Context, req llm.PredictNextRequest, events cha
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 16*1024))
-		return fmt.Errorf("anthropic status %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+		return llm.HTTPError("anthropic", resp.StatusCode, string(data))
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
@@ -244,7 +246,7 @@ func (s *LLM) stream(ctx context.Context, req llm.PredictNextRequest, events cha
 		return fmt.Errorf("read anthropic stream: %w", err)
 	}
 	if !state.finished {
-		return errors.New("anthropic stream ended before message_stop")
+		return fmt.Errorf("anthropic stream ended before message_stop: %w", io.ErrUnexpectedEOF)
 	}
 	return nil
 }

@@ -44,9 +44,11 @@ func NewLLM(cfg LLMConfig) (*LLM, error) {
 	if cfg.BaseURL == "" {
 		cfg.BaseURL = defaultBaseURL
 	}
-	if cfg.Client == nil {
-		cfg.Client = http.DefaultClient
+	client, err := httpretry.NewClient(cfg.Client)
+	if err != nil {
+		return nil, err
 	}
+	cfg.Client = client
 	return &LLM{
 		baseURL:        cfg.BaseURL,
 		apiKey:         cfg.APIKey,
@@ -201,7 +203,7 @@ func (s *LLM) stream(ctx context.Context, req llm.PredictNextRequest, events cha
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 16*1024))
-		return fmt.Errorf("gemini status %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+		return llm.HTTPError("gemini", resp.StatusCode, string(data))
 	}
 
 	if err := sendEvent(ctx, events, llm.PredictionStarted{}); err != nil {
@@ -246,7 +248,7 @@ func (s *LLM) stream(ctx context.Context, req llm.PredictNextRequest, events cha
 	}
 
 	if !state.finished {
-		return errors.New("gemini stream ended before interaction completion")
+		return fmt.Errorf("gemini stream ended before interaction completion: %w", io.ErrUnexpectedEOF)
 	}
 	return nil
 }

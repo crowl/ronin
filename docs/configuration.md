@@ -1,5 +1,26 @@
 # Configuration
 
+## Provider deadlines
+
+LLM requests default to a 60-second response-header deadline and a 5-minute
+idle deadline while waiting for response-body data. There is no fixed total
+generation deadline. These apply to all built-in provider adapters, including
+OpenAI-compatible providers and structured generation.
+
+Override them with Go-duration environment variables:
+
+```sh
+export RONIN_LLM_HEADER_TIMEOUT=60s
+export RONIN_LLM_IDLE_TIMEOUT=5m
+```
+
+Use `0s` to disable either deadline. Negative or invalid durations are rejected.
+Idle time measures a blocked body read, not time spent processing received data.
+Cancellation remains available independently. Timeout failures are reported;
+they do not automatically replay partially observed generations.
+
+## Configuration file
+
 Ronin creates `config.json` in `$XDG_CONFIG_HOME/ronin`, or in `$HOME/.config/ronin` when `XDG_CONFIG_HOME` is unset. It contains the default model, reasoning level, maximum turns, and optional MCP servers.
 
 Ronin merges an embedded provider and model catalog with optional `providers` overrides in `config.json`. Overrides are keyed by provider and model name, so a small pricing correction does not require copying the full catalog:

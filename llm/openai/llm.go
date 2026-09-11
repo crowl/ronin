@@ -45,9 +45,11 @@ func NewLLM(cfg LLMConfig) (*LLM, error) {
 	if cfg.BaseURL == "" {
 		cfg.BaseURL = defaultBaseURL
 	}
-	if cfg.Client == nil {
-		cfg.Client = http.DefaultClient
+	client, err := httpretry.NewClient(cfg.Client)
+	if err != nil {
+		return nil, err
 	}
+	cfg.Client = client
 	return &LLM{
 		baseURL:        cfg.BaseURL,
 		apiKey:         cfg.APIKey,
@@ -312,6 +314,9 @@ func (s *LLM) readStructuredStream(r io.Reader, result *llm.StructuredResult) (s
 			}
 			finished = finished || terminal
 			dataLines = nil
+			if finished {
+				break
+			}
 			continue
 		}
 		if strings.HasPrefix(line, ":") {
@@ -332,7 +337,7 @@ func (s *LLM) readStructuredStream(r io.Reader, result *llm.StructuredResult) (s
 		return "", fmt.Errorf("read %s structured stream: %w", s.provider(), err)
 	}
 	if !finished {
-		return "", fmt.Errorf("%s structured stream ended before response.completed", s.provider())
+		return "", fmt.Errorf("%s structured stream ended before response.completed: %w", s.provider(), io.ErrUnexpectedEOF)
 	}
 	return text.String(), nil
 }
@@ -395,7 +400,7 @@ func (s *LLM) stream(ctx context.Context, req llm.PredictNextRequest, events cha
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 16*1024))
-		return fmt.Errorf("%s status %d: %s", s.provider(), resp.StatusCode, strings.TrimSpace(string(data)))
+		return llm.HTTPError(s.provider(), resp.StatusCode, string(data))
 	}
 
 	if err := sendEvent(ctx, events, llm.PredictionStarted{}); err != nil {
@@ -415,6 +420,9 @@ func (s *LLM) stream(ctx context.Context, req llm.PredictNextRequest, events cha
 				return err
 			}
 			dataLines = nil
+			if state.finished {
+				break
+			}
 			continue
 		}
 		if strings.HasPrefix(line, ":") {
@@ -436,7 +444,7 @@ func (s *LLM) stream(ctx context.Context, req llm.PredictNextRequest, events cha
 	}
 
 	if !state.finished {
-		return fmt.Errorf("%s stream ended before response.completed", s.provider())
+		return fmt.Errorf("%s stream ended before response.completed: %w", s.provider(), io.ErrUnexpectedEOF)
 	}
 	return nil
 }
