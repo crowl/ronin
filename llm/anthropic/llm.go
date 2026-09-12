@@ -107,13 +107,7 @@ func (s *LLM) PredictNext(ctx context.Context, req llm.PredictNextRequest) (<-ch
 	})
 }
 
-func (s *LLM) PredictNextStructured(ctx context.Context, req llm.PredictNextStructuredRequest) (result *llm.StructuredResult, err error) {
-	result = &llm.StructuredResult{}
-	defer func() {
-		if result != nil && result.Usage != nil {
-			result.Usage.Cost = llm.EstimateCost(s.model, *result.Usage)
-		}
-	}()
+func (s *LLM) PredictNextStructured(ctx context.Context, req llm.PredictNextStructuredRequest) (*llm.StructuredResult, error) {
 	payload, err := s.buildStructuredPayload(req)
 	if err != nil {
 		return nil, err
@@ -124,6 +118,18 @@ func (s *LLM) PredictNextStructured(ctx context.Context, req llm.PredictNextStru
 		return nil, fmt.Errorf("marshal anthropic structured request: %w", err)
 	}
 
+	return streamretry.PredictStructured(ctx, func(attemptCtx context.Context) (*llm.StructuredResult, error) {
+		return s.predictStructuredAttempt(attemptCtx, body)
+	})
+}
+
+func (s *LLM) predictStructuredAttempt(ctx context.Context, body []byte) (result *llm.StructuredResult, err error) {
+	result = &llm.StructuredResult{}
+	defer func() {
+		if result != nil && result.Usage != nil {
+			result.Usage.Cost = llm.EstimateCost(s.model, *result.Usage)
+		}
+	}()
 	resp, err := httpretry.Do(ctx, s.client, func() (*http.Request, error) {
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL, bytes.NewReader(body))
 		if err != nil {

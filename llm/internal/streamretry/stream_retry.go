@@ -46,6 +46,28 @@ func Predict(ctx context.Context, eventBuffer int, attempt func(context.Context,
 	return events, errs
 }
 
+// PredictStructured retries unexpected EOFs using the streaming retry policy.
+// Unlike visible streaming output, buffered structured output can be discarded
+// and retried even after partial text arrives. Each attempt must own fresh state
+// and release its resources before returning. Only the final result is returned.
+func PredictStructured(ctx context.Context, attempt func(context.Context) (*llm.StructuredResult, error)) (*llm.StructuredResult, error) {
+	for attemptNumber := 1; ; attemptNumber++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		result, err := attempt(ctx)
+		if ctx.Err() != nil {
+			return result, ctx.Err()
+		}
+		if !errors.Is(err, io.ErrUnexpectedEOF) || attemptNumber == maxAttempts {
+			return result, err
+		}
+		if err := sleep(ctx, retryDelay(attemptNumber)); err != nil {
+			return nil, err
+		}
+	}
+}
+
 func runAttempt(ctx context.Context, events chan<- llm.PredictionEvent, started *bool, attempt func(context.Context, chan<- llm.PredictionEvent) error) (bool, error) {
 	attemptCtx, cancel := context.WithCancel(ctx)
 	defer cancel()

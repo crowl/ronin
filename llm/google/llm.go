@@ -110,6 +110,12 @@ func (s *LLM) PredictNextStructured(ctx context.Context, req llm.PredictNextStru
 		return nil, fmt.Errorf("marshal gemini structured request: %w", err)
 	}
 
+	return streamretry.PredictStructured(ctx, func(attemptCtx context.Context) (*llm.StructuredResult, error) {
+		return s.predictStructuredAttempt(attemptCtx, body)
+	})
+}
+
+func (s *LLM) predictStructuredAttempt(ctx context.Context, body []byte) (*llm.StructuredResult, error) {
 	endpoint := fmt.Sprintf(
 		"%s/interactions",
 		strings.TrimRight(s.baseURL, "/"),

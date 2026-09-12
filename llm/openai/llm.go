@@ -114,6 +114,12 @@ func (s *LLM) PredictNextStructured(ctx context.Context, req llm.PredictNextStru
 		return nil, fmt.Errorf("marshal %s structured request: %w", s.provider(), err)
 	}
 
+	return streamretry.PredictStructured(ctx, func(attemptCtx context.Context) (*llm.StructuredResult, error) {
+		return s.predictStructuredAttempt(attemptCtx, body)
+	})
+}
+
+func (s *LLM) predictStructuredAttempt(ctx context.Context, body []byte) (*llm.StructuredResult, error) {
 	resp, err := httpretry.Do(ctx, s.client, func() (*http.Request, error) {
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL, bytes.NewReader(body))
 		if err != nil {
