@@ -10,6 +10,10 @@ Named workflows placed in `<config dir>/workflows` are available from the TUI. S
 
 The concurrent example allows read-only design and planning on a dirty tree, but refuses to create worktrees unless the primary branch and `HEAD` are unchanged and the tree is clean, including untracked files. Managed worktree agents receive workspace-confined file tools but no arbitrary shell tool; workflow-owned Git operations remain available through the Lua API. Failed runs retain useful branches and dirty worktrees for recovery. Successful runs retain the accepted integration branch as the local result, remove temporary worktrees and lane branches, and leave the starting branch and checkout unchanged. Nothing is pushed automatically.
 
+### Read-only agents
+
+`ronin.run_agent` and `ronin.start_agent` accept `read_only = true`. A read-only agent receives only read and code-navigation tools, never file mutation, shell, or MCP tools, and its system prompt instructs it not to change state. In addition, the workflow fingerprints the Git repository (HEAD, branch, index, worktree, and untracked files) before and after the agent runs and fails the invocation if anything changed. That check is a detector, not a sandbox: it covers the repository the agent was pointed at, not paths outside it, and by the time it fails the change has already happened. Treat `read_only` as enforcing tool policy and catching accidents, not as isolation from a hostile agent.
+
 Invoking this example authorizes task-scoped staging and Conventional Commits by the workflow in managed worktrees; separate commit approval is not required. The final report identifies the result branch, final commit, lane and repair commit counts, implementation summary, verification evidence, and checks not run. Managed agents cannot run arbitrary shell commands, so review approval alone is not evidence that tests passed.
 
 ### Finalizing a result branch
