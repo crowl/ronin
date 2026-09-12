@@ -166,7 +166,12 @@ func waitAnyFunction(rt *agentRuntime) lua.Function {
 		}
 		job := jobs[selected]
 		job.consumed = true
-		pushAgentResult(state, job.result, job.invocation, job.err)
+		// A consumed job is retained as a tombstone so a repeated handle is
+		// reported as "already consumed" rather than "unknown"; its result is
+		// released so long-running scripts do not accumulate transcripts.
+		result, err := job.result, job.err
+		job.result, job.err = AgentResult{}, nil
+		pushAgentResult(state, result, job.invocation, err)
 		return 1
 	}
 }

@@ -2,7 +2,7 @@ package tui
 
 type noMenuEffect struct{}
 
-type menuItemChange struct{ menuItem menuItem }
+type menuItemChange struct{}
 
 type menuItemPreSelected struct{ MenuItem menuItem }
 

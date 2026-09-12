@@ -404,7 +404,7 @@ func (rt *worktreeRuntime) waitForGitLock() error {
 			return fmt.Errorf("inspect Git index lock: %w", err)
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("Git index remains locked at %q", lockPath)
+			return fmt.Errorf("git index remains locked at %q", lockPath)
 		}
 		timer := time.NewTimer(50 * time.Millisecond)
 		select {
@@ -1049,11 +1049,11 @@ func validateConventionalCommit(message string) error {
 	}
 	description := matches[4]
 	if strings.HasSuffix(description, ".") {
-		return fmt.Errorf("Conventional Commit description must not end with a period")
+		return fmt.Errorf("conventional commit description must not end with a period")
 	}
 	first := description[0]
 	if first < 'a' || first > 'z' {
-		return fmt.Errorf("Conventional Commit description must start with a lowercase letter")
+		return fmt.Errorf("conventional commit description must start with a lowercase letter")
 	}
 	if matches[3] == "!" && !strings.Contains(message, "\nBREAKING CHANGE: ") {
 		return fmt.Errorf("breaking Conventional Commit requires a BREAKING CHANGE footer")

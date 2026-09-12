@@ -311,7 +311,7 @@ func (s *LLM) buildStructuredPayload(req llm.PredictNextStructuredRequest) (*ant
 		return nil, errors.New("structured output schema is required")
 	}
 	if s.model.ReasoningMode == llm.ReasoningModeBudget && !s.model.SupportsReasoning(llm.ReasoningLevelOff) {
-		return nil, fmt.Errorf("Anthropic structured output is unsupported for always-thinking model %q", s.model.Name)
+		return nil, fmt.Errorf("anthropic structured output is unsupported for always-thinking model %q", s.model.Name)
 	}
 	messages, err := convertMessages(req.Messages)
 	if err != nil {

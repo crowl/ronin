@@ -196,46 +196,6 @@ func (t *Terminal) Size() (Size, error) {
 
 const pendingEscapeInputTimeout = 50 * time.Millisecond
 
-func (t *Terminal) readPendingEscapeInput(ctx context.Context, data []byte) ([]byte, error) {
-	for shouldReadPendingEscapeInput(data) {
-		readCtx, cancel := context.WithTimeout(ctx, pendingEscapeInputTimeout)
-		more, err := t.readInput(readCtx)
-		cancel()
-		if err != nil {
-			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-				return data, nil
-			}
-			return nil, err
-		}
-		data = append(data, more...)
-	}
-	return data, nil
-}
-
-func shouldReadPendingEscapeInput(data []byte) bool {
-	if len(data) == 0 || data[0] != Escape[0] {
-		return false
-	}
-	if len(data) == 1 {
-		return true
-	}
-	if bytes.HasPrefix(data, []byte(PasteStart)) && !bytes.Contains(data, []byte(PasteEnd)) {
-		return true
-	}
-	if data[1] == '[' {
-		for i := 2; i < len(data); i++ {
-			if isANSIFinalByte(data[i]) {
-				return false
-			}
-		}
-		return true
-	}
-	if data[1] == 'O' {
-		return len(data) < 3
-	}
-	return false
-}
-
 func isANSIFinalByte(b byte) bool {
 	return b >= 0x40 && b <= 0x7e
 }
