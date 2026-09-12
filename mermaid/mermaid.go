@@ -1,4 +1,4 @@
-// Package mermaid renders a bounded subset of Mermaid flowcharts as Unicode text.
+// Package mermaid renders a bounded subset of Mermaid diagrams as Unicode text.
 // It uses only the Go standard library and performs no I/O.
 package mermaid
 
@@ -37,7 +37,7 @@ type parser struct {
 	ids    map[string]int
 }
 
-// Render converts a flowchart to unstyled Unicode text, without a trailing newline.
+// Render converts a flowchart or sequence diagram to unstyled Unicode text, without a trailing newline.
 // maxWidth must be positive. Invalid or unsupported syntax, resource limits, and
 // layouts that cannot be routed or fit within maxWidth return an error and no text.
 // Ordering is deterministic. Calls share no mutable state.
@@ -47,6 +47,13 @@ func Render(source string, maxWidth int) (string, error) {
 	}
 	if len(source) > maxInput || !utf8.ValidString(source) {
 		return "", fmt.Errorf("mermaid: input too large or invalid UTF-8")
+	}
+	if sequenceHeader(source) {
+		diagram, err := parseSequence(source)
+		if err != nil {
+			return "", err
+		}
+		return renderSequence(diagram, maxWidth)
 	}
 	p := parser{source: source, ids: make(map[string]int)}
 	g, err := p.parse()
