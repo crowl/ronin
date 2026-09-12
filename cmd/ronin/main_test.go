@@ -20,7 +20,6 @@ import (
 	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/llm/anthropic"
 	"github.com/crowl/ronin/llm/openai"
-	"github.com/crowl/ronin/llm/xai"
 	"github.com/crowl/ronin/runtime"
 	"github.com/crowl/ronin/session"
 )
@@ -308,7 +307,7 @@ func TestSetupProvidersCustomProviderConfiguration(t *testing.T) {
 			if err != nil {
 				t.Fatalf("setupProviders() error = %v", err)
 			}
-			client, err := llm.LoadModelClient(xai.Grok46, llm.ReasoningLevelOff)
+			client, err := llm.LoadModelClient(llm.Model{Provider: "xai", Name: "grok-4.6", ContextWindow: 500_000}, llm.ReasoningLevelOff)
 			if err != nil {
 				t.Fatalf("load xAI model: %v", err)
 			}
