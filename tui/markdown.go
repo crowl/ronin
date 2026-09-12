@@ -4,6 +4,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/crowl/ronin/mermaid"
 	"github.com/crowl/ronin/tui/internal/terminal"
 	"github.com/crowl/ronin/tui/internal/text"
 )
@@ -13,7 +14,19 @@ func markdownLines(input string, width int, styles textStyles) []string {
 
 	var lines []string
 	inCodeBlock := false
-	for _, raw := range inputLines {
+	var fenceMarker byte
+	fenceLength := 0
+	for i := 0; i < len(inputLines); i++ {
+		raw := inputLines[i]
+		if !inCodeBlock {
+			if diagram, end, ok := mermaidFence(inputLines, i, width); ok {
+				for _, line := range strings.Split(diagram, "\n") {
+					lines = append(lines, applyInlineStyle(line, styles.code, styles.normal))
+				}
+				i = end
+				continue
+			}
+		}
 		trimmed := strings.TrimSpace(raw)
 		if trimmed == "" {
 			if len(lines) > 0 && lines[len(lines)-1] != "" {
@@ -22,8 +35,15 @@ func markdownLines(input string, width int, styles textStyles) []string {
 			continue
 		}
 
-		if isCodeFence(trimmed) {
+		if isCodeFence(trimmed) && (!inCodeBlock || closesFence(trimmed, fenceMarker, fenceLength)) {
 			lines = append(lines, styledWrap("", raw, width, styles.muted, styles.normal)...)
+			if !inCodeBlock {
+				fenceMarker = trimmed[0]
+				fenceLength = 0
+				for fenceLength < len(trimmed) && trimmed[fenceLength] == fenceMarker {
+					fenceLength++
+				}
+			}
 			inCodeBlock = !inCodeBlock
 			continue
 		}
@@ -73,6 +93,44 @@ func markdownLines(input string, width int, styles textStyles) []string {
 	}
 
 	return lines[start:end]
+}
+
+// mermaidFence requires a matching closing fence before attempting rendering.
+// Failed rendering leaves the existing code-block presentation unchanged.
+func mermaidFence(lines []string, start, width int) (string, int, bool) {
+	opening := strings.TrimSpace(lines[start])
+	if len(opening) < 3 || opening[0] != '`' && opening[0] != '~' {
+		return "", 0, false
+	}
+	marker := opening[0]
+	count := 0
+	for count < len(opening) && opening[count] == marker {
+		count++
+	}
+	if count < 3 || strings.TrimSpace(opening[count:]) != "mermaid" {
+		return "", 0, false
+	}
+	for end := start + 1; end < len(lines); end++ {
+		closing := strings.TrimSpace(lines[end])
+		n := 0
+		for n < len(closing) && closing[n] == marker {
+			n++
+		}
+		if n < count || strings.TrimSpace(closing[n:]) != "" {
+			continue
+		}
+		diagram, err := mermaid.Render(strings.Join(lines[start+1:end], "\n"), width)
+		return diagram, end, err == nil
+	}
+	return "", 0, false
+}
+
+func closesFence(line string, marker byte, length int) bool {
+	n := 0
+	for n < len(line) && line[n] == marker {
+		n++
+	}
+	return n >= length && strings.TrimSpace(line[n:]) == ""
 }
 
 func isCodeFence(trimmed string) bool {
