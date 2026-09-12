@@ -28,6 +28,7 @@ import (
 const (
 	initializationTimeout           = 15 * time.Second
 	shutdownTimeout                 = 5 * time.Second
+	pipeDrainTimeout                = 2 * time.Second
 	cancellationNotificationTimeout = 5 * time.Second
 	maxMessageBytes                 = 16 << 20
 	maxServerLogBytes               = 10 << 20
@@ -285,6 +286,10 @@ func startStdioTransport(cwd string, cfg ServerConfig) (*stdioTransport, error) 
 	cmd := exec.Command(cfg.Command, cfg.Args...)
 	cmd.Dir = cwd
 	cmd.Env = environment(cfg.Env)
+	// Stderr is a Go writer, so Wait blocks until the pipe reaches EOF. A
+	// grandchild that inherited stderr (launchers such as npx or uvx) would
+	// otherwise keep Close waiting forever after the server itself exited.
+	cmd.WaitDelay = pipeDrainTimeout
 
 	serverLog, err := openServerLog(cfg.LogPath)
 	if err != nil {
@@ -332,6 +337,11 @@ func (t *stdioTransport) ReadMessage() ([]byte, error) {
 	return nil, io.EOF
 }
 
+// errTransportBroken reports that a transport can no longer carry messages.
+// Cancelling a blocked stdio write is the typical cause: the server stopped
+// draining stdin, and unblocking the writer requires closing the pipe.
+var errTransportBroken = errors.New("MCP transport is broken")
+
 func (t *stdioTransport) WriteMessage(ctx context.Context, data []byte) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -358,9 +368,12 @@ func (t *stdioTransport) WriteMessage(ctx context.Context, data []byte) error {
 			return nil
 		default:
 		}
+		// The write is stuck and a partial frame may already be on the pipe;
+		// closing stdin is the only way to release the writer, and it ends
+		// the connection. Report that explicitly so the session is retired.
 		_ = t.stdin.Close()
 		<-result
-		return ctx.Err()
+		return fmt.Errorf("%w: %w", errTransportBroken, ctx.Err())
 	}
 }
 
@@ -605,6 +618,11 @@ func (s *session) writeContext(ctx context.Context, message any) error {
 		return fmt.Errorf("encode MCP message: %w", err)
 	}
 	if err := s.transport.WriteMessage(ctx, data); err != nil {
+		if errors.Is(err, errTransportBroken) {
+			// No further request can be delivered; fail everything in flight
+			// now instead of letting each later call discover it separately.
+			s.failPending(err)
+		}
 		return err
 	}
 	return nil
@@ -630,7 +648,10 @@ func (s *session) readLoop() {
 			return
 		}
 		if envelope.Method != "" {
-			s.handleServerMessage(envelope.ID, envelope.Method)
+			// Replies are written off the read loop so a server that is itself
+			// blocked writing to us cannot stall response delivery. Each reply
+			// is bounded by its own timeout.
+			go s.handleServerMessage(envelope.ID, envelope.Method)
 			continue
 		}
 
