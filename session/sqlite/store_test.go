@@ -128,6 +128,39 @@ func TestStoreForkAndModelChange(t *testing.T) {
 	}
 }
 
+func TestStoreDeleteDetachesForks(t *testing.T) {
+	store := openStore(t, time.Now)
+	ctx := context.Background()
+	workingDir := t.TempDir()
+	parent, err := store.Create(ctx, workingDir, session.Metadata{Title: "Parent"})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	child, err := store.Fork(ctx, parent.ID, session.Metadata{Title: "Child"}, session.Event{Type: session.EventContextReset, ResetReason: "fork"})
+	if err != nil {
+		t.Fatalf("Fork() error = %v", err)
+	}
+
+	if err := store.Delete(ctx, parent.ID); err != nil {
+		t.Fatalf("Delete(parent) error = %v", err)
+	}
+
+	loaded, _, ok, err := store.Load(ctx, child.ID)
+	if err != nil || !ok {
+		t.Fatalf("Load(child) ok = %v, error = %v", ok, err)
+	}
+	if loaded.ParentID != "" {
+		t.Fatalf("child ParentID = %q after parent deletion, want detached", loaded.ParentID)
+	}
+	refs, err := store.List(ctx, workingDir)
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(refs) != 1 || refs[0].ID != child.ID || refs[0].ParentID != "" {
+		t.Fatalf("List() = %#v, want only the detached child", refs)
+	}
+}
+
 func TestStoreConcurrentAppendAcrossConnectionsPreservesEveryEvent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ronin.db")
 	ctx := context.Background()

@@ -352,23 +352,44 @@ func (s *Store) List(ctx context.Context, workingDir string) ([]session.Ref, err
 	return refs, nil
 }
 
+// Delete removes a session and its journal. Forks of the session are kept
+// and become root sessions; deleting an unknown session is not an error.
 func (s *Store) Delete(ctx context.Context, sessionID string) error {
 	if sessionID == "" {
 		return errors.New("session id must not be empty")
 	}
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE id = ?`, sessionID); err != nil {
-		return fmt.Errorf("delete session %q: %w", sessionID, err)
-	}
-	return nil
+	return s.deleteSessions(ctx, fmt.Sprintf("delete session %q", sessionID), `id = ?`, sessionID)
 }
 
+// Clear removes every session recorded for workingDir, detaching any forks
+// that live elsewhere.
 func (s *Store) Clear(ctx context.Context, workingDir string) error {
 	workingDir, err := cleanWorkingDir(workingDir)
 	if err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE working_dir = ?`, workingDir); err != nil {
-		return fmt.Errorf("clear sessions for %q: %w", workingDir, err)
+	return s.deleteSessions(ctx, fmt.Sprintf("clear sessions for %q", workingDir), `working_dir = ?`, workingDir)
+}
+
+// deleteSessions removes the sessions matching clause. parent_id carries no
+// foreign key, so surviving forks are detached explicitly in the same
+// transaction to keep lineage references valid.
+func (s *Store) deleteSessions(ctx context.Context, operation, clause string, args ...any) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("%s: begin: %w", operation, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE sessions SET parent_id = NULL
+		WHERE parent_id IN (SELECT id FROM sessions WHERE `+clause+`)`, args...); err != nil {
+		return fmt.Errorf("%s: detach forks: %w", operation, err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE `+clause, args...); err != nil {
+		return fmt.Errorf("%s: %w", operation, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("%s: commit: %w", operation, err)
 	}
 	return nil
 }
