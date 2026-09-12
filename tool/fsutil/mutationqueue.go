@@ -4,16 +4,19 @@ import (
 	"context"
 	"path/filepath"
 	"sync"
-	"time"
 )
 
+// MutationQueue serializes file mutations per resolved path. It is safe for
+// concurrent use; a nil queue runs callbacks without coordination.
 type MutationQueue struct {
 	mu     sync.Mutex
 	queues map[string]*mutationLock
 }
 
+// mutationLock is a one-slot semaphore so waiters can block on acquisition
+// while still observing context cancellation.
 type mutationLock struct {
-	mu   sync.Mutex
+	slot chan struct{}
 	refs int
 }
 
@@ -49,10 +52,12 @@ func (q *MutationQueue) withKey(ctx context.Context, key string, fn func() error
 	default:
 	}
 
-	if err := lockFileMutation(ctx, lock); err != nil {
-		return err
+	select {
+	case lock.slot <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
 	}
-	defer lock.mu.Unlock()
+	defer func() { <-lock.slot }()
 
 	select {
 	case <-ctx.Done():
@@ -69,7 +74,7 @@ func (q *MutationQueue) getLock(key string) *mutationLock {
 
 	lock := q.queues[key]
 	if lock == nil {
-		lock = &mutationLock{}
+		lock = &mutationLock{slot: make(chan struct{}, 1)}
 		q.queues[key] = lock
 	}
 	lock.refs++
@@ -83,22 +88,6 @@ func (q *MutationQueue) releaseLockRef(key string, lock *mutationLock) {
 	lock.refs--
 	if lock.refs == 0 && q.queues[key] == lock {
 		delete(q.queues, key)
-	}
-}
-
-func lockFileMutation(ctx context.Context, lock *mutationLock) error {
-	for {
-		if lock.mu.TryLock() {
-			return nil
-		}
-
-		timer := time.NewTimer(10 * time.Millisecond)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return ctx.Err()
-		case <-timer.C:
-		}
 	}
 }
 

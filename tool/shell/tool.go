@@ -154,13 +154,7 @@ func (t *Tool) callIncremental(ctx context.Context, args Args, emit func(tool.Ar
 		return Result{}, err
 	}
 
-	timeout := defaultTimeout
-	if args.TimeoutMS > 0 {
-		timeout = time.Duration(args.TimeoutMS) * time.Millisecond
-	}
-	if timeout > maxTimeout {
-		timeout = maxTimeout
-	}
+	timeout := commandTimeout(args.TimeoutMS)
 
 	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -251,6 +245,18 @@ func (t *Tool) callIncremental(ctx context.Context, args Args, emit func(tool.Ar
 		TimedOut:        timedOut,
 		CleanupTimedOut: cleanupTimedOut,
 	}, runErr
+}
+
+// commandTimeout clamps the requested timeout before converting it, so an
+// oversized value cannot overflow into a negative duration.
+func commandTimeout(requestedMS int) time.Duration {
+	if requestedMS <= 0 {
+		return defaultTimeout
+	}
+	if requestedMS >= int(maxTimeout/time.Millisecond) {
+		return maxTimeout
+	}
+	return time.Duration(requestedMS) * time.Millisecond
 }
 
 func buildEnv(extra map[string]string) []string {

@@ -32,6 +32,9 @@ type Result struct {
 	Created bool   `json:"created"`
 	Changed bool   `json:"changed"`
 	Bytes   int    `json:"bytes"`
+	// ReplacedSymlink reports that the path was a symbolic link. The link
+	// itself was replaced by a regular file; its target was left untouched.
+	ReplacedSymlink bool `json:"replaced_symlink,omitempty"`
 
 	// Used only for rendering, excluded from context
 	UnifiedDiff string `json:"-"`
@@ -118,8 +121,11 @@ func (t *Tool) call(ctx context.Context, args Args) (Result, error) {
 		mode := fs.FileMode(0o644)
 		created := false
 		changed := true
+		replacedSymlink := false
 
 		var currentData []byte
+		// The leaf is never followed: a symlink is replaced rather than
+		// written through, so a link cannot redirect a write elsewhere.
 		info, err := os.Lstat(path.Abs)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -128,12 +134,15 @@ func (t *Tool) call(ctx context.Context, args Args) (Result, error) {
 				return err
 			}
 		} else {
-			if info.IsDir() {
+			switch {
+			case info.IsDir():
 				return tool.Error{Code: "not_a_file", Message: "path is a directory", Path: path.Display}
-			}
-			if info.Mode().IsRegular() {
+			case info.Mode()&fs.ModeSymlink != 0:
+				replacedSymlink = true
+			case !info.Mode().IsRegular():
+				return tool.Error{Code: "not_a_file", Message: "path is not a regular file", Path: path.Display}
+			default:
 				mode = info.Mode()
-
 				currentData, err = os.ReadFile(path.Abs)
 				if err != nil {
 					return err
@@ -166,11 +175,12 @@ func (t *Tool) call(ctx context.Context, args Args) (Result, error) {
 		}
 
 		result = Result{
-			Path:        path.Display,
-			Created:     created,
-			Changed:     changed || created,
-			Bytes:       len(content),
-			UnifiedDiff: string(contentDiff),
+			Path:            path.Display,
+			Created:         created,
+			Changed:         changed || created,
+			Bytes:           len(content),
+			ReplacedSymlink: replacedSymlink,
+			UnifiedDiff:     string(contentDiff),
 		}
 		return nil
 	})

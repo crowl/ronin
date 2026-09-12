@@ -9,6 +9,12 @@ import (
 
 const tmpFilePattern = ".ronin-*"
 
+// WriteFileAtomic replaces path with data so readers observe either the old
+// or the new content, never a partial write. The replacement is a new inode
+// renamed over the destination: hard links to the previous file are detached,
+// the file is owned by the current user, and inotify-style watchers see a
+// delete followed by a create rather than a modification. Only mode's
+// permission bits are applied.
 func WriteFileAtomic(path string, data []byte, mode fs.FileMode) error {
 	dir := filepath.Dir(path)
 

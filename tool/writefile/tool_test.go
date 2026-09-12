@@ -114,6 +114,9 @@ func TestToolCall(t *testing.T) {
 		if !res.Changed {
 			t.Fatal("Changed = false, want true")
 		}
+		if !res.ReplacedSymlink {
+			t.Fatal("ReplacedSymlink = false, want true")
+		}
 
 		linkInfo, err := os.Lstat(link)
 		if err != nil {
@@ -160,6 +163,9 @@ func TestToolCall(t *testing.T) {
 		}
 		if !res.Changed {
 			t.Fatal("Changed = false, want true")
+		}
+		if !res.ReplacedSymlink {
+			t.Fatal("ReplacedSymlink = false, want true")
 		}
 
 		linkInfo, err := os.Lstat(link)

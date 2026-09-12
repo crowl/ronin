@@ -58,6 +58,18 @@ func TestToolCall(t *testing.T) {
 		}
 	})
 
+	t.Run("oversized timeout is clamped rather than overflowing", func(t *testing.T) {
+		// Large enough to overflow time.Duration when multiplied by Millisecond;
+		// an overflowed negative timeout would expire immediately.
+		res, err := callShell(t, shell.New(t.TempDir()), shell.Args{Command: platformCommand("printf ok", "[Console]::Out.Write('ok')"), TimeoutMS: 1 << 62})
+		if err != nil {
+			t.Fatalf("Call() error = %v", err)
+		}
+		if res.TimedOut || !res.Success || res.Stdout != "ok" {
+			t.Fatalf("result = %+v, want a successful run", res)
+		}
+	})
+
 	t.Run("empty command validation preserves structured error", func(t *testing.T) {
 		_, err := shell.New(t.TempDir()).Call(context.Background(), []byte(`{"command":"   "}`))
 		if err == nil {
