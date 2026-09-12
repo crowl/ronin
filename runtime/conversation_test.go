@@ -66,6 +66,43 @@ func TestNew(t *testing.T) {
 	})
 }
 
+func TestNewConversationWithoutStoreResetsSessionIdentity(t *testing.T) {
+	modelClient := &fakeModelClient{events: []llm.PredictionEvent{
+		llm.BlockEnded{Block: llm.TextBlock{Text: "done"}},
+		llm.PredictionFinished{},
+	}}
+	conversation, err := runtime.NewConversation(runtime.ConversationConfig{
+		ModelClient: modelClient,
+		Session:     session.Session{ID: "sess_loaded", Title: "Loaded title", WorkingDir: "/work"},
+		Messages:    []session.Message{llm.UserMessage{Text: "earlier"}},
+	})
+	if err != nil {
+		t.Fatalf("NewConversation() error = %v", err)
+	}
+
+	if err := conversation.NewConversation(); err != nil {
+		t.Fatalf("NewConversation() error = %v", err)
+	}
+
+	if conversation.SessionID() != "" || conversation.SessionTitle() != "" {
+		t.Fatalf("session = %q/%q after reset, want no identity", conversation.SessionID(), conversation.SessionTitle())
+	}
+	if conversation.CWD() != "" && conversation.CWD() != "/work" {
+		t.Fatalf("CWD() = %q", conversation.CWD())
+	}
+	if len(conversation.Messages()) != 0 {
+		t.Fatalf("Messages() = %#v, want none", conversation.Messages())
+	}
+	events, errs := conversation.Prompt(t.Context(), "fresh start")
+	_ = collectEvents(events)
+	if err := <-errs; err != nil {
+		t.Fatalf("Prompt() error = %v", err)
+	}
+	if conversation.SessionTitle() != "fresh start" {
+		t.Fatalf("title = %q, want derived from the new first prompt", conversation.SessionTitle())
+	}
+}
+
 func TestSetToolsAndSystemPrompt(t *testing.T) {
 	t.Run("updates the next request", func(t *testing.T) {
 		modelClient := &fakeModelClient{events: []llm.PredictionEvent{

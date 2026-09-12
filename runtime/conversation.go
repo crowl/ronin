@@ -430,19 +430,29 @@ func (c *Conversation) recalculateContextUsage() {
 	c.contextUsage = usage
 }
 
+// NewConversation discards the current context and starts a fresh session.
+// A persisted conversation creates a new stored session; an unsaved one keeps
+// only its working directory and model selection.
 func (c *Conversation) NewConversation() error {
+	model := c.modelClient.Model()
+	metadata := session.Metadata{
+		Model:          config.Model{Provider: model.Provider, Name: model.Name},
+		ReasoningLevel: string(c.modelClient.ReasoningLevel()),
+	}
 	if c.sessionStore != nil && c.session.ID != "" {
-		model := c.modelClient.Model()
 		ctx, cancel := detachedPersistenceContext()
 		defer cancel()
-		newSession, err := c.sessionStore.Create(ctx, c.cwd, session.Metadata{
-			Model:          config.Model{Provider: model.Provider, Name: model.Name},
-			ReasoningLevel: string(c.modelClient.ReasoningLevel()),
-		})
+		newSession, err := c.sessionStore.Create(ctx, c.cwd, metadata)
 		if err != nil {
 			return fmt.Errorf("create session: %w", err)
 		}
 		c.session = newSession
+	} else {
+		now := c.now().UTC()
+		c.session = session.Session{
+			Version: session.Version, WorkingDir: c.session.WorkingDir, CreatedAt: now, UpdatedAt: now,
+			Model: metadata.Model, ReasoningLevel: metadata.ReasoningLevel, Cost: llm.SessionCost{Available: true},
+		}
 	}
 	c.cacheKey = conversationCacheKey(c.session.ID)
 	c.calibration = contextCalibration{}
@@ -771,11 +781,24 @@ func (c *Conversation) run(ctx context.Context, prompt string, events chan<- Eve
 				predictionFinished = true
 			}
 		}
+		// endTurn balances the started turn on paths that retry the same
+		// turn after compaction, so consumers always see paired events.
+		endTurn := func() error {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case events <- ConversationTurnEnded{Turn: turn}:
+				return nil
+			}
+		}
 		if err := <-predictionErrCh; err != nil {
 			if errors.Is(err, llm.ErrContextLimit) && !contextRetryUsed && c.compactor != nil {
 				contextRetryUsed = true
 				if compactErr := c.compactContext(ctx, true); compactErr != nil {
 					return finish(fmt.Errorf("recover from context rejection: %w", errors.Join(err, compactErr)))
+				}
+				if err := endTurn(); err != nil {
+					return finish(err)
 				}
 				continue
 			}
@@ -803,6 +826,9 @@ func (c *Conversation) run(ctx context.Context, prompt string, events chan<- Eve
 				return finish(fmt.Errorf("compact after context window exhaustion: %w", err))
 			}
 			contextRetryUsed = true
+			if err := endTurn(); err != nil {
+				return finish(err)
+			}
 			continue
 		}
 		if err := completionError(stopReason); err != nil {
