@@ -488,8 +488,7 @@ func (rt *worktreeRuntime) seal(workspace *managedWorktree) (string, error) {
 	if _, err := rt.git(workspace.Path, "add", "--all"); err != nil {
 		return "", fmt.Errorf("stage lane changes: %w", err)
 	}
-	staged, err := rt.git(workspace.Path, "diff", "--cached", "--quiet")
-	if err != nil {
+	if _, err := rt.git(workspace.Path, "diff", "--cached", "--quiet"); err != nil {
 		var exitErr *exec.ExitError
 		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
 			return "", fmt.Errorf("inspect staged lane changes: %w", err)
@@ -497,8 +496,6 @@ func (rt *worktreeRuntime) seal(workspace *managedWorktree) (string, error) {
 		if _, err := rt.gitCommit(workspace.Path, "chore(ronin): seal lane "+workspace.ID); err != nil {
 			return "", fmt.Errorf("commit remaining lane changes: %w", err)
 		}
-	} else if strings.TrimSpace(staged) != "" {
-		return "", fmt.Errorf("unexpected output while inspecting staged lane changes")
 	}
 	count, err := rt.git(workspace.Path, "rev-list", "--count", workspace.Base+"..HEAD")
 	if err != nil {
@@ -944,11 +941,15 @@ func (rt *worktreeRuntime) recoveryStatus(path string) (string, error) {
 	return strings.TrimRight(status, "\n"), nil
 }
 
+// gitCommit records workflow-managed commits with a synthetic identity.
+// Repository hooks are skipped: they run with the user's identity and
+// environment in a temporary worktree, and their failures would leave sealed
+// lanes half-committed without any way for the workflow to react.
 func (rt *worktreeRuntime) gitCommit(path, message string) (string, error) {
 	return rt.git(path,
 		"-c", "user.name=Ronin Workflow",
 		"-c", "user.email=workflow@ronin.local",
-		"commit", "--no-gpg-sign", "-m", message,
+		"commit", "--no-gpg-sign", "--no-verify", "-m", message,
 	)
 }
 
@@ -971,16 +972,26 @@ func (rt *worktreeRuntime) runGit(ctx context.Context, path string, args ...stri
 	commandArgs := append([]string{"-C", path}, args...)
 	cmd := exec.CommandContext(ctx, "git", commandArgs...)
 	cmd.WaitDelay = 5 * time.Second
-	output := &boundedGitOutput{limit: gitOutputLimit}
-	cmd.Stdout = output
-	cmd.Stderr = output
+	// Callers parse stdout as a value (revisions, branch names, status), so
+	// stderr is captured separately: git warnings and hints must never leak
+	// into parsed output. Stderr is reported only as error context.
+	stdout := &boundedGitOutput{limit: gitOutputLimit}
+	stderr := &boundedGitOutput{limit: gitOutputLimit}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	err := cmd.Run()
-	text, truncated := output.String()
+	text, truncated := stdout.String()
 	if err != nil {
-		if truncated {
-			text += "\n[git output truncated]"
+		detail, detailTruncated := stderr.String()
+		detail = strings.TrimSpace(detail)
+		if detail == "" {
+			detail = strings.TrimSpace(text)
+			detailTruncated = truncated
 		}
-		return text, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(text))
+		if detailTruncated {
+			detail += "\n[git output truncated]"
+		}
+		return text, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, detail)
 	}
 	if truncated {
 		return text, fmt.Errorf("git %s: output exceeds %d bytes", strings.Join(args, " "), gitOutputLimit)
