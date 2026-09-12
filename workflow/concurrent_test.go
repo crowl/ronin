@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 )
 
 func TestConcurrentAgents(t *testing.T) {
@@ -18,6 +17,12 @@ func TestConcurrentAgents(t *testing.T) {
 		t.Parallel()
 		var running atomic.Int32
 		var concurrent atomic.Bool
+		// Each agent waits for the other to start, and the slow one finishes
+		// only after the fast one, so overlap and completion order do not
+		// depend on scheduling. A sequential runtime would block on the
+		// handshake and fail through ctx instead of hanging.
+		slowStarted := make(chan struct{})
+		fastDone := make(chan struct{})
 		stdout, err := runScriptWithAgent(t, `
 local slow = ronin.start_agent({ prompt = "slow" })
 local fast = ronin.start_agent({ prompt = "fast" })
@@ -26,15 +31,29 @@ ronin.log(first.job)
 ronin.log(first.text)
 local second = ronin.wait_any({ slow })
 ronin.log(second.text)
-`, func(_ context.Context, req AgentRequest) (AgentResult, error) {
+`, func(ctx context.Context, req AgentRequest) (AgentResult, error) {
 			if running.Add(1) > 1 {
 				concurrent.Store(true)
 			}
 			defer running.Add(-1)
+			await := func(ch <-chan struct{}) error {
+				select {
+				case <-ch:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
 			if req.Prompt == "slow" {
-				time.Sleep(75 * time.Millisecond)
+				close(slowStarted)
+				if err := await(fastDone); err != nil {
+					return AgentResult{}, err
+				}
 			} else {
-				time.Sleep(10 * time.Millisecond)
+				if err := await(slowStarted); err != nil {
+					return AgentResult{}, err
+				}
+				close(fastDone)
 			}
 			return AgentResult{Text: req.Prompt + " result"}, nil
 		})

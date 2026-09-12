@@ -77,6 +77,8 @@ func (t *Tool) CallIncremental(ctx context.Context, raw json.RawMessage, emit fu
 	}
 	return t.run(ctx, args, func(event Event) {
 		if artifact := workflowEventArtifact(event); artifact != nil {
+			// emit fails only once ctx is cancelled; run reports that
+			// cancellation itself, so a dropped artifact needs no handling.
 			_ = emit(artifact)
 		}
 	})

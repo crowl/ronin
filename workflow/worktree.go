@@ -784,7 +784,9 @@ func (rt *worktreeRuntime) recover() string {
 		}
 		retained = append(retained, fmt.Sprintf("branch %s", workspace.Branch))
 	}
-	_ = rt.writeManifest()
+	if err := rt.writeManifest(); err != nil {
+		cleanupErrors = append(cleanupErrors, fmt.Sprintf("update manifest: %v", err))
+	}
 	sort.Strings(retained)
 	var b strings.Builder
 	b.WriteString("Workflow recovery artifacts retained:\n")
