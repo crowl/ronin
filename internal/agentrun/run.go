@@ -18,6 +18,9 @@ type MCPSource interface {
 	Instructions() []runtime.MCPInstruction
 }
 
+// Config describes the default agent policy. Model and ReasoningLevel apply
+// when a request does not override them; ResolveModel maps a requested model
+// to a registered one and is required only when requests override the model.
 type Config struct {
 	WorkingDir     string
 	Model          llm.Model
@@ -25,6 +28,9 @@ type Config struct {
 	MaxTurns       int
 	MCP            MCPSource
 	ResolveModel   func(llm.Model) (llm.Model, error)
+	// Tools supplies per-conversation tools. Sharing one factory with other
+	// conversations coordinates their file mutations; nil creates a private one.
+	Tools *agenttools.Factory
 }
 
 // Runner owns agent execution policy and shared file mutation coordination.
@@ -34,7 +40,13 @@ type Runner struct {
 	tools *agenttools.Factory
 }
 
-func New(cfg Config) *Runner { return &Runner{cfg: cfg, tools: agenttools.NewFactory()} }
+func New(cfg Config) *Runner {
+	tools := cfg.Tools
+	if tools == nil {
+		tools = agenttools.NewFactory()
+	}
+	return &Runner{cfg: cfg, tools: tools}
+}
 
 func (r *Runner) Run(ctx context.Context, req workflow.AgentRequest) (workflow.AgentResult, error) {
 	model, level := r.cfg.Model, r.cfg.ReasoningLevel

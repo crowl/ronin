@@ -14,11 +14,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"sync"
-	"time"
 
 	"github.com/crowl/ronin/config"
-	"github.com/crowl/ronin/internal/agentrun"
 	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/llm/anthropic"
 	"github.com/crowl/ronin/llm/google"
@@ -26,14 +23,7 @@ import (
 	"github.com/crowl/ronin/mcp"
 	"github.com/crowl/ronin/runtime"
 	"github.com/crowl/ronin/session"
-	"github.com/crowl/ronin/session/sqlite"
 	"github.com/crowl/ronin/telemetry"
-	"github.com/crowl/ronin/tool/codenav"
-	"github.com/crowl/ronin/tool/editfile"
-	"github.com/crowl/ronin/tool/fsutil"
-	"github.com/crowl/ronin/tool/readfile"
-	"github.com/crowl/ronin/tool/shell"
-	"github.com/crowl/ronin/tool/writefile"
 	"github.com/crowl/ronin/tui"
 	"github.com/crowl/ronin/workflow"
 )
@@ -49,30 +39,16 @@ func main() {
 	os.Exit(run())
 }
 
-func run() (exitCode int) {
-	var versionFlag bool
-	var resume bool
-	var prompt string
-	var workingDir string
-	var modelFlag string
-	var reasoningLevelFlag string
-	var contextFileFlags repeatedFlag
-	var skillFlags repeatedFlag
-	var mcpFlags repeatedFlag
+func run() int {
+	opts, err := parseFlags(os.Args[1:], os.Stderr)
+	if errors.Is(err, flag.ErrHelp) {
+		return 0
+	}
+	if err != nil {
+		return 2
+	}
 
-	flag.BoolVar(&versionFlag, "version", false, "Print the Ronin version.")
-	flag.BoolVar(&resume, "resume", false, "Load the active session for the working directory instead of starting a fresh session.")
-	flag.StringVar(&prompt, "prompt", "", "Prompt to run without launching the TUI.")
-	flag.StringVar(&workingDir, "working_dir", ".", "Working directory. Defaults to the current directory.")
-	flag.StringVar(&modelFlag, "model", "", "Model to use as <provider>:<name>. Overrides the configured model.")
-	flag.StringVar(&reasoningLevelFlag, "reasoning", "", "Reasoning level to use. Overrides the configured reasoning level.")
-	flag.Var(&contextFileFlags, "context-file", "Context file to include in prompt mode. May be repeated.")
-	flag.Var(&skillFlags, "skill", "Skill name, skill directory, or SKILL.md path to include in prompt mode. May be repeated.")
-	flag.Var(&mcpFlags, "mcp", "Configured MCP server to activate. May be repeated; use all to activate every server.")
-
-	flag.Parse()
-
-	if versionFlag {
+	if opts.version {
 		if err := writeVersion(os.Stdout); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "failed to write version: %v\n", err)
 			return 1
@@ -80,302 +56,33 @@ func run() (exitCode int) {
 		return 0
 	}
 
-	shutdownTelemetry, telemetryErr := telemetry.Setup(context.Background())
+	// Telemetry outlives the signal context so a final flush can complete
+	// after cancellation.
+	shutdown, telemetryErr := telemetry.Setup(context.Background())
 	if telemetryErr != nil {
 		_, _ = fmt.Fprintln(os.Stderr, "telemetry initialization failed; continuing without telemetry")
 	} else {
-		defer func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			if err := shutdownTelemetry(ctx); err != nil {
-				_, _ = fmt.Fprintln(os.Stderr, "telemetry shutdown incomplete")
-			}
-		}()
+		defer shutdownTelemetry(shutdown)
 	}
 
-	workflowCmd, workflowMode, err := parseWorkflowCommand(flag.Args(), os.Stdin)
+	ctx, cancel := signal.NotifyContext(context.Background(), shutdownSignals()...)
+	defer cancel()
+
+	workflowCmd, workflowMode, err := parseWorkflowCommand(opts.args, os.Stdin)
 	if err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-
 	if workflowMode {
-		ctx, cancel := signal.NotifyContext(context.Background(), shutdownSignals()...)
-		defer cancel()
-
-		settings, err := config.Load()
-		if err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
-			return 1
-		}
-		mcpNames, err := selectMCPServers(settings.MCPServers, mcpFlags)
-		if err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "invalid MCP selection: %v\n", err)
-			return 1
-		}
-		mcpRegistry := newMCPRegistry(workingDir, settings.MCPServers)
-		if err := activateMCPServers(ctx, mcpRegistry, mcpNames); err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "failed to initialize MCP servers: %v\n", err)
-			_ = mcpRegistry.Close()
-			return 1
-		}
-		defer func() {
-			if err := mcpRegistry.Close(); err != nil {
-				_, _ = fmt.Fprintf(os.Stderr, "failed to close MCP servers: %v\n", err)
-				if exitCode == 0 {
-					exitCode = 1
-				}
-			}
-		}()
-
-		workflowAgent := newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag, mcpRegistry)
-		if err := runWorkflow(ctx, workflowCmd.Script, workingDir, workflowCmd.Input, workflowAgent, os.Stdout); err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
-			return 1
-		}
-		return 0
-	}
-
-	settings, err := config.Load()
-	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
-		return 1
-	}
-
-	if err := setupProviders(settings); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
-		return 1
-	}
-
-	if len(llm.Models()) == 0 {
-		_, _ = fmt.Fprintf(os.Stderr, "no models available; configure an enabled provider and set its API key environment variable\n")
-		return 1
-	}
-
-	if modelFlag != "" {
-		override, err := parseModelFlag(modelFlag)
-		if err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
-			return 1
-		}
-		settings.Model = override
-	}
-	if reasoningLevelFlag != "" {
-		settings.ReasoningLevel = reasoningLevelFlag
-	}
-
-	model, level, err := resolveModel(settings)
-	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
-		return 1
-	}
-
-	configDir, err := config.Dir()
-	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "failed to resolve config directory: %v\n", err)
-		return 1
-	}
-
-	skillsDir, err := config.SkillsDir()
-	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "failed to resolve skills directory: %v\n", err)
-		return 1
-	}
-
-	workflowsDir, err := config.WorkflowsDir()
-	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "failed to resolve workflows directory: %v\n", err)
-		return 1
-	}
-	workflowCatalog, err := workflow.LoadCatalog(workflowsDir)
-	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "failed to load workflows: %v\n", err)
-		return 1
-	}
-
-	var skills []runtime.Skill
-	var contextFiles []runtime.ContextFile
-
-	if prompt != "" {
-		skills, err = loadExplicitSkills(skillsDir, skillFlags)
-		if err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "failed to load skills: %v\n", err)
-			return 1
-		}
-		contextFiles, err = loadExplicitContextFiles(contextFileFlags)
-		if err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "failed to load context files: %v\n", err)
-			return 1
-		}
+		err = runWorkflowMode(ctx, opts, workflowCmd, os.Stdout)
 	} else {
-		skills, err = runtime.LoadSkills(skillsDir)
-		if err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "failed to load skills: %v\n", err)
-			return 1
-		}
-
-		contextFiles, err = runtime.LoadContextFiles(configDir, workingDir)
-		if err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "failed to load context files: %v\n", err)
-			return 1
-		}
+		err = runConversationMode(ctx, opts, os.Stdout)
 	}
-
-	mcpNames, err := selectMCPServers(settings.MCPServers, mcpFlags)
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "invalid MCP selection: %v\n", err)
+		_, _ = fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	if prompt == "" && len(mcpFlags) != 0 {
-		_, _ = fmt.Fprintln(os.Stderr, "--mcp is only supported with --prompt or run; use /mcp:<name> in the TUI")
-		return 1
-	}
-
-	mcpRegistry := newMCPRegistry(workingDir, settings.MCPServers)
-	if err := activateMCPServers(context.Background(), mcpRegistry, mcpNames); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "failed to initialize MCP servers: %v\n", err)
-		_ = mcpRegistry.Close()
-		return 1
-	}
-	defer func() {
-		if err := mcpRegistry.Close(); err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "failed to close MCP servers: %v\n", err)
-			if exitCode == 0 {
-				exitCode = 1
-			}
-		}
-	}()
-
-	readCache := fsutil.NewReadCache()
-	mutationQueue := fsutil.NewMutationQueue()
-
-	baseTools := []runtime.Tool{
-		codenav.NewMap(workingDir),
-		codenav.NewFind(workingDir),
-		readfile.New(workingDir, readCache),
-		editfile.New(workingDir, mutationQueue),
-		writefile.New(workingDir, mutationQueue),
-		shell.New(workingDir),
-	}
-
-	workflowAgent := newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag, mcpRegistry)
-	if len(workflowCatalog.Workflows()) > 0 {
-		baseTools = append(baseTools, workflow.NewTool(workflowCatalog, workingDir, workflowAgent))
-	}
-	tools := append([]runtime.Tool(nil), baseTools...)
-	tools = append(tools, mcpRegistry.Tools()...)
-
-	systemPromptInput := runtime.SystemPromptInput{
-		CWD:             workingDir,
-		Skills:          skills,
-		ContextFiles:    contextFiles,
-		MCPInstructions: mcpRegistry.Instructions(),
-	}
-	systemPrompt, err := runtime.BuildSystemPrompt(systemPromptInput)
-	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "failed to build system prompt: %v\n", err)
-		return 1
-	}
-
-	dataDir, err := config.EnsureDataDir()
-	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "failed to initialize data directory: %v\n", err)
-		return 1
-	}
-	sessionStore, err := sqlite.Open(context.Background(), sqlite.StoreConfig{
-		Path: filepath.Join(dataDir, "ronin.db"),
-		Now:  time.Now,
-	})
-	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "failed to initialize session store: %v\n", err)
-		return 1
-	}
-	defer func() {
-		if err := sessionStore.Close(); err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "failed to close session store: %v\n", err)
-			if exitCode == 0 {
-				exitCode = 1
-			}
-		}
-	}()
-
-	// buildConversation creates a conversation for an existing session record.
-	// Each conversation owns its own model client so per-session model and
-	// reasoning switches stay isolated.
-	buildConversation := func(activeSession session.Session, messages []session.Message) (*runtime.Conversation, error) {
-		sessionModel, sessionLevel, err := resolveSessionModel(
-			activeSession,
-			model,
-			level,
-			modelFlag != "",
-			reasoningLevelFlag != "",
-		)
-		if err != nil {
-			return nil, err
-		}
-		client, err := llm.LoadModelClient(sessionModel, sessionLevel)
-		if err != nil {
-			return nil, fmt.Errorf("load model client: %w", err)
-		}
-		compactor := &runtime.DefaultCompactor{}
-		return runtime.NewConversation(runtime.ConversationConfig{
-			CWD:          workingDir,
-			ModelClient:  client,
-			Compactor:    compactor,
-			Tools:        tools,
-			SystemPrompt: systemPrompt,
-			MaxTurns:     settings.MaxTurns,
-			Now:          func() time.Time { return time.Now() },
-			SessionStore: sessionStore,
-			Session:      activeSession,
-			Messages:     messages,
-			SessionCost:  activeSession.Cost,
-		})
-	}
-
-	activeSession, messages, err := startupSession(context.Background(), sessionStore, workingDir, session.Metadata{
-		Model:          settings.Model,
-		ReasoningLevel: settings.ReasoningLevel,
-	}, resume)
-	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
-		return 1
-	}
-
-	conv, err := buildConversation(activeSession, messages)
-	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "failed to initialize conversation: %v\n", err)
-		return 1
-	}
-
-	if prompt != "" {
-		ctx, cancel := signal.NotifyContext(context.Background(), shutdownSignals()...)
-		defer cancel()
-
-		if err := runPrompt(ctx, conv, prompt, os.Stdout); err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
-			return 1
-		}
-		return 0
-	}
-
-	activator := &conversationMCPActivator{
-		registry:          mcpRegistry,
-		conversation:      conv,
-		baseTools:         baseTools,
-		systemPromptInput: systemPromptInput,
-	}
-	if err := runTUI(conv, workflowCatalog, workflowAgent, activator, settings.MCPServers); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "%v\n", err)
-		return 1
-	}
-
 	return 0
-}
-
-type mcpSource interface {
-	Tools() []runtime.Tool
-	Instructions() []runtime.MCPInstruction
 }
 
 type mcpRegistry struct {
@@ -689,59 +396,6 @@ func configuredModels(provider string, configured map[string]config.ProviderMode
 	}
 	slices.SortFunc(models, func(a, b llm.Model) int { return strings.Compare(a.Name, b.Name) })
 	return models
-}
-
-func newWorkflowAgentFunc(workingDir, modelFlag, reasoningLevelFlag string, mcpTools mcpSource) workflow.AgentFunc {
-	var initOnce sync.Once
-	var initErr error
-	var settings config.Settings
-	var defaultModel llm.Model
-	var defaultLevel llm.ReasoningLevel
-	var runner *agentrun.Runner
-
-	init := func() {
-		settings, initErr = config.Load()
-		if initErr != nil {
-			initErr = fmt.Errorf("failed to load config: %w", initErr)
-			return
-		}
-		if len(llm.Models()) == 0 {
-			if initErr = setupProviders(settings); initErr != nil {
-				return
-			}
-		}
-		if len(llm.Models()) == 0 {
-			initErr = fmt.Errorf("no models available; configure an enabled provider and set its API key environment variable")
-			return
-		}
-		if modelFlag != "" {
-			override, err := parseModelFlag(modelFlag)
-			if err != nil {
-				initErr = err
-				return
-			}
-			settings.Model = override
-		}
-		if reasoningLevelFlag != "" {
-			settings.ReasoningLevel = reasoningLevelFlag
-		}
-
-		defaultModel, defaultLevel, initErr = resolveModel(settings)
-		if initErr != nil {
-			return
-		}
-		runner = agentrun.New(agentrun.Config{WorkingDir: workingDir, Model: defaultModel, ReasoningLevel: defaultLevel, MaxTurns: settings.MaxTurns, MCP: mcpTools, ResolveModel: resolveWorkflowModel})
-	}
-
-	agent := func(ctx context.Context, req workflow.AgentRequest) (workflow.AgentResult, error) {
-		initOnce.Do(init)
-		if initErr != nil {
-			return workflow.AgentResult{}, initErr
-		}
-
-		return runner.Run(ctx, req)
-	}
-	return agent
 }
 
 type workflowCommand struct {
@@ -1133,7 +787,7 @@ func (r workflowRunner) Run(ctx context.Context, item workflow.Workflow, input s
 	return workflow.Run(ctx, item, r.workingDir, input, r.agent, emit)
 }
 
-func runTUI(conv *runtime.Conversation, catalog *workflow.Catalog, agent workflow.AgentFunc, activator tui.MCPActivator, mcpServers map[string]config.MCPServer) error {
+func runTUI(ctx context.Context, conv *runtime.Conversation, catalog *workflow.Catalog, agent workflow.AgentFunc, activator tui.MCPActivator, mcpServers map[string]config.MCPServer) error {
 	models := llm.Models()
 
 	cmds := []tui.Command{
@@ -1160,9 +814,6 @@ func runTUI(conv *runtime.Conversation, catalog *workflow.Catalog, agent workflo
 		cmds = append(cmds, tui.SwitchReasoningLevel{Level: level})
 	}
 	cmds = append(cmds, tui.Exit{})
-
-	ctx, cancel := signal.NotifyContext(context.Background(), shutdownSignals()...)
-	defer cancel()
 
 	if err := tui.Run(ctx, tui.Config{
 		Conversation:   conv,
