@@ -19,6 +19,11 @@ func markdownLines(input string, width int, styles textStyles) []string {
 	for i := 0; i < len(inputLines); i++ {
 		raw := inputLines[i]
 		if !inCodeBlock {
+			if table, end, ok := parseTable(inputLines, i); ok && width > 0 {
+				lines = append(lines, tableLines(table, width, styles)...)
+				i = end
+				continue
+			}
 			if diagram, end, ok := mermaidFence(inputLines, i, width); ok {
 				for _, line := range strings.Split(diagram, "\n") {
 					lines = append(lines, applyInlineStyle(line, styles.code, styles.normal))
