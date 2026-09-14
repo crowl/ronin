@@ -36,6 +36,29 @@ func TestSequenceRender(t *testing.T) {
 		})
 	}
 }
+
+// A note spanning several participants shares their gaps instead of widening
+// every gap to fit the whole label, and is centred over the span.
+func TestSequenceSpanningNoteWidth(t *testing.T) {
+	source := "sequenceDiagram\nparticipant A\nparticipant B\nparticipant C\nparticipant D\nA->>B: x\nNote over A,D: a fairly long note that spans every participant"
+	got, err := Render(source, 80)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var width int
+	for _, line := range strings.Split(got, "\n") {
+		w, _ := labelWidth(line)
+		width = max(width, w)
+	}
+	if width > 70 {
+		t.Fatalf("spanning note inflated width to %d:\n%s", width, got)
+	}
+	if !strings.Contains(got, "a fairly long note that spans every participant") {
+		t.Fatalf("note label clipped:\n%s", got)
+	}
+	t.Log("\n" + got)
+}
+
 func TestSequenceReject(t *testing.T) {
 	for _, body := range []string{
 		"", "actor A", "A->B: wrong arrow", "A->>+B: activation", "activate A", "participant", "participant A as", "participant A as ", "A->>B", "end", "else nope", "alt test\nA->>B: open", "opt test\nelse nope\nend", "loop test\nend extra", "par test", "Note over A,B,C: nope", "Note left of A,B: nope", "Note over : nope", "Note over A:", "A->>B: <br>", "A->>B: \x1b[31m", "A->>B: \u200d", "participant A; participant B",

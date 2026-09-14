@@ -16,7 +16,8 @@ func renderSequence(s sequence, maxWidth int) (string, error) {
 		widths[i] += 4
 		pitch = max(pitch, widths[i]+2)
 	}
-	leftExtra, rightExtra := 0, 0
+	// Pass one: the column pitch. Labels that span several columns share
+	// the gaps between them, so their width is divided by the span.
 	captionWidth := 0
 	for _, e := range s.events {
 		w, _ := labelWidth(e.label)
@@ -24,36 +25,50 @@ func renderSequence(s sequence, maxWidth int) (string, error) {
 		case "message":
 			if e.from == e.to {
 				pitch = max(pitch, w+6)
-				if e.from == n-1 {
-					rightExtra = max(rightExtra, w+5)
-				}
 			} else {
-				distance := e.to - e.from
-				if distance < 0 {
-					distance = -distance
-				}
+				distance := sequenceSpan(e)
 				pitch = max(pitch, (w+4+distance-1)/distance)
 			}
-		case "note-left":
+		case "note-left", "note-right":
 			pitch = max(pitch, w+7)
+		case "note-over":
+			if distance := sequenceSpan(e); distance > 0 {
+				pitch = max(pitch, (w+6+distance-1)/distance)
+			} else {
+				pitch = max(pitch, w+6)
+			}
+		case "alt", "opt", "loop", "else":
+			captionWidth = max(captionWidth, w+len(e.kind)+5)
+		}
+	}
+	// Pass two: margins for content overhanging the outer lifelines, which
+	// depend on the final pitch.
+	leftExtra, rightExtra := 0, 0
+	for _, e := range s.events {
+		w, _ := labelWidth(e.label)
+		switch e.kind {
+		case "message":
+			if e.from == e.to && e.from == n-1 {
+				rightExtra = max(rightExtra, w+5)
+			}
+		case "note-left":
 			if e.from == 0 {
 				leftExtra = max(leftExtra, w+6)
 			}
 		case "note-right":
-			pitch = max(pitch, w+7)
 			if e.from == n-1 {
 				rightExtra = max(rightExtra, w+6)
 			}
 		case "note-over":
-			pitch = max(pitch, w+6)
+			// The note box is centred over the span; only the half that
+			// extends beyond the outer lifelines needs margin.
+			overhang := (sequenceNoteWidth(w, sequenceSpan(e)*pitch) - sequenceSpan(e)*pitch + 1) / 2
 			if e.from == 0 || e.to == 0 {
-				leftExtra = max(leftExtra, (w+5)/2)
+				leftExtra = max(leftExtra, overhang)
 			}
 			if e.from == n-1 || e.to == n-1 {
-				rightExtra = max(rightExtra, (w+5)/2)
+				rightExtra = max(rightExtra, overhang)
 			}
-		case "alt", "opt", "loop", "else":
-			captionWidth = max(captionWidth, w+len(e.kind)+5)
 		}
 	}
 	inset := s.depth*2 + 2
@@ -152,16 +167,15 @@ func renderSequence(s sequence, maxWidth int) (string, error) {
 		case "note-left", "note-right", "note-over":
 			a, b := centers[e.from], centers[e.to]
 			boxWidth := w + 4
+			if e.kind == "note-over" {
+				boxWidth = sequenceNoteWidth(w, max(a, b)-min(a, b))
+			}
 			x := (a + b - boxWidth) / 2
 			if e.kind == "note-left" {
 				x = a - boxWidth - 2
 			}
 			if e.kind == "note-right" {
 				x = a + 2
-			}
-			if e.kind == "note-over" && a != b {
-				x = min(a, b) - 2
-				boxWidth = max(boxWidth, max(a, b)-x+3)
 			}
 			c.sequenceBox(x, y, boxWidth, e.label)
 		}
@@ -182,6 +196,25 @@ func renderSequence(s sequence, maxWidth int) (string, error) {
 	}
 	return strings.Join(lines, "\n"), nil
 }
+
+// sequenceSpan is the number of columns between an event's participants.
+func sequenceSpan(e sequenceEvent) int {
+	if e.to < e.from {
+		return e.from - e.to
+	}
+	return e.to - e.from
+}
+
+// sequenceNoteWidth is the box width for a note over participants whose
+// lifelines are span cells apart: wide enough for the label, and at least
+// wide enough to cover both lifelines with a margin.
+func sequenceNoteWidth(labelWidth, span int) int {
+	if span == 0 {
+		return labelWidth + 4
+	}
+	return max(labelWidth+4, span+5)
+}
+
 func sequenceEventHeight(e sequenceEvent) int {
 	switch e.kind {
 	case "message":
