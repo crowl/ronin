@@ -2,8 +2,9 @@ package session
 
 import (
 	"fmt"
-	"github.com/crowl/ronin/llm"
 	"time"
+
+	"github.com/crowl/ronin/llm"
 )
 
 // Message is an entry in the application transcript. Ordinary model messages

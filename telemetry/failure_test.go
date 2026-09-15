@@ -7,8 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/crowl/ronin/telemetry"
 	"go.opentelemetry.io/otel"
+
+	"github.com/crowl/ronin/telemetry"
 )
 
 func TestCollectorFailureDoesNotBlockOperations(t *testing.T) {

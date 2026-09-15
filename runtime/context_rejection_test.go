@@ -2,12 +2,12 @@ package runtime_test
 
 import (
 	"context"
-	"github.com/crowl/ronin/session"
 	"strings"
 	"testing"
 
 	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/runtime"
+	"github.com/crowl/ronin/session"
 )
 
 func TestHTTPContextRejectionRecovery(t *testing.T) {

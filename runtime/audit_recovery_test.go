@@ -2,11 +2,12 @@ package runtime
 
 import (
 	"context"
+	"strings"
+	"testing"
+
 	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/plugin"
 	"github.com/crowl/ronin/session"
-	"strings"
-	"testing"
 )
 
 func TestCompactionRetainsLongRequirementsAndResultTail(t *testing.T) {

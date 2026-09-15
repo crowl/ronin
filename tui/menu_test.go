@@ -6,9 +6,8 @@ import (
 
 	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/runtime"
-	"github.com/crowl/ronin/workflow"
-
 	"github.com/crowl/ronin/tui/internal/terminal"
+	"github.com/crowl/ronin/workflow"
 )
 
 func TestMenu(t *testing.T) {

@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/crowl/ronin/session"
 	"sync"
 	"time"
 
+	"github.com/crowl/ronin/session"
 	"github.com/crowl/ronin/tui/internal/render"
 	"github.com/crowl/ronin/tui/internal/terminal"
 	"github.com/crowl/ronin/workflow"

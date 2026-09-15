@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	lua "github.com/Shopify/go-lua"
+
 	"github.com/crowl/ronin/plugin"
 	"github.com/crowl/ronin/tool/fsutil"
 )

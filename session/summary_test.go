@@ -1,9 +1,10 @@
 package session_test
 
 import (
-	"github.com/crowl/ronin/session"
 	"reflect"
 	"testing"
+
+	"github.com/crowl/ronin/session"
 )
 
 func TestSummaryRoundTrip(t *testing.T) {

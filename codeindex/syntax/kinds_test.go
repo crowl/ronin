@@ -1,8 +1,9 @@
 package syntax_test
 
 import (
-	extract "github.com/crowl/ronin/codeindex/syntax"
 	"testing"
+
+	extract "github.com/crowl/ronin/codeindex/syntax"
 )
 
 func TestDeclarationKinds(t *testing.T) {

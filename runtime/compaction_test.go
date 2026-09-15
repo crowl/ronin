@@ -4,13 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/crowl/ronin/session"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/crowl/ronin/llm"
+	"github.com/crowl/ronin/session"
 )
 
 func TestDefaultCompactor(t *testing.T) {

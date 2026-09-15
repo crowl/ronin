@@ -4,8 +4,9 @@ import (
 	"context"
 	"sync"
 
-	"github.com/crowl/ronin/plugin"
 	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/crowl/ronin/plugin"
 )
 
 // Plugin exports execution events as OpenTelemetry traces and metrics. It

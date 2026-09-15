@@ -7,11 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/crowl/ronin/telemetry"
 	"go.opentelemetry.io/otel"
 	metricsv1 "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	tracev1 "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"google.golang.org/grpc"
+
+	"github.com/crowl/ronin/telemetry"
 )
 
 type traceCollector struct {

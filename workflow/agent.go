@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	lua "github.com/Shopify/go-lua"
+
 	"github.com/crowl/ronin/jsonschema"
 	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/tool"

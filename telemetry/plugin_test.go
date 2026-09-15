@@ -5,9 +5,10 @@ import (
 	"errors"
 	"testing"
 
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+
 	"github.com/crowl/ronin/plugin"
 	"github.com/crowl/ronin/telemetry"
-	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 func TestPluginRebuildsSpanTreeFromEvents(t *testing.T) {

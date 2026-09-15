@@ -2,8 +2,9 @@ package tui
 
 import (
 	"context"
-	"github.com/crowl/ronin/tui/internal/terminal"
 	"testing"
+
+	"github.com/crowl/ronin/tui/internal/terminal"
 )
 
 func TestOperationCompletionQueuePolicy(t *testing.T) {

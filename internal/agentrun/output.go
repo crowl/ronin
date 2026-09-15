@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
+	"time"
+
 	"github.com/crowl/ronin/jsonschema"
 	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/runtime"
 	"github.com/crowl/ronin/workflow"
-	"strings"
-	"time"
 )
 
 func validateWorkflowAgentOutputSchema(client llm.ModelClient, schema *jsonschema.Schema) error {

@@ -1,11 +1,12 @@
 package runtime
 
 import (
+	"path/filepath"
+	"testing"
+
 	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/session"
 	"github.com/crowl/ronin/session/sqlite"
-	"path/filepath"
-	"testing"
 )
 
 func TestModelSwitchPublishesJournalAfterPersistence(t *testing.T) {

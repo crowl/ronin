@@ -12,9 +12,10 @@ import (
 	"strings"
 	"time"
 
+	_ "modernc.org/sqlite"
+
 	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/session"
-	_ "modernc.org/sqlite"
 )
 
 // Store persists session metadata and an append-only event journal in SQLite.

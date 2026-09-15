@@ -2,8 +2,9 @@ package llm_test
 
 import (
 	"errors"
-	"github.com/crowl/ronin/llm"
 	"testing"
+
+	"github.com/crowl/ronin/llm"
 )
 
 func TestHTTPContextClassification(t *testing.T) {

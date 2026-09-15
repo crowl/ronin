@@ -1,10 +1,11 @@
 package session_test
 
 import (
-	"github.com/crowl/ronin/llm"
-	"github.com/crowl/ronin/session"
 	"reflect"
 	"testing"
+
+	"github.com/crowl/ronin/llm"
+	"github.com/crowl/ronin/session"
 )
 
 func TestModelMessages(t *testing.T) {

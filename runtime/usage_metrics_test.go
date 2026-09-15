@@ -4,13 +4,14 @@ import (
 	"context"
 	"testing"
 
+	"go.opentelemetry.io/otel"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+
 	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/plugin"
 	"github.com/crowl/ronin/runtime"
 	"github.com/crowl/ronin/telemetry"
-	"go.opentelemetry.io/otel"
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
 
 func TestUsageMetricsAccumulateAcrossRequestsAndPrompts(t *testing.T) {

@@ -14,8 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/crowl/ronin/codeindex/syntax"
 	_ "modernc.org/sqlite"
+
+	"github.com/crowl/ronin/codeindex/syntax"
 )
 
 // Bump when schema, extraction rules, or pinned grammars change. Cache identity

@@ -6,8 +6,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/crowl/ronin/telemetry"
 	"go.opentelemetry.io/otel"
+
+	"github.com/crowl/ronin/telemetry"
 )
 
 func TestExporterSelection(t *testing.T) {

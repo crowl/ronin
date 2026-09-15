@@ -1,11 +1,11 @@
 package runtime
 
 import (
-	"github.com/crowl/ronin/session"
 	"strings"
 	"testing"
 
 	"github.com/crowl/ronin/llm"
+	"github.com/crowl/ronin/session"
 )
 
 func TestRepeatedCompactionPreservesSummaryWithoutRecursiveFacts(t *testing.T) {

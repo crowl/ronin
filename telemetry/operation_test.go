@@ -6,13 +6,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/crowl/ronin/telemetry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+
+	"github.com/crowl/ronin/telemetry"
 )
 
 func providers(t *testing.T) (*tracetest.InMemoryExporter, *sdkmetric.ManualReader) {

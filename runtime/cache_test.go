@@ -6,15 +6,16 @@ import (
 	"path/filepath"
 	"testing"
 
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+
 	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/plugin"
 	"github.com/crowl/ronin/runtime"
 	"github.com/crowl/ronin/session"
 	"github.com/crowl/ronin/session/sqlite"
 	"github.com/crowl/ronin/telemetry"
-	"go.opentelemetry.io/otel"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 type usageClient struct {

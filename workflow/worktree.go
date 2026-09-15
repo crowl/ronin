@@ -20,6 +20,7 @@ import (
 	"time"
 
 	lua "github.com/Shopify/go-lua"
+
 	basefsutil "github.com/crowl/ronin/fsutil"
 )
 

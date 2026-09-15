@@ -4,11 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/crowl/ronin/jsonschema"
-	"github.com/crowl/ronin/llm"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/crowl/ronin/jsonschema"
+	"github.com/crowl/ronin/llm"
 )
 
 func TestValidateWorkflowAgentOutputSchema(t *testing.T) {

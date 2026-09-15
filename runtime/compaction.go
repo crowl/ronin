@@ -3,6 +3,7 @@ package runtime
 import (
 	"bytes"
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -10,8 +11,6 @@ import (
 	"text/template"
 	"time"
 	"unicode/utf8"
-
-	_ "embed"
 
 	"github.com/crowl/ronin/jsonschema"
 	"github.com/crowl/ronin/llm"

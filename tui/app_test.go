@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/crowl/ronin/session"
 	"reflect"
 	"strings"
 	"testing"
@@ -13,8 +12,8 @@ import (
 	"github.com/crowl/ronin/jsonschema"
 	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/runtime"
+	"github.com/crowl/ronin/session"
 	"github.com/crowl/ronin/tool"
-
 	"github.com/crowl/ronin/tui/internal/render"
 	"github.com/crowl/ronin/tui/internal/terminal"
 	"github.com/crowl/ronin/tui/internal/text"

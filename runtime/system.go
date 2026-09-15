@@ -2,10 +2,9 @@ package runtime
 
 import (
 	"bytes"
+	_ "embed"
 	"strings"
 	"text/template"
-
-	_ "embed"
 )
 
 var (

@@ -6,14 +6,15 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/crowl/ronin/llm"
-	"github.com/crowl/ronin/plugin"
-	"github.com/crowl/ronin/runtime"
-	"github.com/crowl/ronin/telemetry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+
+	"github.com/crowl/ronin/llm"
+	"github.com/crowl/ronin/plugin"
+	"github.com/crowl/ronin/runtime"
+	"github.com/crowl/ronin/telemetry"
 )
 
 func TestExecutionTelemetry(t *testing.T) {

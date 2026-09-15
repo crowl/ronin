@@ -2,12 +2,12 @@ package tui
 
 import (
 	"context"
-	"github.com/crowl/ronin/session"
 	"strings"
 	"testing"
 	"time"
 	"unicode/utf8"
 
+	"github.com/crowl/ronin/session"
 	"github.com/crowl/ronin/tool"
 	"github.com/crowl/ronin/tui/internal/terminal"
 	"github.com/crowl/ronin/tui/internal/text"

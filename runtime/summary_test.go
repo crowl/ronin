@@ -1,10 +1,11 @@
 package runtime_test
 
 import (
+	"testing"
+
 	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/runtime"
 	"github.com/crowl/ronin/session"
-	"testing"
 )
 
 func TestSummaryIdentityDoesNotDependOnText(t *testing.T) {
