@@ -20,7 +20,7 @@ For gRPC, use `OTEL_EXPORTER_OTLP_PROTOCOL=grpc` and typically port 4317. The de
 
 A top-level user prompt starts a trace with `ronin.prompt_turn`, containing `ronin.cycle` spans for each model/tool cycle. These contain `ronin.request` and `ronin.tool` spans. Workflow runs have `ronin.workflow` spans, with child-agent prompt turns linked beneath the invoking workflow rather than detached into unrelated traces.
 
-Tool spans record the exact tool name, call ID, issuing provider/model, argument size, serialized result size, duration, and outcome. Unknown tools and rejected arguments are recorded too. Argument contents, results, prompts, and raw error messages are not exported. SDK/backend attribute limits may truncate or drop metadata.
+Tool spans record the exact tool name, call ID, issuing provider/model, argument size, serialized result size, duration, and outcome. Unknown tools and rejected arguments are recorded too (`ronin.tool.rejected`), as are calls blocked by a plugin tool gate (`ronin.tool.denied`). Argument contents, results, prompts, and raw error messages are not exported. SDK/backend attribute limits may truncate or drop metadata.
 
 Provider/model attribution uses `gen_ai.provider.name` and `gen_ai.request.model`. Session, prompt-turn, and cycle identities are trace attributes, not metric dimensions. Prompt-turn and cycle IDs use their span IDs. Request spans include token/cache usage, estimated cost when pricing is available, completion reason, and a first-output event. `ronin.http_attempt` child spans expose HTTP retries; their duration ends at response headers, while request duration covers streaming and consumption.
 
@@ -55,6 +55,6 @@ Structured requests for compaction and workflow-output formatting record provide
 
 These checks make paid API requests. Unit tests use simulated responses and do not establish live hit rates. No prompts, cache keys, or tool contents are added to telemetry by the cache instrumentation.
 
-Export is batched and bounded. Collector outages do not fail conversations; initialization failures disable telemetry with a warning, and shutdown attempts a flush for at most five seconds. The SDK defaults to recording all traces, but standard `OTEL_TRACES_SAMPLER` configuration can change sampling. Queue overflow, export failures, or collector-side sampling can lose spans: this is observability, not a durable audit log. Standard SDK batch-span and metric-export environment settings control buffering and export intervals.
+Telemetry is implemented as a [plugin](plugins.md) that maps engine events onto spans and metrics. Export is batched and bounded. Collector outages do not fail conversations; initialization failures disable telemetry with a warning, and shutdown attempts a flush for at most five seconds. The SDK defaults to recording all traces, but standard `OTEL_TRACES_SAMPLER` configuration can change sampling. Queue overflow, export failures, or collector-side sampling can lose spans: this is observability, not a durable audit log. Standard SDK batch-span and metric-export environment settings control buffering and export intervals.
 
 [Back to README](../README.md)

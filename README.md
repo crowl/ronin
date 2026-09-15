@@ -81,6 +81,7 @@ Sessions are stored separately in `$XDG_DATA_HOME/ronin/ronin.db`, falling back 
 - [Workflows](docs/workflows.md) — Lua agents and managed worktrees
 - [Code navigation](docs/code-navigation.md) — tools, indexing, caching, and parser limitations
 - [Telemetry](docs/telemetry.md) — OTLP setup, execution traces, and metrics
+- [Plugins](docs/plugins.md) — lifecycle events, tool gates, and result filters for in-process extensions
 
 ## Status
 
