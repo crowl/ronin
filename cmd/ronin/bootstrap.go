@@ -14,6 +14,7 @@ import (
 	"github.com/crowl/ronin/internal/agentrun"
 	"github.com/crowl/ronin/internal/agenttools"
 	"github.com/crowl/ronin/llm"
+	"github.com/crowl/ronin/plugin"
 	"github.com/crowl/ronin/runtime"
 	"github.com/crowl/ronin/session"
 	"github.com/crowl/ronin/session/sqlite"
@@ -323,10 +324,11 @@ func runConversationMode(ctx context.Context, opts cliOptions, output io.Writer)
 	return runTUI(ctx, conv, workflowCatalog, workflowAgent, activator, sel.settings.MCPServers)
 }
 
-func shutdownTelemetry(shutdown func(context.Context) error) {
+// closePlugins gives plugins a bounded window to flush after the run ends.
+func closePlugins(plugins *plugin.Host) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := shutdown(ctx); err != nil {
-		_, _ = fmt.Fprintln(os.Stderr, "telemetry shutdown incomplete")
+	if err := plugins.Close(ctx); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "plugin shutdown incomplete: %v\n", err)
 	}
 }

@@ -7,7 +7,9 @@ import (
 	"testing"
 
 	"github.com/crowl/ronin/llm"
+	"github.com/crowl/ronin/plugin"
 	"github.com/crowl/ronin/runtime"
+	"github.com/crowl/ronin/telemetry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -31,7 +33,7 @@ func TestExecutionTelemetry(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			events, errs := conv.Prompt(t.Context(), "test")
+			events, errs := conv.Prompt(plugin.NewContext(t.Context(), plugin.NewHost(telemetry.NewPlugin())), "test")
 			_ = collectEvents(events)
 			if err := <-errs; err != nil {
 				t.Fatal(err)

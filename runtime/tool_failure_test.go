@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/crowl/ronin/llm"
+	"github.com/crowl/ronin/plugin"
 )
 
 func TestToolFailureFinalization(t *testing.T) {
@@ -23,10 +24,10 @@ func TestToolFailureFinalization(t *testing.T) {
 				want = "not found"
 				err = c.executeToolCall(t.Context(), events, call)
 			case "execution":
-				err = c.finishToolCall(t.Context(), events, nil, call, nil, errors.New(want))
+				err = c.failToolCall(t.Context(), events, nil, call, &toolOutcome{}, errors.New(want))
 			case "marshal":
 				want = "marshal tool"
-				err = c.finishToolCall(t.Context(), events, nil, call, make(chan int), nil)
+				err = c.finishToolCall(t.Context(), events, nil, plugin.ToolCall{ID: call.ID, Name: call.Name}, &toolOutcome{}, make(chan int))
 			}
 			if err != nil {
 				t.Fatal(err)

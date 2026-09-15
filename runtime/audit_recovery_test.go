@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"github.com/crowl/ronin/llm"
+	"github.com/crowl/ronin/plugin"
 	"github.com/crowl/ronin/session"
 	"strings"
 	"testing"
@@ -28,7 +29,7 @@ func TestCancelledToolRetainsKnownOutcome(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	events := make(chan Event)
-	_ = c.finishToolCall(ctx, events, nil, llm.ToolCallBlock{ID: "mutation", Name: "shell"}, map[string]bool{"success": true}, nil)
+	_ = c.finishToolCall(ctx, events, nil, plugin.ToolCall{ID: "mutation", Name: "shell"}, &toolOutcome{}, map[string]bool{"success": true})
 	messages := c.Messages()
 	if len(messages) != 1 {
 		t.Fatalf("messages = %v", messages)

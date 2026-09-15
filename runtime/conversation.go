@@ -14,10 +14,9 @@ import (
 
 	"github.com/crowl/ronin/config"
 	"github.com/crowl/ronin/llm"
+	"github.com/crowl/ronin/plugin"
 	"github.com/crowl/ronin/session"
-	"github.com/crowl/ronin/telemetry"
 	"github.com/crowl/ronin/tool"
-	"go.opentelemetry.io/otel/attribute"
 )
 
 type Compactor interface {
@@ -330,6 +329,7 @@ func (c *Conversation) compactContext(ctx context.Context, requireReduction bool
 		return fmt.Errorf("save compacted session: %w", err)
 	}
 	c.contextUsage = llm.Usage{Cost: llm.Cost{Total: c.sessionCost.Total, Available: c.sessionCost.Available}}
+	plugin.FromContext(ctx).Publish(ctx, plugin.ContextCompacted{ParentID: plugin.ParentID(ctx), SessionID: c.session.ID})
 	return nil
 }
 
@@ -534,6 +534,7 @@ func tagProviderArtifacts(blocks []llm.AssistantBlock, provider string) []llm.As
 }
 
 func (c *Conversation) reportSaveFailure(ctx context.Context, events chan<- Event, runErr, saveErr error) error {
+	plugin.FromContext(ctx).Publish(ctx, plugin.SessionSaveFailed{ParentID: plugin.ParentID(ctx), SessionID: c.session.ID, Err: saveErr})
 	select {
 	case events <- SessionSaveFailed{Error: saveErr}:
 	case <-ctx.Done():
@@ -661,18 +662,22 @@ func (c *Conversation) run(ctx context.Context, prompt string, events chan<- Eve
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	ctx = llm.WithStructuredUsageRecorder(ctx, c.RecordStructuredUsage)
-	ctx = telemetry.WithModel(ctx, c.Model().Provider, c.Model().Name)
-	ctx, promptOp := telemetry.StartScope(ctx, "prompt_turn", attribute.String("ronin.session.id", c.session.ID))
-	defer func() { promptOp.End(runErr) }()
+	host := plugin.FromContext(ctx)
+	ctx, promptOp := plugin.Begin(ctx)
+	host.Publish(ctx, plugin.PromptTurnStarted{Operation: promptOp, SessionID: c.session.ID, Model: pluginModel(c.Model())})
 	promptCtx := ctx
-	var cycleOp *telemetry.Operation
-	defer func() {
-		if cycleOp != nil {
-			cycleOp.End(runErr)
-		}
-	}()
 	cycleCount := 0
-	defer func() { promptOp.Attributes(attribute.Int("ronin.cycle.count", cycleCount)) }()
+	var cycleOp plugin.Operation
+	endCycle := func(err error) {
+		if cycleOp.ID != "" {
+			host.Publish(ctx, plugin.CycleEnded{Operation: cycleOp, Err: err})
+			cycleOp = plugin.Operation{}
+		}
+	}
+	defer func() {
+		endCycle(runErr)
+		host.Publish(promptCtx, plugin.PromptTurnEnded{Operation: promptOp, Cycles: cycleCount, Err: runErr})
+	}()
 	started := false
 	finished := false
 	finish := func(err error) error {
@@ -718,11 +723,10 @@ func (c *Conversation) run(ctx context.Context, prompt string, events chan<- Eve
 
 	contextRetryUsed := false
 	for turn := 0; turn < c.maxTurns; {
-		if cycleOp != nil {
-			cycleOp.End(nil)
-		}
+		endCycle(nil)
 		cycleCount++
-		ctx, cycleOp = telemetry.StartScope(promptCtx, "cycle", attribute.Int("ronin.cycle.index", cycleCount))
+		ctx, cycleOp = plugin.Begin(promptCtx)
+		host.Publish(ctx, plugin.CycleStarted{Operation: cycleOp, Index: cycleCount, Model: pluginModel(c.Model())})
 		requestMessages, err := c.modelMessages()
 		if err != nil {
 			return finish(err)
@@ -964,45 +968,60 @@ func completionError(reason llm.StopReason) error {
 	}
 }
 
+// toolOutcome accumulates what plugins learn about a tool call once it ends.
+type toolOutcome struct {
+	err        error
+	resultSize int
+}
+
 func (c *Conversation) executeToolCall(ctx context.Context, events chan<- Event, toolCall llm.ToolCallBlock) (callErr error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	ctx, op := telemetry.Start(ctx, "tool", attribute.String("gen_ai.tool.name", toolCall.Name), attribute.String("gen_ai.tool.call.id", toolCall.ID))
-	observation := &toolObservation{op: op}
-	ctx = context.WithValue(ctx, toolOperationKey{}, observation)
-	op.Attributes(attribute.Int("ronin.tool.arguments.size", len(toolCall.Arguments)))
-	var executionErr error
-	defer func() { op.End(errors.Join(executionErr, callErr, observation.err)) }()
+	host := plugin.FromContext(ctx)
+	model := pluginModel(c.Model())
+	ctx, op := plugin.Begin(ctx)
+	call := plugin.ToolCall{ID: toolCall.ID, Name: toolCall.Name, Arguments: toolCall.Arguments, SessionID: c.session.ID, WorkingDir: c.cwd}
+	outcome := &toolOutcome{}
 	t, ok := c.toolByName[toolCall.Name]
 	if !ok {
-		executionErr = fmt.Errorf("tool %q not found", toolCall.Name)
-		op.Attributes(attribute.Bool("ronin.tool.rejected", true))
-		return c.failToolCall(ctx, events, nil, toolCall, executionErr)
+		err := fmt.Errorf("tool %q not found", toolCall.Name)
+		host.Publish(ctx, plugin.ToolCallDenied{Operation: op, Call: call, Model: model, Rejected: true, Err: err})
+		return c.failToolCall(ctx, events, nil, toolCall, outcome, err)
 	}
+	arguments, err := host.GateToolCall(ctx, call)
+	if err != nil {
+		host.Publish(ctx, plugin.ToolCallDenied{Operation: op, Call: call, Model: model, Err: err})
+		return c.failToolCall(ctx, events, t, toolCall, outcome, err)
+	}
+	toolCall.Arguments, call.Arguments = arguments, arguments
 	callTitle := t.Name()
 	if titleProvider, ok := t.(ToolCallTitleProvider); ok {
-		var err error
 		callTitle, err = titleProvider.CallTitle(toolCall.Arguments)
 		if err != nil {
-			executionErr = err
-			op.Attributes(attribute.Bool("ronin.tool.rejected", true))
-			return c.finishToolCall(ctx, events, t, toolCall, nil, err)
+			host.Publish(ctx, plugin.ToolCallDenied{Operation: op, Call: call, Model: model, Rejected: true, Err: err})
+			return c.failToolCall(ctx, events, t, toolCall, outcome, err)
 		}
 	}
+	host.Publish(ctx, plugin.ToolCallStarted{Operation: op, Call: call, Model: model})
+	defer func() {
+		host.Publish(ctx, plugin.ToolCallEnded{Operation: op, Call: call, Model: model, ResultSize: outcome.resultSize, Err: errors.Join(outcome.err, callErr)})
+	}()
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case events <- ToolExecutionStarted{Tool: t, CallID: toolCall.ID, CallArguments: toolCall.Arguments, CallTitle: callTitle}:
 	}
+	var result any
 	if incrementalTool, ok := t.(IncrementalTool); ok {
-		result, err := c.callIncrementalTool(ctx, events, incrementalTool, toolCall)
-		executionErr = err
-		return c.finishToolCall(ctx, events, t, toolCall, result, executionErr)
+		result, err = c.callIncrementalTool(ctx, events, incrementalTool, toolCall)
+	} else {
+		result, err = t.Call(ctx, toolCall.Arguments)
 	}
-	result, err := t.Call(ctx, toolCall.Arguments)
-	executionErr = err
-	return c.finishToolCall(ctx, events, t, toolCall, result, executionErr)
+	if err != nil {
+		return c.failToolCall(ctx, events, t, toolCall, outcome, err)
+	}
+	return c.finishToolCall(ctx, events, t, call, outcome, result)
 }
 
 func (c *Conversation) callIncrementalTool(ctx context.Context, events chan<- Event, incrementalTool IncrementalTool, toolCall llm.ToolCallBlock) (any, error) {
@@ -1017,10 +1036,8 @@ func (c *Conversation) callIncrementalTool(ctx context.Context, events chan<- Ev
 	return incrementalTool.CallIncremental(ctx, toolCall.Arguments, emit)
 }
 
-func (c *Conversation) failToolCall(ctx context.Context, events chan<- Event, executedTool Tool, call llm.ToolCallBlock, execErr error) error {
-	if op, ok := ctx.Value(toolOperationKey{}).(*toolObservation); ok {
-		op.err = execErr
-	}
+func (c *Conversation) failToolCall(ctx context.Context, events chan<- Event, executedTool Tool, call llm.ToolCallBlock, outcome *toolOutcome, execErr error) error {
+	outcome.err = execErr
 	if errors.Is(execErr, context.Canceled) || errors.Is(execErr, context.DeadlineExceeded) {
 		execErr = fmt.Errorf("%w; outcome unknown: side effects may have occurred. Inspect current state before retrying", execErr)
 	}
@@ -1043,19 +1060,20 @@ func (c *Conversation) failToolCall(ctx context.Context, events chan<- Event, ex
 	}
 }
 
-func (c *Conversation) finishToolCall(ctx context.Context, events chan<- Event, executedTool Tool, toolCall llm.ToolCallBlock, toolResult any, execErr error) error {
-	if execErr != nil {
-		return c.failToolCall(ctx, events, executedTool, toolCall, execErr)
-	}
+// finishToolCall serializes a successful result, lets plugins filter what the
+// model sees, and persists it. UI artifacts come from the unfiltered result.
+func (c *Conversation) finishToolCall(ctx context.Context, events chan<- Event, executedTool Tool, call plugin.ToolCall, outcome *toolOutcome, toolResult any) error {
+	toolCall := llm.ToolCallBlock{ID: call.ID, Name: call.Name, Arguments: call.Arguments}
 	data, err := json.Marshal(toolResult)
 	if err != nil {
-		execErr = fmt.Errorf("marshal tool %q result: %w", toolCall.Name, err)
-		return c.failToolCall(ctx, events, executedTool, toolCall, execErr)
+		return c.failToolCall(ctx, events, executedTool, toolCall, outcome, fmt.Errorf("marshal tool %q result: %w", call.Name, err))
 	}
-	if observation, ok := ctx.Value(toolOperationKey{}).(*toolObservation); ok {
-		observation.op.Attributes(attribute.Int("ronin.tool.result.size", len(data)))
+	data, err = plugin.FromContext(ctx).FilterToolResult(ctx, call, data)
+	if err != nil {
+		return c.failToolCall(ctx, events, executedTool, toolCall, outcome, err)
 	}
-	message := llm.ToolOutputMessage{Timestamp: c.now(), ToolCallID: toolCall.ID, ToolName: toolCall.Name, ToolOutput: string(data)}
+	outcome.resultSize = len(data)
+	message := llm.ToolOutputMessage{Timestamp: c.now(), ToolCallID: call.ID, ToolName: call.Name, ToolOutput: string(data)}
 	saveCtx, cancel := detachedPersistenceContext()
 	defer cancel()
 	if err := c.appendMessage(saveCtx, message); err != nil {

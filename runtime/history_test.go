@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/crowl/ronin/llm"
+	"github.com/crowl/ronin/plugin"
 	"github.com/crowl/ronin/session"
 	"github.com/crowl/ronin/session/sqlite"
 )
@@ -144,7 +145,7 @@ func TestCancelledKnownResultPersistsInSQLite(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	_ = c.finishToolCall(ctx, make(chan Event), nil, call, map[string]bool{"success": true}, nil)
+	_ = c.finishToolCall(ctx, make(chan Event), nil, plugin.ToolCall{ID: call.ID, Name: call.Name}, &toolOutcome{}, map[string]bool{"success": true})
 	store.Close()
 	store, err = sqlite.Open(t.Context(), sqlite.StoreConfig{Path: path})
 	if err != nil {

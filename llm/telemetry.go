@@ -5,8 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/crowl/ronin/telemetry"
-	"go.opentelemetry.io/otel/attribute"
+	"github.com/crowl/ronin/plugin"
 )
 
 // StructuredUsage describes one auxiliary request. Nil usage means unknown.
@@ -26,11 +25,17 @@ func WithStructuredUsageRecorder(ctx context.Context, record func(context.Contex
 
 // PredictStructuredObserved records usage once, including billed responses whose
 // output is invalid. Auxiliary usage stays separate from conversation messages.
+// The request is reported to plugins as a model request with the given purpose.
 func PredictStructuredObserved(ctx context.Context, client ModelClient, req PredictNextStructuredRequest, purpose string) (raw json.RawMessage, err error) {
-	ctx = telemetry.WithModel(ctx, client.Model().Provider, client.Model().Name)
-	ctx = telemetry.WithPurpose(ctx, purpose)
-	ctx, op := telemetry.Start(ctx, "request", attribute.Bool("ronin.usage.available", false))
-	defer func() { op.End(err) }()
+	host := plugin.FromContext(ctx)
+	model := plugin.Model{Provider: client.Model().Provider, Name: client.Model().Name}
+	ctx, op := plugin.Begin(ctx)
+	host.Publish(ctx, plugin.ModelRequestStarted{Operation: op, Model: model, Purpose: purpose})
+	ended := plugin.ModelRequestEnded{Operation: op, Model: model, Purpose: purpose}
+	defer func() {
+		ended.Err = err
+		host.Publish(ctx, ended)
+	}()
 	result, err := client.PredictNextStructured(ctx, req)
 	observation := StructuredUsage{Purpose: purpose, Model: client.Model()}
 	if result != nil {
@@ -39,7 +44,11 @@ func PredictStructuredObserved(ctx context.Context, client ModelClient, req Pred
 			u := *result.Usage
 			u.Cost = EstimateCost(client.Model(), u)
 			observation.Usage = &u
-			op.Usage(u.InputTokens, u.OutputTokens, u.CachedTokens, u.CacheWriteTokens, u.Cost.Total, u.Cost.Available)
+			ended.Usage = &plugin.Usage{
+				InputTokens: u.InputTokens, OutputTokens: u.OutputTokens,
+				CacheReadTokens: u.CachedTokens, CacheWriteTokens: u.CacheWriteTokens,
+				Cost: u.Cost.Total, CostAvailable: u.Cost.Available,
+			}
 		}
 	}
 	if record, ok := ctx.Value(structuredUsageRecorderKey{}).(func(context.Context, StructuredUsage) error); ok {

@@ -21,6 +21,7 @@ import (
 	"github.com/crowl/ronin/llm/google"
 	"github.com/crowl/ronin/llm/openai"
 	"github.com/crowl/ronin/mcp"
+	"github.com/crowl/ronin/plugin"
 	"github.com/crowl/ronin/runtime"
 	"github.com/crowl/ronin/session"
 	"github.com/crowl/ronin/telemetry"
@@ -56,17 +57,17 @@ func run() int {
 		return 0
 	}
 
-	// Telemetry outlives the signal context so a final flush can complete
-	// after cancellation.
-	shutdown, telemetryErr := telemetry.Setup(context.Background())
-	if telemetryErr != nil {
-		_, _ = fmt.Fprintln(os.Stderr, "telemetry initialization failed; continuing without telemetry")
-	} else {
-		defer shutdownTelemetry(shutdown)
+	// Plugins outlive the signal context so a final flush can complete
+	// after cancellation. Plugins that fail to start are dropped.
+	plugins := plugin.NewHost(telemetry.NewPlugin())
+	if err := plugins.Start(context.Background()); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "plugin initialization failed; continuing without it: %v\n", err)
 	}
+	defer closePlugins(plugins)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), shutdownSignals()...)
 	defer cancel()
+	ctx = plugin.NewContext(ctx, plugins)
 
 	workflowCmd, workflowMode, err := parseWorkflowCommand(opts.args, os.Stdin)
 	if err != nil {

@@ -5,7 +5,9 @@ import (
 	"testing"
 
 	"github.com/crowl/ronin/llm"
+	"github.com/crowl/ronin/plugin"
 	"github.com/crowl/ronin/runtime"
+	"github.com/crowl/ronin/telemetry"
 	"go.opentelemetry.io/otel"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
@@ -29,7 +31,7 @@ func TestUsageMetricsAccumulateAcrossRequestsAndPrompts(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := range 2 {
-		events, errs := conv.Prompt(t.Context(), "test")
+		events, errs := conv.Prompt(plugin.NewContext(t.Context(), plugin.NewHost(telemetry.NewPlugin())), "test")
 		_ = collectEvents(events)
 		if err := <-errs; err != nil {
 			t.Fatal(err)

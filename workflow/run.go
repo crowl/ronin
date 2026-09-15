@@ -15,9 +15,8 @@ import (
 	"unicode/utf8"
 
 	lua "github.com/Shopify/go-lua"
-	"github.com/crowl/ronin/telemetry"
+	"github.com/crowl/ronin/plugin"
 	"github.com/crowl/ronin/tool/fsutil"
-	"go.opentelemetry.io/otel/attribute"
 )
 
 const controlSignalMarker = "__ronin_workflow_control_signal__"
@@ -141,8 +140,10 @@ func runFile(ctx context.Context, path, workingDir, input string, out io.Writer,
 		ctx = context.Background()
 	}
 
-	ctx, op := telemetry.Start(ctx, "workflow", attribute.String("ronin.workflow.name", filepath.Base(path)))
-	defer func() { op.End(runErr) }()
+	host := plugin.FromContext(ctx)
+	ctx, op := plugin.Begin(ctx)
+	host.Publish(ctx, plugin.WorkflowStarted{Operation: op, Name: filepath.Base(path)})
+	defer func() { host.Publish(ctx, plugin.WorkflowEnded{Operation: op, Err: runErr}) }()
 	script, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("read workflow script %q: %w", path, err)

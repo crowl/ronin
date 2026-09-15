@@ -3,13 +3,13 @@ package httpretry
 import (
 	"context"
 	"fmt"
-	"github.com/crowl/ronin/telemetry"
-	"go.opentelemetry.io/otel/attribute"
 	"io"
 	"math/rand"
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/crowl/ronin/plugin"
 )
 
 const (
@@ -39,16 +39,18 @@ func Do(ctx context.Context, client *http.Client, newRequest func() (*http.Reque
 			return nil, err
 		}
 
-		attemptCtx, op := telemetry.Start(ctx, "http_attempt", attribute.Int("ronin.request.attempt", attempt))
+		host := plugin.FromContext(ctx)
+		attemptCtx, op := plugin.Begin(ctx)
+		host.Publish(attemptCtx, plugin.HTTPAttemptStarted{Operation: op, Attempt: attempt})
 		resp, err := client.Do(req.WithContext(attemptCtx))
-		attemptErr := err
+		ended := plugin.HTTPAttemptEnded{Operation: op, Attempt: attempt, Err: err}
 		if resp != nil {
-			op.Attributes(attribute.Int("http.response.status_code", resp.StatusCode))
+			ended.StatusCode = resp.StatusCode
 			if resp.StatusCode >= 400 {
-				attemptErr = fmt.Errorf("HTTP status %d", resp.StatusCode)
+				ended.Err = fmt.Errorf("HTTP status %d", resp.StatusCode)
 			}
 		}
-		op.End(attemptErr)
+		host.Publish(attemptCtx, ended)
 		if err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return nil, ctxErr

@@ -7,9 +7,11 @@ import (
 	"testing"
 
 	"github.com/crowl/ronin/llm"
+	"github.com/crowl/ronin/plugin"
 	"github.com/crowl/ronin/runtime"
 	"github.com/crowl/ronin/session"
 	"github.com/crowl/ronin/session/sqlite"
+	"github.com/crowl/ronin/telemetry"
 	"go.opentelemetry.io/otel"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
@@ -55,7 +57,7 @@ func TestStructuredUsagePersistenceAndTelemetry(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			ctx := llm.WithStructuredUsageRecorder(t.Context(), conv.RecordStructuredUsage)
+			ctx := llm.WithStructuredUsageRecorder(plugin.NewContext(t.Context(), plugin.NewHost(telemetry.NewPlugin())), conv.RecordStructuredUsage)
 			_, err = llm.PredictStructuredObserved(ctx, client, llm.PredictNextStructuredRequest{}, "compaction")
 			if (err != nil) != (mode == "invalid") {
 				t.Fatalf("error = %v", err)
