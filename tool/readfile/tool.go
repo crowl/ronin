@@ -88,6 +88,36 @@ type Result struct {
 	Range          *Range `json:"range,omitempty"`
 }
 
+// ModelText renders metadata as header lines followed by the raw content
+// after a "---" separator, so file text reaches the model without JSON escaping.
+func (r Result) ModelText() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "path: %s\nfile_id: %s\nsha256: %s\nsize: %d\n", r.Path, r.FileID, r.SHA256, r.Size)
+	if r.Range != nil && (r.Range.StartLine > 0 || r.Range.EndLine > 0) {
+		fmt.Fprintf(&b, "lines: %s\n", r.Range.String())
+	}
+	if r.ContentOmitted {
+		fmt.Fprintf(&b, "content_omitted: true\nomitted_reason: %s\n", r.OmittedReason)
+		return b.String()
+	}
+	b.WriteString("---\n")
+	b.WriteString(r.Content)
+	return b.String()
+}
+
+// String formats a possibly open-ended range as "start-end".
+func (r Range) String() string {
+	var b strings.Builder
+	if r.StartLine > 0 {
+		fmt.Fprintf(&b, "%d", r.StartLine)
+	}
+	b.WriteByte('-')
+	if r.EndLine > 0 {
+		fmt.Fprintf(&b, "%d", r.EndLine)
+	}
+	return b.String()
+}
+
 func (r Result) Artifacts() []tool.Artifact {
 	if r.ContentOmitted {
 		return []tool.Artifact{

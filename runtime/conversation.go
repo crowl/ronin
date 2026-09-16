@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -1068,12 +1069,18 @@ func (c *Conversation) finishToolCall(ctx context.Context, events chan<- Event, 
 	if err != nil {
 		return c.failToolCall(ctx, events, executedTool, toolCall, outcome, fmt.Errorf("marshal tool %q result: %w", call.Name, err))
 	}
-	data, err = plugin.FromContext(ctx).FilterToolResult(ctx, call, data)
+	filtered, err := plugin.FromContext(ctx).FilterToolResult(ctx, call, data)
 	if err != nil {
 		return c.failToolCall(ctx, events, executedTool, toolCall, outcome, err)
 	}
-	outcome.resultSize = len(data)
-	message := llm.ToolOutputMessage{Timestamp: c.now(), ToolCallID: call.ID, ToolName: call.Name, ToolOutput: string(data)}
+	output := string(filtered)
+	// Plain text saves tokens, but a plugin that rewrote the JSON must still
+	// decide what the model sees.
+	if textual, ok := toolResult.(tool.ModelTextResult); ok && bytes.Equal(data, filtered) {
+		output = textual.ModelText()
+	}
+	outcome.resultSize = len(output)
+	message := llm.ToolOutputMessage{Timestamp: c.now(), ToolCallID: call.ID, ToolName: call.Name, ToolOutput: output}
 	saveCtx, cancel := detachedPersistenceContext()
 	defer cancel()
 	if err := c.appendMessage(saveCtx, message); err != nil {

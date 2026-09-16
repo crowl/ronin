@@ -44,9 +44,9 @@ func (t *Tool) Name() string {
 }
 func (t *Tool) Description() string {
 	if t.find {
-		return "Find Go, TypeScript, and TSX code by symbol, path, signature, or literal source terms, not semantic descriptions. Use path for directory scope (e.g. path=tui, query=formatToken). Exact symbol names rank first; camelCase and snake_case are also searchable as separate words. All query terms must match; if no results, try fewer terms rather than guessed synonyms. Ranked, bounded results include source ranges and SHA-256. Refreshes a local index; parser diagnostics do not disable text search. Use read_file for exact current source before editing."
+		return "Find Go, TypeScript, and TSX code by symbol, path, signature, or literal source terms, not semantic descriptions. Use path for directory scope (e.g. path=tui, query=formatToken). Exact symbol names rank first; camelCase and snake_case are also searchable as separate words. All query terms must match; if no results, try fewer terms rather than guessed synonyms. Ranked, bounded results include line ranges; text matches are limited to a few lines per file. Refreshes a local index; parser diagnostics do not disable text search. Use read_file for exact current source before editing."
 	}
-	return "Map Go, TypeScript, and TSX workspace files and declarations without reading full bodies. Use path and depth to drill down; narrow scope if truncated. Includes source ranges, SHA-256, and indexing diagnostics. Respects nested .gitignore rules and excludes dependency/build directories and symlinks."
+	return "Map Go, TypeScript, and TSX workspace files and declarations without reading full bodies. Use path and depth to drill down; narrow scope if truncated. Includes line ranges, per-file SHA-256, and indexing diagnostics. Respects nested .gitignore rules and excludes dependency/build directories and symlinks."
 }
 func (t *Tool) Parameters() *jsonschema.Schema { return jsonschema.FromType[Args]() }
 func (t *Tool) CallTitle(raw json.RawMessage) (string, error) {
@@ -63,25 +63,69 @@ func (t *Tool) Call(ctx context.Context, raw json.RawMessage) (any, error) {
 type Result struct{ codeindex.Result }
 
 func (r Result) Artifacts() []tool.Artifact {
+	return []tool.Artifact{tool.TextArtifact{Text: r.render(false)}}
+}
+
+// ModelText renders one entry per line so results reach the model without
+// repeated JSON keys and escaping.
+func (r Result) ModelText() string { return r.render(true) }
+
+func (r Result) render(detailed bool) string {
 	var b strings.Builder
 	for _, e := range r.Entries {
-		fmt.Fprintf(&b, "%s", e.Path)
+		b.WriteString(e.Path)
 		if e.Span != nil {
-			fmt.Fprintf(&b, ":%d–%d", e.Span.StartLine, e.Span.EndLine)
+			if e.Span.StartLine == e.Span.EndLine {
+				fmt.Fprintf(&b, ":%d", e.Span.StartLine)
+			} else {
+				fmt.Fprintf(&b, ":%d-%d", e.Span.StartLine, e.Span.EndLine)
+			}
 		}
-		fmt.Fprintf(&b, "  %s %s\n", e.Kind, e.Name)
+		fmt.Fprintf(&b, "  %s", e.Kind)
+		if e.Container != "" {
+			fmt.Fprintf(&b, " %s.", e.Container)
+		} else if e.Name != "" {
+			b.WriteByte(' ')
+		}
+		b.WriteString(e.Name)
+		if e.Files > 0 {
+			fmt.Fprintf(&b, " (%d files)", e.Files)
+		}
+		if detailed {
+			if e.Language != "" && e.Kind == "file" {
+				fmt.Fprintf(&b, " %s", e.Language)
+			}
+			if e.SHA256 != "" {
+				fmt.Fprintf(&b, " sha256=%s", e.SHA256)
+			}
+			if e.Match != "" {
+				fmt.Fprintf(&b, " [%s]", e.Match)
+			}
+		}
+		b.WriteByte('\n')
 		if e.Signature != "" {
 			fmt.Fprintf(&b, "  %s\n", e.Signature)
 		}
 		if e.Excerpt != "" {
 			fmt.Fprintf(&b, "  %s\n", e.Excerpt)
 		}
+		if e.OmittedLines > 0 {
+			fmt.Fprintf(&b, "  (+%d more matching lines in this file)\n", e.OmittedLines)
+		}
+	}
+	if len(r.Entries) == 0 {
+		b.WriteString("No results.\n")
 	}
 	if r.Truncated {
 		b.WriteString("Results truncated; narrow path/query or increase limit.\n")
 	}
 	fmt.Fprintf(&b, "Indexed %d files; %d issues.\n", r.Status.Files, r.Status.Issues)
-	return []tool.Artifact{tool.TextArtifact{Text: b.String()}}
+	if detailed {
+		for _, n := range r.Status.Notices {
+			fmt.Fprintf(&b, "notice: %s: %s\n", n.Path, n.Message)
+		}
+	}
+	return b.String()
 }
 func (t *Tool) call(ctx context.Context, a Args) (Result, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)

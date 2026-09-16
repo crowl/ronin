@@ -45,6 +45,13 @@ func TestNavigationTools(t *testing.T) {
 		if len(r.Artifacts()) == 0 {
 			t.Fatal("missing UI output")
 		}
+		text := r.ModelText()
+		if !strings.Contains(text, "auth.go:2  function ValidateSession") || !strings.Contains(text, "Indexed 1 files") {
+			t.Fatalf("model text: %s", text)
+		}
+		if strings.Count(text, "sha256=") != strings.Count(text, "  file ") {
+			t.Fatalf("sha256 must appear on file entries only: %s", text)
+		}
 		if tt.tool.Parameters() == nil {
 			t.Fatal("missing schema")
 		}

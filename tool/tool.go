@@ -42,6 +42,15 @@ type Result interface {
 	Artifacts() []Artifact
 }
 
+// ModelTextResult is implemented by results that carry large text payloads.
+// ModelText returns the representation sent to the model in place of the
+// JSON encoding, avoiding escaped newlines, tabs, and quotes that inflate
+// token counts. Plugins still observe the JSON encoding.
+type ModelTextResult interface {
+	Result
+	ModelText() string
+}
+
 func CallTyped[A Arguments, R Result](ctx context.Context, rawArgs json.RawMessage, tool Tool[A, R]) (R, error) {
 	args, err := DecodeArgs[A](rawArgs)
 	if err != nil {

@@ -30,6 +30,23 @@ func TestToolDescriptionIsLanguageAgnostic(t *testing.T) {
 	}
 }
 
+func TestModelText(t *testing.T) {
+	var _ tool.ModelTextResult = readfile.Result{}
+	full := readfile.Result{Path: "a.go", FileID: "file_1", SHA256: "abc", Size: 12, Content: "x\t\"y\"\n"}
+	want := "path: a.go\nfile_id: file_1\nsha256: abc\nsize: 12\n---\nx\t\"y\"\n"
+	if got := full.ModelText(); got != want {
+		t.Fatalf("full = %q, want %q", got, want)
+	}
+	ranged := readfile.Result{Path: "a.go", FileID: "file_1", SHA256: "abc", Size: 12, Content: "y", Range: &readfile.Range{StartLine: 2, EndLine: 3}}
+	if got := ranged.ModelText(); !strings.Contains(got, "\nlines: 2-3\n---\ny") {
+		t.Fatalf("ranged = %q", got)
+	}
+	omitted := readfile.Result{Path: "a.go", FileID: "file_1", SHA256: "abc", Size: 12, ContentOmitted: true, OmittedReason: "why"}
+	if got := omitted.ModelText(); !strings.HasSuffix(got, "content_omitted: true\nomitted_reason: why\n") || strings.Contains(got, "---") {
+		t.Fatalf("omitted = %q", got)
+	}
+}
+
 func TestToolCall(t *testing.T) {
 	t.Run("reads full content and metadata", func(t *testing.T) {
 		dir := t.TempDir()

@@ -13,6 +13,7 @@ import (
 	"github.com/crowl/ronin/plugin"
 	"github.com/crowl/ronin/runtime"
 	"github.com/crowl/ronin/session"
+	"github.com/crowl/ronin/tool"
 )
 
 // runToolPrompt runs one prompt where the model calls "echo" with args and
@@ -109,6 +110,27 @@ func TestPluginFilterRewritesModelVisibleResult(t *testing.T) {
 	}
 }
 
+func TestModelTextResultReachesModelUnescaped(t *testing.T) {
+	echo := &argTool{text: true}
+	messages, _ := runToolPrompt(t, plugin.NewHost(), json.RawMessage(`{"x":"a\nb"}`), echo)
+	output := findToolOutput(t, messages, "call-1")
+	if output.ToolOutput != "plain: {\"x\":\"a\\nb\"}" {
+		t.Fatalf("model text not used: %q", output.ToolOutput)
+	}
+}
+
+func TestPluginFilterOverridesModelText(t *testing.T) {
+	echo := &argTool{text: true}
+	redactor := &recordingPlugin{filter: func(_ plugin.ToolCall, r json.RawMessage) (json.RawMessage, error) {
+		return json.RawMessage(strings.ReplaceAll(string(r), "secret", "[redacted]")), nil
+	}}
+	messages, _ := runToolPrompt(t, plugin.NewHost(redactor), json.RawMessage(`{"x":"secret"}`), echo)
+	output := findToolOutput(t, messages, "call-1")
+	if strings.Contains(output.ToolOutput, "secret") || strings.HasPrefix(output.ToolOutput, "plain:") {
+		t.Fatalf("filtered JSON must win over model text: %s", output.ToolOutput)
+	}
+}
+
 func TestPluginFilterFailureFailsToolCall(t *testing.T) {
 	echo := &argTool{}
 	broken := &recordingPlugin{filter: func(plugin.ToolCall, json.RawMessage) (json.RawMessage, error) {
@@ -183,6 +205,8 @@ func findToolOutput(t *testing.T, messages []session.Message, callID string) llm
 type argTool struct {
 	calls    int
 	lastArgs json.RawMessage
+	// text makes results implement tool.ModelTextResult.
+	text bool
 }
 
 func (a *argTool) Name() string                   { return "echo" }
@@ -191,8 +215,18 @@ func (a *argTool) Parameters() *jsonschema.Schema { return &jsonschema.Schema{Ty
 func (a *argTool) Call(_ context.Context, args json.RawMessage) (any, error) {
 	a.calls++
 	a.lastArgs = args
+	if a.text {
+		return textResult{Echo: args}, nil
+	}
 	return map[string]any{"echo": args}, nil
 }
+
+type textResult struct {
+	Echo json.RawMessage `json:"echo"`
+}
+
+func (textResult) Artifacts() []tool.Artifact { return nil }
+func (r textResult) ModelText() string        { return "plain: " + string(r.Echo) }
 
 type recordingPlugin struct {
 	events []plugin.Event
