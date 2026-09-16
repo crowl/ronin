@@ -24,6 +24,8 @@ type Query struct {
 	Depth    int
 }
 
+// Entry is one map or find result. SHA256 is reported on file entries only;
+// declaration and text entries belong to the file with the same Path.
 type Entry struct {
 	Path      string       `json:"path"`
 	Language  string       `json:"language,omitempty"`
@@ -36,7 +38,10 @@ type Entry struct {
 	Excerpt   string       `json:"excerpt,omitempty"`
 	Match     string       `json:"match,omitempty"`
 	Files     int          `json:"files,omitempty"`
-	score     int
+	// OmittedLines counts further matching lines in the same file that were
+	// not returned because of the per-file text match bound.
+	OmittedLines int `json:"omitted_lines,omitempty"`
+	score        int
 }
 
 type Result struct {
@@ -201,6 +206,10 @@ func (i *Index) Find(ctx context.Context, q Query) (Result, error) {
 			continue
 		}
 		// Return matching lines rather than copying full declarations into results.
+		// A single file with many hits must not crowd out other files, so only
+		// the first few lines per file are returned along with the omitted count.
+		var lines []Entry
+		omitted := 0
 		offset := 0
 		for lineNo, line := range strings.Split(f.Source, "\n") {
 			if lineNo%128 == 0 {
@@ -209,18 +218,30 @@ func (i *Index) Find(ctx context.Context, q Query) (Result, error) {
 				}
 			}
 			if allTerms(terms, line) {
-				e := Entry{Path: f.Path, Language: f.Language, Kind: "text", SHA256: f.SHA256, Excerpt: clip(strings.TrimSpace(line), 240), Match: "source", score: 40, Span: &syntax.Span{StartByte: uint(offset), EndByte: uint(offset + len(line)), StartLine: uint(lineNo + 1), EndLine: uint(lineNo + 1)}}
-				ranked(&result, e, q.Limit)
+				if len(lines) < maxSourceMatchesPerFile {
+					lines = append(lines, Entry{Path: f.Path, Language: f.Language, Kind: "text", Excerpt: clip(strings.TrimSpace(line), 240), Match: "source", score: 40, Span: &syntax.Span{StartByte: uint(offset), EndByte: uint(offset + len(line)), StartLine: uint(lineNo + 1), EndLine: uint(lineNo + 1)}})
+				} else {
+					omitted++
+				}
 			}
 			offset += len(line) + 1
+		}
+		if len(lines) > 0 {
+			lines[len(lines)-1].OmittedLines = omitted
+		}
+		for _, e := range lines {
+			ranked(&result, e, q.Limit)
 		}
 	}
 	boundJSON(&result)
 	return result, nil
 }
 
+// maxSourceMatchesPerFile bounds lexical line matches reported for one file.
+const maxSourceMatchesPerFile = 5
+
 func declarationEntry(f fileRecord, d syntax.Declaration) Entry {
-	return Entry{Path: f.Path, Language: f.Language, Kind: d.Kind, Name: clip(d.Name, 160), Container: clip(d.Container, 160), Signature: clip(d.Signature, 320), SHA256: f.SHA256, Span: &d.Span}
+	return Entry{Path: f.Path, Language: f.Language, Kind: d.Kind, Name: clip(d.Name, 160), Container: clip(d.Container, 160), Signature: clip(d.Signature, 320), Span: &d.Span}
 }
 
 // Bound encoded bytes too: JSON escaping can expand source and path text.

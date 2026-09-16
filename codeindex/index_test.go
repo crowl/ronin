@@ -24,7 +24,10 @@ func TestRefreshFindAndDeletion(t *testing.T) {
 	if len(first.Entries) == 0 || first.Entries[0].Match != "exact_name" || first.Status.Parsed != 1 {
 		t.Fatalf("first: %+v", first)
 	}
-	hash := first.Entries[0].SHA256
+	if first.Entries[0].SHA256 != "" {
+		t.Fatalf("declaration entry carries file hash: %+v", first.Entries[0])
+	}
+	hash := fileHash(t, index, "auth.go")
 	second, err := codeindex.New(root, cache).Find(t.Context(), codeindex.Query{Text: "session expiry"})
 	if err != nil {
 		t.Fatal(err)
@@ -37,7 +40,7 @@ func TestRefreshFindAndDeletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if next.Entries[0].SHA256 == hash || next.Status.Parsed != 1 {
+	if fileHash(t, index, "auth.go") == hash || next.Status.Parsed != 1 {
 		t.Fatalf("refresh: %+v", next)
 	}
 	if err := os.Remove(filepath.Join(root, "auth.go")); err != nil {
@@ -175,6 +178,21 @@ func TestCacheFailureAndRebuild(t *testing.T) {
 	if _, err := codeindex.New(root, filepath.Join(root, "cache")).Map(t.Context(), codeindex.Query{}); err == nil {
 		t.Fatal("cache written inside workspace")
 	}
+}
+
+func fileHash(t *testing.T, index *codeindex.Index, name string) string {
+	t.Helper()
+	result, err := index.Map(t.Context(), codeindex.Query{Path: name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range result.Entries {
+		if e.Kind == "file" && e.Path == name {
+			return e.SHA256
+		}
+	}
+	t.Fatalf("no file entry for %s: %+v", name, result)
+	return ""
 }
 
 func write(t *testing.T, root, name, source string) {
