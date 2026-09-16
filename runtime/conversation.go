@@ -728,6 +728,11 @@ func (c *Conversation) run(ctx context.Context, prompt string, events chan<- Eve
 		cycleCount++
 		ctx, cycleOp = plugin.Begin(promptCtx)
 		host.Publish(ctx, plugin.CycleStarted{Operation: cycleOp, Index: cycleCount, Model: pluginModel(c.Model())})
+		if c.shouldPrune() {
+			if err := c.pruneContext(ctx); err != nil {
+				return finish(fmt.Errorf("automatic tool result pruning: %w", err))
+			}
+		}
 		requestMessages, err := c.modelMessages()
 		if err != nil {
 			return finish(err)

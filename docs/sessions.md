@@ -19,6 +19,15 @@ Session data is separate from configuration. The current database format is vers
 
 To back up sessions, copy `ronin.db` while Ronin is not running. To reset all persisted sessions, remove `ronin.db` and its `-wal` and `-shm` companion files while Ronin is not running; Ronin recreates the database on its next start.
 
+## Pruning stale tool results
+
+Before each model request, large tool outputs (2 KiB or more) from turns older
+than the two most recent user prompts are replaced with a short stub once at
+least 64 KiB, or 20% of the context, can be reclaimed. Batching keeps prompt
+cache invalidation rare. Each stub records the tool name, original size, and a
+`history_ref` that `conversation_history` resolves to the full original; the
+journal keeps the original message unchanged.
+
 ## Recovering compacted context
 
 The model can use `conversation_history` to retrieve model-visible messages
