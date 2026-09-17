@@ -21,7 +21,7 @@ import (
 
 // Bump when schema, extraction rules, or pinned grammars change. Cache identity
 // includes the canonical workspace, not a branch or shared Git directory.
-const cacheVersion = "v2-go025-ts92634ed-binding8486ff"
+const cacheVersion = "v3-go025-ts92634ed-ruby0231-binding8486ff"
 
 // Index is immutable and safe for concurrent calls. Each operation opens and
 // closes its own database/root/parser resources; no background workers survive it.

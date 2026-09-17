@@ -73,14 +73,14 @@ func normalize(q Query) (Query, error) {
 	if q.Depth < 1 || q.Depth > 8 {
 		return q, errors.New("depth must be 1..8")
 	}
-	if q.Language != "" && q.Language != "go" && q.Language != "typescript" && q.Language != "tsx" {
-		return q, errors.New("language must be go, typescript, or tsx")
+	if q.Language != "" && q.Language != "go" && q.Language != "typescript" && q.Language != "tsx" && q.Language != "ruby" {
+		return q, errors.New("language must be go, typescript, tsx, or ruby")
 	}
 	if len(q.Path) > 512 {
 		return q, errors.New("path exceeds 512 bytes")
 	}
 	switch q.Kind {
-	case "", "file", "text", "function", "method", "type", "class", "interface", "variable", "constant", "enum":
+	case "", "file", "text", "function", "method", "type", "class", "interface", "variable", "constant", "enum", "module", "attribute", "association", "scope", "callback", "route":
 	default:
 		return q, errors.New("unsupported kind filter")
 	}
@@ -164,7 +164,14 @@ func (i *Index) Find(ctx context.Context, q Query) (Result, error) {
 	}
 	terms := words(q.Text)
 	if len(terms) == 0 {
-		return Result{}, errors.New("query must contain letters or digits")
+		// Ruby operators are method names too. Keep these as literal terms
+		// rather than admitting empty or arbitrary punctuation-only queries.
+		switch strings.TrimSpace(q.Text) {
+		case "[]", "[]=", "+", "-", "*", "**", "/", "%", "==", "===", "!=", "<", ">", "<=", ">=", "<=>", "<<", ">>", "&", "|", "^", "~", "!", "+@", "-@", "=~", "!~":
+			terms = []string{strings.TrimSpace(q.Text)}
+		default:
+			return Result{}, errors.New("query must contain letters, digits, or a Ruby method operator")
+		}
 	}
 	files, status, err := i.snapshot(ctx)
 	if err != nil {

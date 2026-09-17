@@ -16,8 +16,8 @@ import (
 type Args struct {
 	Path     string `json:"path,omitempty" jsonschema:"Workspace-relative file or directory using forward slashes. Defaults to the workspace. Paths outside it are rejected."`
 	Query    string `json:"query,omitempty" jsonschema:"Required for code_find; unused for code_map. Prefer the exact symbol name when known (e.g. formatToken); otherwise use a few literal terms (e.g. token). All terms must match; this is not semantic search. camelCase and snake_case are split into words. Put directory scope in path, not query."`
-	Language string `json:"language,omitempty" jsonschema:"Optional language filter: go, typescript, or tsx."`
-	Kind     string `json:"kind,omitempty" jsonschema:"Optional declaration kind filter, such as function, method, type, class, interface, variable, or constant."`
+	Language string `json:"language,omitempty" jsonschema:"Optional language filter: go, typescript, tsx, or ruby."`
+	Kind     string `json:"kind,omitempty" jsonschema:"Optional declaration kind filter, such as function, method, type, class, interface, variable, constant, module, attribute, association, scope, callback, or route."`
 	Limit    int    `json:"limit,omitempty" jsonschema:"Maximum results, 1..100; defaults to 40. Narrow path or query when truncated."`
 	Depth    int    `json:"depth,omitempty" jsonschema:"Map directory depth relative to path, 1..8; defaults to 2. Unused for find."`
 }
@@ -44,9 +44,9 @@ func (t *Tool) Name() string {
 }
 func (t *Tool) Description() string {
 	if t.find {
-		return "Find Go, TypeScript, and TSX code by symbol, path, signature, or literal source terms, not semantic descriptions. Use path for directory scope (e.g. path=tui, query=formatToken). Exact symbol names rank first; camelCase and snake_case are also searchable as separate words. All query terms must match; if no results, try fewer terms rather than guessed synonyms. Ranked, bounded results include line ranges; text matches are limited to a few lines per file. Refreshes a local index; parser diagnostics do not disable text search. Use read_file for exact current source before editing."
+		return "Find Go, TypeScript, TSX, and Ruby (including static Rails DSLs and Sorbet) code by symbol, path, signature, or literal source terms, not semantic descriptions. Use path for directory scope (e.g. path=tui, query=formatToken). Exact symbol names rank first; camelCase and snake_case are also searchable as separate words. All query terms must match; if no results, try fewer terms rather than guessed synonyms. Ranked, bounded results include line ranges; text matches are limited to a few lines per file. Refreshes a local index; parser diagnostics do not disable text search. Use read_file for exact current source before editing."
 	}
-	return "Map Go, TypeScript, and TSX workspace files and declarations without reading full bodies. Use path and depth to drill down; narrow scope if truncated. Includes line ranges, per-file SHA-256, and indexing diagnostics. Respects nested .gitignore rules and excludes dependency/build directories and symlinks."
+	return "Map Go, TypeScript, TSX, and Ruby (including static Rails DSLs and Sorbet) workspace files and declarations without reading full bodies. Use path and depth to drill down; narrow scope if truncated. Includes line ranges, per-file SHA-256, and indexing diagnostics. Respects nested .gitignore rules and excludes dependency/build directories and symlinks."
 }
 func (t *Tool) Parameters() *jsonschema.Schema { return jsonschema.FromType[Args]() }
 func (t *Tool) CallTitle(raw json.RawMessage) (string, error) {

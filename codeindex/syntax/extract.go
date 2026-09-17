@@ -14,6 +14,7 @@ import (
 
 	ts "github.com/tree-sitter/go-tree-sitter"
 	goGrammar "github.com/tree-sitter/tree-sitter-go/bindings/go"
+	rubyGrammar "github.com/tree-sitter/tree-sitter-ruby/bindings/go"
 	tsGrammar "github.com/tree-sitter/tree-sitter-typescript/bindings/go"
 )
 
@@ -22,6 +23,9 @@ var goQuery string
 
 //go:embed queries/typescript.scm
 var typescriptQuery string
+
+//go:embed queries/ruby.scm
+var rubyQuery string
 
 // Span uses zero-based, half-open byte offsets and one-based inclusive lines.
 // Columns are intentionally omitted: Tree-sitter columns count bytes, not runes.
@@ -63,7 +67,13 @@ type Extractor struct {
 
 // Language returns the supported grammar name for a path, or an empty string.
 func Language(path string) string {
+	switch filepath.Base(path) {
+	case "Gemfile", "Rakefile", "config.ru":
+		return "ruby"
+	}
 	switch strings.ToLower(filepath.Ext(path)) {
+	case ".rb", ".rbi", ".rake", ".gemspec":
+		return "ruby"
 	case ".go":
 		return "go"
 	case ".ts", ".mts", ".cts":
@@ -82,6 +92,9 @@ func New(language string) (*Extractor, error) {
 	case "go":
 		grammar = ts.NewLanguage(goGrammar.Language())
 		querySource = goQuery
+	case "ruby":
+		grammar = ts.NewLanguage(rubyGrammar.Language())
+		querySource = rubyQuery
 	case "typescript":
 		grammar = ts.NewLanguage(tsGrammar.LanguageTypescript())
 	case "tsx":
@@ -168,14 +181,18 @@ func (e *Extractor) Extract(ctx context.Context, source []byte) (Outline, error)
 				kind = "function"
 			}
 		}
-		if len(result.Declarations) >= 4000 {
+		if e.language == "ruby" {
+			result.Declarations = append(result.Declarations, rubyDeclarations(declaration, name, kind, source)...)
+		} else {
+			result.Declarations = append(result.Declarations, Declaration{
+				Name: bounded(name.Utf8Text(source)), Kind: kind,
+				Container: bounded(container(declaration, source)),
+				Signature: signature(declaration, source), Span: span(declaration),
+			})
+		}
+		if len(result.Declarations) > 4000 {
 			return Outline{}, fmt.Errorf("file exceeds 4000 declaration limit")
 		}
-		result.Declarations = append(result.Declarations, Declaration{
-			Name: bounded(name.Utf8Text(source)), Kind: kind,
-			Container: bounded(container(declaration, source)),
-			Signature: signature(declaration, source), Span: span(declaration),
-		})
 	}
 	// Query timeout must not silently produce an apparently complete outline.
 	if cursor.DidExceedMatchLimit() {

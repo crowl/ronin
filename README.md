@@ -10,7 +10,7 @@
 
 - Interactive terminal UI and non-interactive prompt mode
 - OpenAI, Gemini, Anthropic, and xAI models
-- File editing, shell commands, and Go/TypeScript/TSX code navigation
+- File editing, shell commands, and Go/TypeScript/TSX/Ruby code navigation (including Rails DSLs and Sorbet)
 - Persistent sessions with resume, rewind, and fork
 - Project instructions, reusable skills, MCP servers, and Lua workflows
 

@@ -100,6 +100,40 @@ func TestFindDocumentedQueryBehavior(t *testing.T) {
 	}
 }
 
+func TestRubyNavigationTools(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+	root := t.TempDir()
+	source := "module API\n  class User\n    has_many :posts\n    sig { returns(String) }\n    def name; end\n  end\nend\n"
+	if err := os.WriteFile(filepath.Join(root, "user.rbi"), []byte(source), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		tool *codenav.Tool
+		args string
+		want string
+	}{
+		{codenav.NewMap(root), `{"path":"user.rbi","language":"ruby","kind":"module"}`, "module API"},
+		{codenav.NewFind(root), `{"query":"posts","language":"ruby","kind":"association"}`, "association API::User.posts"},
+		{codenav.NewFind(root), `{"query":"name","language":"ruby","kind":"method"}`, "sig { returns(String) }"},
+	} {
+		result, err := tt.tool.Call(t.Context(), json.RawMessage(tt.args))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if text := result.(codenav.Result).ModelText(); !strings.Contains(text, tt.want) {
+			t.Fatalf("model text = %s, want %q", text, tt.want)
+		}
+		if !strings.Contains(tt.tool.Description(), "Ruby") {
+			t.Fatal("Ruby missing from tool description")
+		}
+		schema, err := json.Marshal(tt.tool.Parameters())
+		if err != nil || !strings.Contains(string(schema), "ruby") || !strings.Contains(string(schema), "association") {
+			t.Fatalf("schema = %s, %v", schema, err)
+		}
+	}
+}
+
 func TestInvalidArgumentsAndCancellation(t *testing.T) {
 	tool := codenav.NewFind(t.TempDir())
 	for _, raw := range []string{`{}`, `{"query":"x","path":"../"}`, `{"query":"x","limit":101}`, `{"query":"x","language":"rust"}`, `{"query":"x","kind":"unknown"}`, `{"query":"x","extra":true}`} {
