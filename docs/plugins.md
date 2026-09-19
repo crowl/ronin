@@ -63,7 +63,9 @@ plugins := plugin.NewHost(telemetry.NewPlugin(), jev.NewPlugin(), denyRemoval{})
 
 ## Jev tool gate
 
-`jev.NewPlugin` asks [TypeSafe Jev](https://docs.typesafe.ai) whether `shell`, `write_file`, and `edit_file` calls should run. Jev returns typed probabilities; Ronin owns the allow/deny policy. Read-only tools are not sent to Jev.
+`jev.NewPlugin` asks [TypeSafe Jev](https://docs.typesafe.ai) whether a tool call is relevant to the current user task. That noul is the primary verdict. Mutating tools (`shell`, `write_file`, `edit_file`) also get an irreversible-side-effect noul. Jev returns probabilities; Ronin owns the allow/deny policy.
+
+The current user prompt is placed on `plugin.ToolCall.Task` and in the Jev state as `task`. Calls with no task skip Jev and are allowed. Record the prompt with plugin.WithTask at the start of a turn; Host.GateToolCall copies that value onto ToolCall.Task when the field is empty.
 
 The plugin is off until you set a mode and a TypeSafe API key:
 
@@ -81,8 +83,8 @@ export RONIN_JEV_MODE=shadow   # log the verdict, never deny
 | `RONIN_JEV_ENDPOINT` | `https://api.typesafe.ai/v1/systemone` | System One HTTP endpoint |
 | `RONIN_JEV_MODEL` | `jev-latest` | Model id sent in the request |
 | `RONIN_JEV_TIMEOUT` | `800ms` | Per-call timeout |
-| `RONIN_JEV_MIN_CONFIDENCE` | `0.55` | Minimum choice confidence before a deny is honored |
+| `RONIN_JEV_MIN_CONFIDENCE` | `0.55` | How sure Jev must be that a call is off-task (or irreversible) before a deny is honored |
 
-API and timeout failures fail open so a TypeSafe outage cannot stall the coding loop. In `shadow` mode the call always proceeds; use it to compare Jev's verdicts against what you would have blocked by hand before turning on `enforce`.
+A deny fires when P(relevant) is at most `1 - RONIN_JEV_MIN_CONFIDENCE`, or when a mutating call has P(irreversible) at least max(0.8, that threshold). API and timeout failures fail open so a TypeSafe outage cannot stall the coding loop. In `shadow` mode the call always proceeds; use it to compare Jev's verdicts against what you would have blocked by hand before turning on `enforce`.
 
 [Back to README](../README.md)
