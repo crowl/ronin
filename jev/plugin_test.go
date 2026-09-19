@@ -32,26 +32,38 @@ func testPlugin(mode Mode, eval evaluator) *Plugin {
 	}
 }
 
-func TestGateSkipsWhenOffOrUngated(t *testing.T) {
+func TestGateSkipsWhenOffOrNoTask(t *testing.T) {
 	eval := &fakeEval{resp: denyResponse()}
-	if err := gateErr(t, testPlugin(ModeOff, eval), plugin.ToolCall{Name: "shell"}); err != nil {
+	if err := gateErr(t, testPlugin(ModeOff, eval), plugin.ToolCall{Name: "shell", Task: "rm everything"}); err != nil {
 		t.Fatalf("off: %v", err)
 	}
 	if eval.saw != nil {
 		t.Fatal("off mode must not call Jev")
 	}
 
-	if err := gateErr(t, testPlugin(ModeEnforce, eval), plugin.ToolCall{Name: "read_file"}); err != nil {
-		t.Fatalf("read_file: %v", err)
+	if err := gateErr(t, testPlugin(ModeEnforce, eval), plugin.ToolCall{Name: "shell"}); err != nil {
+		t.Fatalf("no task: %v", err)
 	}
 	if eval.saw != nil {
-		t.Fatal("read_file must not call Jev")
+		t.Fatal("missing task must not call Jev")
+	}
+}
+
+func TestGateSendsTaskAndReadTools(t *testing.T) {
+	eval := &fakeEval{resp: allowResponse()}
+	call := plugin.ToolCall{Name: "read_file", Arguments: json.RawMessage(`{"path":"main.go"}`), Task: "fix the nil panic in main.go"}
+	if err := gateErr(t, testPlugin(ModeEnforce, eval), call); err != nil {
+		t.Fatalf("read_file: %v", err)
+	}
+	state, _ := eval.saw.(map[string]any)
+	if state == nil || state["task"] != call.Task || state["tool"] != "read_file" {
+		t.Fatalf("state = %#v", eval.saw)
 	}
 }
 
 func TestGateEnforceDeniesAndShadowAllows(t *testing.T) {
 	eval := &fakeEval{resp: denyResponse()}
-	call := plugin.ToolCall{Name: "shell", Arguments: json.RawMessage(`{"command":"rm -rf /"}`), WorkingDir: "/tmp"}
+	call := plugin.ToolCall{Name: "shell", Arguments: json.RawMessage(`{"command":"rm -rf /"}`), WorkingDir: "/tmp", Task: "add a unit test for parseFlags"}
 
 	err := gateErr(t, testPlugin(ModeEnforce, eval), call)
 	var denied *plugin.DeniedError
@@ -66,7 +78,7 @@ func TestGateEnforceDeniesAndShadowAllows(t *testing.T) {
 
 func TestGateFailsOpenOnClientError(t *testing.T) {
 	eval := &fakeEval{err: errors.New("typesafe down")}
-	if err := gateErr(t, testPlugin(ModeEnforce, eval), plugin.ToolCall{Name: "write_file", Arguments: json.RawMessage(`{}`)}); err != nil {
+	if err := gateErr(t, testPlugin(ModeEnforce, eval), plugin.ToolCall{Name: "write_file", Arguments: json.RawMessage(`{}`), Task: "edit README"}); err != nil {
 		t.Fatalf("fail open: %v", err)
 	}
 }
@@ -87,11 +99,11 @@ func TestClientRoundTrip(t *testing.T) {
 		model:    "jev-latest",
 		apiKey:   "test-key",
 	}
-	resp, err := c.Decide(t.Context(), map[string]string{"tool": "shell"}, gateQuestions)
+	resp, err := c.Decide(t.Context(), map[string]string{"tool": "shell"}, map[string]Question{"relevant": relevanceQuestion})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resp.Answers["disposition"].Choice != "deny" {
+	if resp.Answers["relevant"].Noul != 0.08 {
 		t.Fatalf("answers = %+v", resp.Answers)
 	}
 }
@@ -143,7 +155,7 @@ func TestStartRequiresKeyWhenActive(t *testing.T) {
 	if err := p.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := gateErr(t, p, plugin.ToolCall{Name: "shell"}); err != nil {
+	if err := gateErr(t, p, plugin.ToolCall{Name: "shell", Task: "x"}); err != nil {
 		t.Fatalf("off after start: %v", err)
 	}
 }
@@ -156,8 +168,13 @@ func gateErr(t *testing.T, p *Plugin, call plugin.ToolCall) error {
 
 func denyResponse() Response {
 	return Response{Answers: map[string]Answer{
-		"disposition":  {Type: "choice", Choice: "deny", Confidence: 0.93, Probabilities: map[string]float64{"deny": 0.93, "allow": 0.07}},
+		"relevant":     {Type: "noul", Noul: 0.08},
 		"irreversible": {Type: "noul", Noul: 0.96},
-		"impact":       {Type: "score", Score: 1.8},
+	}}
+}
+
+func allowResponse() Response {
+	return Response{Answers: map[string]Answer{
+		"relevant": {Type: "noul", Noul: 0.94},
 	}}
 }
