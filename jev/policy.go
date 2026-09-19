@@ -22,41 +22,41 @@ func (a Action) String() string {
 
 // Judgment is the subset of Jev answers the tool gate consumes.
 type Judgment struct {
-	Disposition   string
-	Confidence    float64
-	Irreversible  float64
-	Impact        float64
-	Probabilities map[string]float64
+	Relevant     float64
+	HasRelevant  bool
+	Irreversible float64
 }
 
 func judgmentFrom(answers map[string]Answer) Judgment {
-	j := Judgment{Disposition: "allow"}
-	if a, ok := answers["disposition"]; ok && a.Type == "choice" && a.Choice != "" {
-		j.Disposition = a.Choice
-		j.Confidence = a.Confidence
-		j.Probabilities = a.Probabilities
+	var j Judgment
+	if a, ok := answers["relevant"]; ok && a.Type == "noul" {
+		j.Relevant = a.Noul
+		j.HasRelevant = true
 	}
 	if a, ok := answers["irreversible"]; ok && a.Type == "noul" {
 		j.Irreversible = a.Noul
-	}
-	if a, ok := answers["impact"]; ok && a.Type == "score" {
-		j.Impact = a.Score
 	}
 	return j
 }
 
 // Decide maps Jev answers onto an action. Thresholds live here so they can be
-// tested without the TypeSafe API. A deny choice is honored only when
-// confidence meets minConfidence. High irreversible probability with a
-// confident disposition other than allow is also a deny.
+// tested without the TypeSafe API.
+//
+// Relevance is the primary signal: deny when P(relevant) is at most
+// 1-minConfidence, i.e. Jev is at least minConfidence sure the call is off
+// task. An empty judgment (no answers) allows. Irreversible side effects on
+// a mutating tool still deny when that noul meets minConfidence.
 func Decide(j Judgment, minConfidence float64) Action {
-	if j.Confidence < minConfidence {
-		return ActionAllow
+	if minConfidence < 0 {
+		minConfidence = 0
 	}
-	if j.Disposition == "deny" {
+	if minConfidence > 1 {
+		minConfidence = 1
+	}
+	if j.HasRelevant && j.Relevant <= 1-minConfidence {
 		return ActionDeny
 	}
-	if j.Irreversible >= 0.8 && j.Disposition != "allow" {
+	if j.Irreversible >= minConfidence && j.Irreversible >= 0.8 {
 		return ActionDeny
 	}
 	return ActionAllow
@@ -64,11 +64,9 @@ func Decide(j Judgment, minConfidence float64) Action {
 
 func denyReason(j Judgment) string {
 	var parts []string
-	parts = append(parts, fmt.Sprintf("disposition=%s", j.Disposition))
-	if j.Confidence > 0 {
-		parts = append(parts, fmt.Sprintf("confidence=%.2f", j.Confidence))
+	parts = append(parts, fmt.Sprintf("relevant=%.2f", j.Relevant))
+	if j.Irreversible > 0 {
+		parts = append(parts, fmt.Sprintf("irreversible=%.2f", j.Irreversible))
 	}
-	parts = append(parts, fmt.Sprintf("irreversible=%.2f", j.Irreversible))
-	parts = append(parts, fmt.Sprintf("impact=%.2f", j.Impact))
 	return "Jev policy denied this tool call (" + strings.Join(parts, " ") + ")"
 }
