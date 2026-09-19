@@ -10,23 +10,33 @@ func TestDecide(t *testing.T) {
 		want Action
 	}{
 		{
-			name: "confident deny",
-			j:    Judgment{Disposition: "deny", Confidence: 0.9, Irreversible: 0.2, Impact: 0.4},
+			name: "off-task is denied",
+			j:    Judgment{Relevant: 0.12, HasRelevant: true},
 			want: ActionDeny,
 		},
 		{
-			name: "low-confidence deny is allowed",
-			j:    Judgment{Disposition: "deny", Confidence: 0.4, Irreversible: 0.9, Impact: 2},
+			name: "zero relevance is denied",
+			j:    Judgment{Relevant: 0, HasRelevant: true},
+			want: ActionDeny,
+		},
+		{
+			name: "uncertain relevance is allowed",
+			j:    Judgment{Relevant: 0.5, HasRelevant: true},
 			want: ActionAllow,
 		},
 		{
-			name: "irreversible without allow disposition",
-			j:    Judgment{Disposition: "deny", Confidence: 0.7, Irreversible: 0.85, Impact: 0.2},
+			name: "on-task is allowed",
+			j:    Judgment{Relevant: 0.91, HasRelevant: true},
+			want: ActionAllow,
+		},
+		{
+			name: "on-task irreversible still denied",
+			j:    Judgment{Relevant: 0.92, HasRelevant: true, Irreversible: 0.96},
 			want: ActionDeny,
 		},
 		{
-			name: "allow even when irreversible if disposition is allow",
-			j:    Judgment{Disposition: "allow", Confidence: 0.9, Irreversible: 0.95, Impact: 2},
+			name: "weak irreversible is allowed when relevant",
+			j:    Judgment{Relevant: 0.8, HasRelevant: true, Irreversible: 0.4},
 			want: ActionAllow,
 		},
 		{
@@ -46,17 +56,16 @@ func TestDecide(t *testing.T) {
 
 func TestJudgmentFromAnswers(t *testing.T) {
 	j := judgmentFrom(map[string]Answer{
-		"disposition":  {Type: "choice", Choice: "deny", Confidence: 0.81, Probabilities: map[string]float64{"deny": 0.8, "allow": 0.2}},
-		"irreversible": {Type: "noul", Noul: 0.91},
-		"impact":       {Type: "score", Score: 1.7},
+		"relevant":     {Type: "noul", Noul: 0.11},
+		"irreversible": {Type: "noul", Noul: 0.2},
 	})
-	if j.Disposition != "deny" || j.Confidence != 0.81 || j.Irreversible != 0.91 || j.Impact != 1.7 {
+	if !j.HasRelevant || j.Relevant != 0.11 || j.Irreversible != 0.2 {
 		t.Fatalf("judgment = %+v", j)
 	}
 	if Decide(j, 0.55) != ActionDeny {
 		t.Fatal("expected deny")
 	}
-	if reason := denyReason(j); reason == "" {
-		t.Fatal("expected deny reason")
+	if reason := denyReason(j); reason == "" || reason[:3] != "Jev" {
+		t.Fatalf("reason = %q", reason)
 	}
 }
