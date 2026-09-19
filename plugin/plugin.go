@@ -10,11 +10,7 @@ package plugin
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"log/slog"
-	"runtime/debug"
-	"sync"
 )
 
 // Plugin is the minimum contract. Capabilities are discovered by type
@@ -81,5 +77,25 @@ type Decision struct {
 }
 
 // Allow permits the call with unchanged arguments.
-func Allow() Decision { return Decision{}
+func Allow() Decision { return Decision{} }
+
+// Deny blocks the call. The reason is reported to the model.
+func Deny(reason string) Decision { return Decision{denied: true, reason: reason} }
+
+// Rewrite permits the call with replacement arguments.
+func Rewrite(arguments json.RawMessage) Decision {
+	return Decision{arguments: arguments}
+}
+
+// DeniedError reports that a ToolGate blocked a tool call.
+type DeniedError struct {
+	Plugin string
+	Reason string
+}
+
+func (e *DeniedError) Error() string {
+	if e.Reason == "" {
+		return fmt.Sprintf("tool call denied by plugin %q", e.Plugin)
+	}
+	return fmt.Sprintf("tool call denied by plugin %q: %s", e.Plugin, e.Reason)
 }
