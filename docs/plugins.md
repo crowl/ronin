@@ -1,6 +1,6 @@
 # Plugins
 
-Ronin's execution engine publishes lifecycle events and consults tool hooks through the `plugin` package. Plugins are Go values compiled into the binary and registered in `cmd/ronin/main.go`; they extend Ronin without changes to the runtime, model clients, or workflows. OpenTelemetry export (`telemetry.NewPlugin`) is implemented this way.
+Ronin's execution engine publishes lifecycle events and consults tool hooks through the `plugin` package. Plugins are Go values compiled into the binary and registered in `cmd/ronin/main.go`; they extend Ronin without changes to the runtime, model clients, or workflows. OpenTelemetry export (`telemetry.NewPlugin`) and the optional Jev tool gate (`jev.NewPlugin`) are implemented this way.
 
 ## Contract
 
@@ -58,7 +58,31 @@ func (denyRemoval) GateToolCall(_ context.Context, call plugin.ToolCall) (plugin
 Register it alongside the built-in plugins in `cmd/ronin/main.go`:
 
 ```go
-plugins := plugin.NewHost(telemetry.NewPlugin(), denyRemoval{})
+plugins := plugin.NewHost(telemetry.NewPlugin(), jev.NewPlugin(), denyRemoval{})
 ```
+
+## Jev tool gate
+
+`jev.NewPlugin` asks [TypeSafe Jev](https://docs.typesafe.ai) whether `shell`, `write_file`, and `edit_file` calls should run. Jev returns typed probabilities; Ronin owns the allow/deny policy. Read-only tools are not sent to Jev.
+
+The plugin is off until you set a mode and a TypeSafe API key:
+
+```sh
+export TYPESAFE_API_KEY=tsk_...
+export RONIN_JEV_MODE=shadow   # log the verdict, never deny
+# export RONIN_JEV_MODE=enforce  # deny when the policy thresholds fire
+```
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `RONIN_JEV_MODE` | `off` | `off`, `shadow`, or `enforce` |
+| `TYPESAFE_API_KEY` | empty | TypeSafe bearer token. Required for `shadow` and `enforce` |
+| `RONIN_JEV_API_KEY_ENV` | `TYPESAFE_API_KEY` | Alternate environment variable that holds the key |
+| `RONIN_JEV_ENDPOINT` | `https://api.typesafe.ai/v1/systemone` | System One HTTP endpoint |
+| `RONIN_JEV_MODEL` | `jev-latest` | Model id sent in the request |
+| `RONIN_JEV_TIMEOUT` | `800ms` | Per-call timeout |
+| `RONIN_JEV_MIN_CONFIDENCE` | `0.55` | Minimum choice confidence before a deny is honored |
+
+API and timeout failures fail open so a TypeSafe outage cannot stall the coding loop. In `shadow` mode the call always proceeds; use it to compare Jev's verdicts against what you would have blocked by hand before turning on `enforce`.
 
 [Back to README](../README.md)

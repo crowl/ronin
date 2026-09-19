@@ -13,6 +13,7 @@
 - File editing, shell commands, and Go/TypeScript/TSX/Ruby code navigation (including Rails DSLs and Sorbet)
 - Persistent sessions with resume, rewind, and fork
 - Project instructions, reusable skills, MCP servers, and Lua workflows
+- Optional TypeSafe Jev tool gate for `shell`, `write_file`, and `edit_file`
 
 ## Quick start
 
@@ -81,7 +82,7 @@ Sessions are stored separately in `$XDG_DATA_HOME/ronin/ronin.db`, falling back 
 - [Workflows](docs/workflows.md) — Lua agents and managed worktrees
 - [Code navigation](docs/code-navigation.md) — tools, indexing, caching, and parser limitations
 - [Telemetry](docs/telemetry.md) — OTLP setup, execution traces, and metrics
-- [Plugins](docs/plugins.md) — lifecycle events, tool gates, and result filters for in-process extensions
+- [Plugins](docs/plugins.md) — lifecycle events, tool gates, the optional Jev gate, and result filters
 
 ## Status
 
