@@ -13,7 +13,7 @@
 - File editing, shell commands, and Go/TypeScript/TSX/Ruby code navigation (including Rails DSLs and Sorbet)
 - Persistent sessions with resume, rewind, and fork
 - Project instructions, reusable skills, MCP servers, and Lua workflows
-- Optional TypeSafe Jev tool gate for `shell`, `write_file`, and `edit_file`
+- Optional TypeSafe Jev tool gate that scores whether each tool call is relevant to the current task
 
 ## Quick start
 
