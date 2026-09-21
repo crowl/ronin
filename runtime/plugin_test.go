@@ -36,6 +36,48 @@ func runToolPrompt(t *testing.T, host *plugin.Host, args json.RawMessage, echo *
 	return conv.Messages(), collected
 }
 
+func TestPluginGateReceivesPromptAndToolMetadata(t *testing.T) {
+	echo := &argTool{}
+	gateCalled := false
+	policy := &recordingPlugin{gate: func(c plugin.ToolCall) (plugin.Decision, error) {
+		gateCalled = true
+		if c.Task != "inspect the parser" {
+			t.Fatalf("task = %q", c.Task)
+		}
+		if c.Description != echo.Description() {
+			t.Fatalf("description = %q", c.Description)
+		}
+		var parameters map[string]any
+		if err := json.Unmarshal(c.Parameters, &parameters); err != nil || parameters["type"] != "object" {
+			t.Fatalf("parameters = %s, err = %v", c.Parameters, err)
+		}
+		var context []any
+		if err := json.Unmarshal(c.Context, &context); err != nil || len(context) == 0 {
+			t.Fatalf("context = %s, err = %v", c.Context, err)
+		}
+		return plugin.Deny("verified runtime propagation"), nil
+	}}
+	client := &fakeModelClient{model: llm.Model{Provider: "test", Name: "model"}, eventBatches: [][]llm.PredictionEvent{{
+		llm.BlockEnded{Block: llm.ToolCallBlock{ID: "call-1", Name: "echo", Arguments: json.RawMessage(`{"x":1}`)}},
+		llm.PredictionFinished{},
+	}, {llm.PredictionFinished{}}}}
+	conv, err := runtime.NewConversation(runtime.ConversationConfig{CWD: "/work", ModelClient: client, Tools: []runtime.Tool{echo}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, errs := conv.Prompt(plugin.NewContext(t.Context(), plugin.NewHost(policy)), "inspect the parser")
+	_ = collectEvents(events)
+	if err := <-errs; err != nil {
+		t.Fatal(err)
+	}
+	if !gateCalled {
+		t.Fatal("tool gate was not called")
+	}
+	if echo.calls != 0 {
+		t.Fatal("denied tool executed")
+	}
+}
+
 func TestPluginGateDeniesToolCall(t *testing.T) {
 	echo := &argTool{}
 	policy := &recordingPlugin{gate: func(c plugin.ToolCall) (plugin.Decision, error) {

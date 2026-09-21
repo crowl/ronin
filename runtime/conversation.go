@@ -662,6 +662,7 @@ func (c *Conversation) updateMetadata(ctx context.Context, updated session.Sessi
 func (c *Conversation) run(ctx context.Context, prompt string, events chan<- Event) (runErr error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	ctx = withUserTask(ctx, prompt)
 	ctx = llm.WithStructuredUsageRecorder(ctx, c.RecordStructuredUsage)
 	host := plugin.FromContext(ctx)
 	ctx, promptOp := plugin.Begin(ctx)
@@ -995,6 +996,16 @@ func (c *Conversation) executeToolCall(ctx context.Context, events chan<- Event,
 		host.Publish(ctx, plugin.ToolCallDenied{Operation: op, Call: call, Model: model, Rejected: true, Err: err})
 		return c.failToolCall(ctx, events, nil, toolCall, outcome, err)
 	}
+	parameters, err := json.Marshal(t.Parameters())
+	if err != nil {
+		err = fmt.Errorf("marshal tool %q parameters: %w", toolCall.Name, err)
+		host.Publish(ctx, plugin.ToolCallDenied{Operation: op, Call: call, Model: model, Rejected: true, Err: err})
+		return c.failToolCall(ctx, events, t, toolCall, outcome, err)
+	}
+	call.Task = plugin.Task(ctx)
+	call.Description = t.Description()
+	call.Parameters = parameters
+	call.Context = c.toolGateContext()
 	arguments, err := host.GateToolCall(ctx, call)
 	if err != nil {
 		host.Publish(ctx, plugin.ToolCallDenied{Operation: op, Call: call, Model: model, Err: err})
@@ -1028,6 +1039,89 @@ func (c *Conversation) executeToolCall(ctx context.Context, events chan<- Event,
 		return c.failToolCall(ctx, events, t, toolCall, outcome, err)
 	}
 	return c.finishToolCall(ctx, events, t, call, outcome, result)
+}
+
+const (
+	toolGateContextBytes      = 16 << 10
+	toolGateContextFieldBytes = 2 << 10
+)
+
+type toolGateContextMessage struct {
+	Role      string          `json:"role"`
+	Name      string          `json:"name,omitempty"`
+	Text      string          `json:"text,omitempty"`
+	Arguments json.RawMessage `json:"arguments,omitempty"`
+}
+
+// toolGateContext gives gates a bounded, recent model-visible transcript
+// without coupling the plugin package to conversation message types.
+func (c *Conversation) toolGateContext() json.RawMessage {
+	messages, err := c.modelMessages()
+	if err != nil {
+		return nil
+	}
+	context := make([]toolGateContextMessage, 0, len(messages))
+	for _, message := range messages {
+		context = append(context, toolGateContextMessages(message)...)
+	}
+	for len(context) > 0 {
+		data, err := json.Marshal(context)
+		if err != nil {
+			return nil
+		}
+		if len(data) <= toolGateContextBytes {
+			return data
+		}
+		context = context[1:]
+	}
+	return json.RawMessage("[]")
+}
+
+func toolGateContextMessages(message llm.Message) []toolGateContextMessage {
+	errorText := func(err error) string {
+		if err == nil {
+			return ""
+		}
+		return err.Error()
+	}
+	switch m := message.(type) {
+	case llm.UserMessage:
+		return []toolGateContextMessage{{Role: "user", Text: truncateContextField(m.Text)}}
+	case llm.AssistantMessage:
+		messages := make([]toolGateContextMessage, 0, len(m.Blocks))
+		for _, block := range m.Blocks {
+			switch b := block.(type) {
+			case llm.TextBlock:
+				messages = append(messages, toolGateContextMessage{Role: "assistant", Text: truncateContextField(b.Text)})
+			case llm.ToolCallBlock:
+				messages = append(messages, toolGateContextMessage{Role: "assistant_tool_call", Name: b.Name, Arguments: truncateContextJSON(b.Arguments)})
+			}
+		}
+		return messages
+	case llm.ToolOutputMessage:
+		return []toolGateContextMessage{{Role: "tool_output", Name: m.ToolName, Text: truncateContextField(m.ToolOutput)}}
+	case llm.ToolErrorMessage:
+		return []toolGateContextMessage{{Role: "tool_error", Name: m.ToolName, Text: truncateContextField(errorText(m.Error))}}
+	case llm.ErrorMessage:
+		return []toolGateContextMessage{{Role: "error", Text: truncateContextField(errorText(m.Error))}}
+	default:
+		return nil
+	}
+}
+
+func truncateContextField(value string) string {
+	if len(value) <= toolGateContextFieldBytes {
+		return value
+	}
+	return truncateHeadTail(value, toolGateContextFieldBytes)
+}
+
+func truncateContextJSON(value json.RawMessage) json.RawMessage {
+	if len(value) <= toolGateContextFieldBytes {
+		return value
+	}
+	data, _ := json.Marshal(map[string]string{"truncated_json": truncateHeadTail(string(value), toolGateContextFieldBytes)})
+	return data
 }
 
 func (c *Conversation) callIncrementalTool(ctx context.Context, events chan<- Event, incrementalTool IncrementalTool, toolCall llm.ToolCallBlock) (any, error) {

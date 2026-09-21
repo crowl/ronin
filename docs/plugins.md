@@ -1,6 +1,6 @@
 # Plugins
 
-Ronin's execution engine publishes lifecycle events and consults tool hooks through the `plugin` package. Plugins are Go values compiled into the binary and registered in `cmd/ronin/main.go`; they extend Ronin without changes to the runtime, model clients, or workflows. OpenTelemetry export (`telemetry.NewPlugin`) is implemented this way.
+Ronin's execution engine publishes lifecycle events and consults tool hooks through the `plugin` package. Plugins are Go values compiled into the binary and registered in `cmd/ronin/main.go`; they extend Ronin without changes to the runtime, model clients, or workflows. OpenTelemetry export (`telemetry.NewPlugin`) and the default Jev tool gate (`jev.NewPlugin`) are implemented this way.
 
 ## Contract
 
@@ -55,10 +55,46 @@ func (denyRemoval) GateToolCall(_ context.Context, call plugin.ToolCall) (plugin
 }
 ```
 
-Register it alongside the built-in plugins in `cmd/ronin/main.go`:
+Register it with the built-in plugins in `cmd/ronin/main.go`. Jev is enabled
+by default; its API key is required unless the CLI's `-disable-jev` flag is set:
 
 ```go
-plugins := plugin.NewHost(telemetry.NewPlugin(), denyRemoval{})
+plugins := []plugin.Plugin{telemetry.NewPlugin(), denyRemoval{}}
+if !opts.disableJev {
+	apiKey := strings.TrimSpace(os.Getenv("TYPESAFE_API_KEY"))
+	if apiKey == "" {
+		return errors.New("TYPESAFE_API_KEY is required unless -disable-jev is set")
+	}
+	plugins = append(plugins, jev.NewPlugin(apiKey))
+}
+host := plugin.NewHost(plugins...)
 ```
+
+## Jev tool gate
+
+Ronin registers `jev.NewPlugin` by default as a strict
+[TypeSafe Jev](https://docs.typesafe.ai) tool gate. `TYPESAFE_API_KEY` is
+required at startup unless `-disable-jev` is set. There are no other Jev
+environment settings or modes.
+
+Before every tool call, Ronin asks two Noul questions: whether the call is a
+relevant next step for the current user request, and whether it could have an
+irreversible side effect. Asking both questions for every tool also covers
+workflows, MCP tools, and tools added later without maintaining a list of
+mutating tool names. Ronin denies a call when P(relevant) is at most 0.45 or
+P(irreversible) is at least 0.8.
+
+The structured state sent to TypeSafe contains the current user request, bounded
+recent model-visible conversation context, the selected tool's name,
+description, and parameter schema, its proposed arguments as JSON, and the
+working directory. It does not include Ronin's session identifier. This data
+can contain source code, commands, paths, or secrets supplied in tool
+arguments; use `-disable-jev` only when sending that data to TypeSafe is not
+acceptable.
+
+The gate fails closed. A missing request, invalid local state, malformed Jev
+response, network error, rate limit, overload, or timeout denies the tool call.
+HTTP 429 and 529 responses receive bounded retries within a fixed three-second
+deadline. Pass `-disable-jev` to disable Jev behavior.
 
 [Back to README](../README.md)

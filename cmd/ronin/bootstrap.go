@@ -30,6 +30,7 @@ type cliOptions struct {
 	workingDir     string
 	model          string
 	reasoningLevel string
+	disableJev     bool
 	contextFiles   []string
 	skills         []string
 	mcp            []string
@@ -50,6 +51,7 @@ func parseFlags(args []string, usageOutput io.Writer) (cliOptions, error) {
 	fs.StringVar(&opts.workingDir, "working_dir", ".", "Working directory. Defaults to the current directory.")
 	fs.StringVar(&opts.model, "model", "", "Model to use as <provider>:<name>. Overrides the configured model.")
 	fs.StringVar(&opts.reasoningLevel, "reasoning", "", "Reasoning level to use. Overrides the configured reasoning level.")
+	fs.BoolVar(&opts.disableJev, "disable-jev", false, "Disable the TypeSafe Jev tool gate.")
 	fs.Var(&contextFiles, "context-file", "Context file to include in prompt mode. May be repeated.")
 	fs.Var(&skills, "skill", "Skill name, skill directory, or SKILL.md path to include in prompt mode. May be repeated.")
 	fs.Var(&mcp, "mcp", "Configured MCP server to activate. May be repeated; use all to activate every server.")

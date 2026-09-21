@@ -16,7 +16,7 @@ func TestParseFlags(t *testing.T) {
 	t.Run("collects flags and positional arguments", func(t *testing.T) {
 		opts, err := parseFlags([]string{
 			"-resume", "-prompt", "hello", "-working_dir", "/repo",
-			"-model", "openai:gpt", "-reasoning", "high",
+			"-model", "openai:gpt", "-reasoning", "high", "-disable-jev",
 			"-context-file", "a.md", "-context-file", "b.md",
 			"-skill", "git", "-mcp", "docs", "-mcp", "all",
 			"run", "flow.lua", "input",
@@ -30,6 +30,7 @@ func TestParseFlags(t *testing.T) {
 			workingDir:     "/repo",
 			model:          "openai:gpt",
 			reasoningLevel: "high",
+			disableJev:     true,
 			contextFiles:   []string{"a.md", "b.md"},
 			skills:         []string{"git"},
 			mcp:            []string{"docs", "all"},
@@ -45,7 +46,7 @@ func TestParseFlags(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parseFlags() error = %v", err)
 		}
-		if opts.workingDir != "." || opts.version || len(opts.args) != 0 {
+		if opts.workingDir != "." || opts.version || opts.disableJev || len(opts.args) != 0 {
 			t.Fatalf("parseFlags() = %#v", opts)
 		}
 	})

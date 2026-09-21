@@ -13,20 +13,24 @@
 - File editing, shell commands, and Go/TypeScript/TSX/Ruby code navigation (including Rails DSLs and Sorbet)
 - Persistent sessions with resume, rewind, and fork
 - Project instructions, reusable skills, MCP servers, and Lua workflows
+- TypeSafe Jev tool gate enabled by default to score whether each tool call is relevant to the current task
 
 ## Quick start
 
-Download a binary for Linux, macOS, or Windows from [GitHub Releases](https://github.com/crowl/ronin/releases), then set an API key:
+Download a binary for Linux, macOS, or Windows from [GitHub Releases](https://github.com/crowl/ronin/releases), then set model-provider and TypeSafe API keys:
 
 ```sh
 export OPENAI_API_KEY=...
 # or GEMINI_API_KEY=...
 # or ANTHROPIC_API_KEY=...
 # or XAI_API_KEY=...
+export TYPESAFE_API_KEY=tsk_...
 
 cd /path/to/project
 ronin
 ```
+
+Jev is enabled by default. Use `ronin -disable-jev` to run without it and without a TypeSafe API key.
 
 The default configuration selects an OpenAI model. To use another registered model:
 
@@ -81,7 +85,7 @@ Sessions are stored separately in `$XDG_DATA_HOME/ronin/ronin.db`, falling back 
 - [Workflows](docs/workflows.md) — Lua agents and managed worktrees
 - [Code navigation](docs/code-navigation.md) — tools, indexing, caching, and parser limitations
 - [Telemetry](docs/telemetry.md) — OTLP setup, execution traces, and metrics
-- [Plugins](docs/plugins.md) — lifecycle events, tool gates, and result filters for in-process extensions
+- [Plugins](docs/plugins.md) — lifecycle events, tool gates, the default Jev gate, and result filters
 
 ## Status
 

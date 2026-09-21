@@ -19,6 +19,18 @@ Idle time measures a blocked body read, not time spent processing received data.
 Cancellation remains available independently. Timeout failures are reported;
 they do not automatically replay partially observed generations.
 
+## Jev tool gate
+
+Ronin enables its TypeSafe Jev tool gate by default and requires an API key:
+
+```sh
+export TYPESAFE_API_KEY=tsk_...
+```
+
+No other Jev configuration is read. To run without the gate and without a
+TypeSafe API key, pass `-disable-jev`. See [Plugins](plugins.md#jev-tool-gate)
+for its policy and the data sent to TypeSafe.
+
 ## Configuration file
 
 Ronin creates `config.json` in `$XDG_CONFIG_HOME/ronin`, or in `$HOME/.config/ronin` when `XDG_CONFIG_HOME` is unset. It contains the default model, reasoning level, maximum turns, and optional MCP servers.

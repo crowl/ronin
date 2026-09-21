@@ -10,11 +10,7 @@ package plugin
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"log/slog"
-	"runtime/debug"
-	"sync"
 )
 
 // Plugin is the minimum contract. Capabilities are discovered by type
@@ -69,6 +65,15 @@ type ToolCall struct {
 	SessionID string
 	// WorkingDir is the conversation's working directory.
 	WorkingDir string
+	// Description explains the selected tool's behavior.
+	Description string
+	// Parameters is the tool's JSON Schema. Hooks must not mutate it.
+	Parameters json.RawMessage
+	// Context is a bounded JSON representation of recent conversation messages.
+	// Hooks must not mutate it.
+	Context json.RawMessage
+	// Task is the current user prompt the tool call should serve.
+	Task string
 }
 
 // Decision is a ToolGate verdict. The zero value allows the call unchanged.
@@ -85,7 +90,9 @@ func Allow() Decision { return Decision{} }
 func Deny(reason string) Decision { return Decision{denied: true, reason: reason} }
 
 // Rewrite permits the call with replacement arguments.
-func Rewrite(arguments json.RawMessage) Decision { return Decision{arguments: arguments} }
+func Rewrite(arguments json.RawMessage) Decision {
+	return Decision{arguments: arguments}
+}
 
 // DeniedError reports that a ToolGate blocked a tool call.
 type DeniedError struct {

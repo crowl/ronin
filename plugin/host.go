@@ -98,7 +98,9 @@ func (h *Host) GateToolCall(ctx context.Context, call ToolCall) (json.RawMessage
 	if h == nil {
 		return call.Arguments, nil
 	}
-	call.Task = Task(ctx)
+	if call.Task == "" {
+		call.Task = Task(ctx)
+	}
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	for _, p := range h.plugins {

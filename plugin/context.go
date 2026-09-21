@@ -4,6 +4,7 @@ import "context"
 
 type hostKey struct{}
 type parentKey struct{}
+type taskKey struct{}
 
 // NewContext returns a context carrying host. Engine layers publish through
 // FromContext, so installing the host on the root context enables plugins for
@@ -37,4 +38,15 @@ func ParentID(ctx context.Context) string {
 func Begin(ctx context.Context) (context.Context, Operation) {
 	op := NewOperation(ctx)
 	return WithParent(ctx, op.ID), op
+}
+
+// WithTask records the current user task so tool gates can judge relevance.
+func WithTask(ctx context.Context, task string) context.Context {
+	return context.WithValue(ctx, taskKey{}, task)
+}
+
+// Task returns the user task recorded by WithTask, or "".
+func Task(ctx context.Context) string {
+	task, _ := ctx.Value(taskKey{}).(string)
+	return task
 }

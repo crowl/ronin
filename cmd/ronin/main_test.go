@@ -67,6 +67,41 @@ func toolNames(tools []runtime.Tool) []string {
 	return names
 }
 
+func TestBuiltInPlugins(t *testing.T) {
+	t.Run("requires API key when Jev is enabled", func(t *testing.T) {
+		t.Setenv("TYPESAFE_API_KEY", "")
+		plugins, err := builtInPlugins(false)
+		if err == nil || !strings.Contains(err.Error(), "TYPESAFE_API_KEY") {
+			t.Fatalf("builtInPlugins(false) error = %v, want missing key error", err)
+		}
+		if plugins != nil {
+			t.Fatalf("builtInPlugins(false) plugins = %#v, want nil", plugins)
+		}
+	})
+
+	t.Run("enables Jev by default", func(t *testing.T) {
+		t.Setenv("TYPESAFE_API_KEY", " test-key ")
+		plugins, err := builtInPlugins(false)
+		if err != nil {
+			t.Fatalf("builtInPlugins(false) error = %v", err)
+		}
+		if len(plugins) != 2 || plugins[0].Name() != "opentelemetry" || plugins[1].Name() != "jev" {
+			t.Fatalf("builtInPlugins(false) = %#v", plugins)
+		}
+	})
+
+	t.Run("disables Jev without requiring an API key", func(t *testing.T) {
+		t.Setenv("TYPESAFE_API_KEY", "")
+		plugins, err := builtInPlugins(true)
+		if err != nil {
+			t.Fatalf("builtInPlugins(true) error = %v", err)
+		}
+		if len(plugins) != 1 || plugins[0].Name() != "opentelemetry" {
+			t.Fatalf("builtInPlugins(true) = %#v", plugins)
+		}
+	})
+}
+
 func TestVersion(t *testing.T) {
 	original := version
 	t.Cleanup(func() { version = original })

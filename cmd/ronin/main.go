@@ -8,7 +8,9 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 
+	"github.com/crowl/ronin/jev"
 	"github.com/crowl/ronin/plugin"
 	"github.com/crowl/ronin/telemetry"
 )
@@ -41,9 +43,15 @@ func run() int {
 		return 0
 	}
 
+	plugins, err := builtInPlugins(opts.disableJev)
+	if err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+
 	// Plugins outlive the signal context so a final flush can complete
 	// after cancellation. Plugins that fail to start are dropped.
-	host := plugin.NewHost(telemetry.NewPlugin())
+	host := plugin.NewHost(plugins...)
 	if err := host.Start(context.Background()); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "plugin initialization failed; continuing without it: %v\n", err)
 	}
@@ -68,4 +76,17 @@ func run() int {
 		return 1
 	}
 	return 0
+}
+
+func builtInPlugins(disableJev bool) ([]plugin.Plugin, error) {
+	plugins := []plugin.Plugin{telemetry.NewPlugin()}
+	if disableJev {
+		return plugins, nil
+	}
+
+	apiKey := strings.TrimSpace(os.Getenv("TYPESAFE_API_KEY"))
+	if apiKey == "" {
+		return nil, errors.New("TYPESAFE_API_KEY is required unless -disable-jev is set")
+	}
+	return append(plugins, jev.NewPlugin(apiKey)), nil
 }
