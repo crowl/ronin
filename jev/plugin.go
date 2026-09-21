@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"unicode/utf8"
 
@@ -57,7 +58,8 @@ func NewPlugin(apiKey string) *Plugin {
 }
 
 func newPlugin(cfg config, client evaluator) *Plugin {
-	return &Plugin{log: slog.Default(), cfg: cfg, client: client}
+	// Discard by default. slog.Default writes to stderr and corrupts the TUI.
+	return &Plugin{log: slog.New(slog.NewTextHandler(io.Discard, nil)), cfg: cfg, client: client}
 }
 
 func (p *Plugin) Name() string { return "jev" }
@@ -108,17 +110,17 @@ func (p *Plugin) GateToolCall(ctx context.Context, call plugin.ToolCall) (plugin
 	defer cancel()
 	resp, err := p.client.Decide(ctx, state, questions)
 	if err != nil {
-		p.log.Warn("jev tool gate denied after evaluation failure", "tool", call.Name, "error", err)
+		p.log.Debug("jev tool gate denied after evaluation failure", "tool", call.Name, "error", err)
 		return plugin.Deny("Jev evaluation failed: " + err.Error()), nil
 	}
 
 	judgment, err := judgmentFrom(resp.Answers)
 	if err != nil {
-		p.log.Warn("jev tool gate denied malformed response", "tool", call.Name, "error", err)
+		p.log.Debug("jev tool gate denied malformed response", "tool", call.Name, "error", err)
 		return plugin.Deny("Jev returned an invalid response: " + err.Error()), nil
 	}
 	action := Decide(judgment, p.cfg.MinConfidence)
-	p.log.Info("jev tool gate", "tool", call.Name, "action", action.String(), "relevant", judgment.Relevant, "irreversible", judgment.Irreversible)
+	p.log.Debug("jev tool gate", "tool", call.Name, "action", action.String(), "relevant", judgment.Relevant, "irreversible", judgment.Irreversible)
 	if action == ActionDeny {
 		return plugin.Deny(denyReason(judgment)), nil
 	}

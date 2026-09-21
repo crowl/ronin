@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -28,9 +26,7 @@ func (f *fakeEval) Decide(_ context.Context, state any, questions map[string]Que
 }
 
 func testPlugin(eval evaluator) *Plugin {
-	p := newPlugin(config{Timeout: defaultTimeout, MinConfidence: defaultMinConfidence}, eval)
-	p.log = slog.New(slog.NewTextHandler(io.Discard, nil))
-	return p
+	return newPlugin(config{Timeout: defaultTimeout, MinConfidence: defaultMinConfidence}, eval)
 }
 
 func validCall() plugin.ToolCall {
