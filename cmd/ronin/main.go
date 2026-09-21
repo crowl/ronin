@@ -12,6 +12,7 @@ import (
 
 	"github.com/crowl/ronin/jev"
 	"github.com/crowl/ronin/plugin"
+	"github.com/crowl/ronin/plugin/guard"
 	"github.com/crowl/ronin/telemetry"
 )
 
@@ -88,5 +89,9 @@ func builtInPlugins(disableJev bool) ([]plugin.Plugin, error) {
 	if apiKey == "" {
 		return nil, errors.New("TYPESAFE_API_KEY is required unless -disable-jev is set")
 	}
-	return append(plugins, jev.NewPlugin(apiKey)), nil
+	client, err := jev.NewClient(apiKey)
+	if err != nil {
+		return nil, err
+	}
+	return append(plugins, guard.NewPlugin(client)), nil
 }

@@ -4,36 +4,40 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
 	"time"
+	"unicode/utf8"
+
+	"github.com/crowl/ronin/plugin"
 )
 
-// Question is one typed Jev question. Criteria is a map for noul/choice and a
-// string slice for score; it is encoded as-is.
-type Question struct {
+// question is the TypeSafe encoding of a decision question. Criteria is a map
+// for noul/choice and a string slice for score; it is encoded as-is.
+type question struct {
 	Type         string `json:"type"`
 	Instructions string `json:"instructions"`
 	Criteria     any    `json:"criteria,omitempty"`
 }
 
-// Request is the TypeSafe System One request body.
-type Request struct {
+// request is the TypeSafe System One request body.
+type request struct {
 	Model     string              `json:"model"`
 	State     any                 `json:"state"`
-	Questions map[string]Question `json:"questions"`
+	Questions map[string]question `json:"questions"`
 }
 
-// Response is the TypeSafe System One response body.
-type Response struct {
+// response is the TypeSafe System One response body.
+type response struct {
 	Model   string            `json:"model"`
-	Answers map[string]Answer `json:"answers"`
+	Answers map[string]answer `json:"answers"`
 }
 
-// Answer is one typed Jev answer. Unused fields stay zero for other types.
-type Answer struct {
+// answer is the TypeSafe encoding of one typed decision answer.
+type answer struct {
 	Type          string             `json:"type"`
 	Noul          float64            `json:"noul"`
 	Choice        string             `json:"choice"`
@@ -42,7 +46,7 @@ type Answer struct {
 	Probabilities map[string]float64 `json:"probabilities"`
 }
 
-type client struct {
+type Client struct {
 	http     *http.Client
 	endpoint string
 	model    string
@@ -55,8 +59,23 @@ const (
 	maxRetryDelay = time.Second
 )
 
-func newClient(cfg config) *client {
-	return &client{
+// NewClient returns a Jev client that posts decisions to the TypeSafe System
+// One endpoint. The client is safe for concurrent use. apiKey must be
+// non-empty; surrounding whitespace is not trimmed.
+func NewClient(apiKey string) (*Client, error) {
+	if apiKey == "" {
+		return nil, errors.New("jev: API key is required")
+	}
+	return newClient(config{
+		Endpoint: defaultEndpoint,
+		Model:    defaultModel,
+		APIKey:   apiKey,
+		Timeout:  defaultTimeout,
+	}), nil
+}
+
+func newClient(cfg config) *Client {
+	return &Client{
 		http:     &http.Client{Timeout: cfg.Timeout},
 		endpoint: cfg.Endpoint,
 		model:    cfg.Model,
@@ -64,44 +83,68 @@ func newClient(cfg config) *client {
 	}
 }
 
-func (c *client) Decide(ctx context.Context, state any, questions map[string]Question) (Response, error) {
-	body, err := json.Marshal(Request{Model: c.model, State: state, Questions: questions})
+// Decide posts state and questions and returns the decoded answers. Network
+// failures, non-success statuses, and malformed responses are returned as
+// errors; 429 and 529 are retried a bounded number of times.
+func (c *Client) Decide(ctx context.Context, state any, questions map[string]plugin.Question) (map[string]plugin.Answer, error) {
+	body, err := json.Marshal(request{Model: c.model, State: state, Questions: encodeQuestions(questions)})
 	if err != nil {
-		return Response{}, err
+		return nil, err
 	}
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		resp, err := c.do(ctx, body)
 		if err != nil {
-			return Response{}, err
+			return nil, err
 		}
 		payload, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		_ = resp.Body.Close()
 		if readErr != nil {
-			return Response{}, readErr
+			return nil, readErr
 		}
 		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == 529 {
 			if attempt < maxAttempts {
 				if err := waitForRetry(ctx, retryDelay(resp, attempt)); err != nil {
-					return Response{}, err
+					return nil, err
 				}
 				continue
 			}
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return Response{}, fmt.Errorf("typesafe %s: %s", resp.Status, truncate(string(payload), 256))
+			return nil, fmt.Errorf("typesafe %s: %s", resp.Status, truncateBytes(payload, 256))
 		}
 
-		var out Response
+		var out response
 		if err := json.Unmarshal(payload, &out); err != nil {
-			return Response{}, fmt.Errorf("decode typesafe response: %w", err)
+			return nil, fmt.Errorf("decode typesafe response: %w", err)
 		}
-		return out, nil
+		return decodeAnswers(out.Answers), nil
 	}
-	return Response{}, errorsAfterRetries()
+	return nil, errorsAfterRetries()
 }
 
-func (c *client) do(ctx context.Context, body []byte) (*http.Response, error) {
+func encodeQuestions(in map[string]plugin.Question) map[string]question {
+	out := make(map[string]question, len(in))
+	for name, q := range in {
+		out[name] = question{Type: q.Type, Instructions: q.Instructions, Criteria: q.Criteria}
+	}
+	return out
+}
+
+func decodeAnswers(in map[string]answer) map[string]plugin.Answer {
+	out := make(map[string]plugin.Answer, len(in))
+	for name, a := range in {
+		out[name] = plugin.Answer{
+			Type: a.Type, Noul: a.Noul, Choice: a.Choice, Score: a.Score,
+			Confidence: a.Confidence, Probabilities: a.Probabilities,
+		}
+	}
+	return out
+}
+
+var _ plugin.Decider = (*Client)(nil)
+
+func (c *Client) do(ctx context.Context, body []byte) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -132,4 +175,15 @@ func waitForRetry(ctx context.Context, delay time.Duration) error {
 
 func errorsAfterRetries() error {
 	return fmt.Errorf("typesafe request failed after %d attempts", maxAttempts)
+}
+
+func truncateBytes(b []byte, n int) string {
+	if n <= 0 || len(b) <= n {
+		return string(b)
+	}
+	b = b[:n]
+	for !utf8.Valid(b) {
+		b = b[:len(b)-1]
+	}
+	return string(b)
 }

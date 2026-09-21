@@ -85,7 +85,7 @@ func TestBuiltInPlugins(t *testing.T) {
 		if err != nil {
 			t.Fatalf("builtInPlugins(false) error = %v", err)
 		}
-		if len(plugins) != 2 || plugins[0].Name() != "opentelemetry" || plugins[1].Name() != "jev" {
+		if len(plugins) != 2 || plugins[0].Name() != "opentelemetry" || plugins[1].Name() != "guard" {
 			t.Fatalf("builtInPlugins(false) = %#v", plugins)
 		}
 	})
