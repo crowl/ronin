@@ -139,7 +139,7 @@ func renderShellOutputLines(box shellOutputBox, width int) []string {
 	}
 
 	appendOutput(box.Stdout, style{})
-	appendOutput(box.Stderr, errorStyle)
+	appendOutput(box.Stderr, style{})
 	if box.StdoutTruncated || box.StderrTruncated {
 		lines = append(lines, mutedStyle.apply("[output truncated]"))
 	}

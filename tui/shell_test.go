@@ -157,8 +157,8 @@ func TestShellOutputDisplay(t *testing.T) {
 	if !strings.Contains(plain, "output") || !strings.Contains(plain, "problem") {
 		t.Fatalf("shell output missing:\n%s", plain)
 	}
-	if !strings.Contains(lines[len(lines)-1], errorStyle.start()) {
-		t.Fatalf("stderr is not red: %q", lines[len(lines)-1])
+	if strings.Contains(lines[len(lines)-1], errorStyle.start()) {
+		t.Fatalf("stderr is red: %q", lines[len(lines)-1])
 	}
 }
 
@@ -166,18 +166,17 @@ func TestRenderShellOutputStreams(t *testing.T) {
 	for _, test := range []struct {
 		name string
 		box  shellOutputBox
-		red  bool
 	}{
 		{name: "stdout", box: shellOutputBox{Stdout: "output"}},
-		{name: "stderr", box: shellOutputBox{Stderr: "problem"}, red: true},
+		{name: "stderr", box: shellOutputBox{Stderr: "problem"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			lines := renderBoxLines(test.box, 80, false)
 			if got := strings.Join(plainLines(lines), "\n"); got != " "+test.box.Stdout+test.box.Stderr {
 				t.Fatalf("rendered output = %q", got)
 			}
-			if got := strings.Contains(lines[0], errorStyle.start()); got != test.red {
-				t.Fatalf("red style = %v, want %v: %q", got, test.red, lines[0])
+			if strings.Contains(lines[0], errorStyle.start()) {
+				t.Fatalf("stream is red: %q", lines[0])
 			}
 		})
 	}
@@ -206,8 +205,8 @@ func TestShellOutputHistoryDisplay(t *testing.T) {
 	if strings.Contains(metadata, "stdout:") || strings.Contains(metadata, "stderr:") || strings.Contains(metadata, "exit code") {
 		t.Fatalf("shell metadata displayed:\n%s", plain)
 	}
-	if !strings.Contains(lines[len(lines)-1], errorStyle.start()) {
-		t.Fatalf("restored stderr is not red: %q", lines[len(lines)-1])
+	if strings.Contains(lines[len(lines)-1], errorStyle.start()) {
+		t.Fatalf("restored stderr is red: %q", lines[len(lines)-1])
 	}
 }
 
