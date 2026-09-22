@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 	"uuid"
 
 	"github.com/crowl/ronin/config"
@@ -1005,7 +1006,7 @@ func (c *Conversation) executeToolCall(ctx context.Context, events chan<- Event,
 	call.Task = plugin.Task(ctx)
 	call.Description = t.Description()
 	call.Parameters = parameters
-	call.Context = c.toolGateContext()
+	call.Context = c.toolGateContext(toolCall.ID)
 	arguments, err := host.GateToolCall(ctx, call)
 	if err != nil {
 		host.Publish(ctx, plugin.ToolCallDenied{Operation: op, Call: call, Model: model, Err: err})
@@ -1041,9 +1042,16 @@ func (c *Conversation) executeToolCall(ctx context.Context, events chan<- Event,
 	return c.finishToolCall(ctx, events, t, call, outcome, result)
 }
 
+// Tool gate context budgets. Conversation text (user requests, assistant
+// prose and thinking, prior tool calls, errors) is what a relevance judgment
+// needs, so it gets a generous per-field cap and is kept in preference to
+// tool output, which is mostly file contents and command dumps. Tool output
+// is reduced to a short head, enough to show the paths and names that link
+// one call to the next, and only fills whatever budget remains.
 const (
-	toolGateContextBytes      = 16 << 10
-	toolGateContextFieldBytes = 2 << 10
+	toolGateContextBytes       = 16 << 10
+	toolGateContextFieldBytes  = 2 << 10
+	toolGateContextOutputBytes = 256
 )
 
 type toolGateContextMessage struct {
@@ -1051,69 +1059,141 @@ type toolGateContextMessage struct {
 	Name      string          `json:"name,omitempty"`
 	Text      string          `json:"text,omitempty"`
 	Arguments json.RawMessage `json:"arguments,omitempty"`
+	// Pending marks the tool call currently being gated.
+	Pending bool `json:"pending,omitempty"`
+}
+
+// toolGateEntry is a context message with its priority tier for eviction.
+type toolGateEntry struct {
+	message toolGateContextMessage
+	output  bool
 }
 
 // toolGateContext gives gates a bounded, recent model-visible transcript
-// without coupling the plugin package to conversation message types.
-func (c *Conversation) toolGateContext() json.RawMessage {
-	messages, err := c.modelMessages()
+// without coupling the plugin package to conversation message types. The
+// result is chronological. Conversation entries are retained newest-first
+// before any tool output is considered, so a run of large tool results
+// cannot evict the user requests and assistant reasoning that explain the
+// pending call. The call identified by pendingID is flagged.
+func (c *Conversation) toolGateContext(pendingID string) json.RawMessage {
+	// Use the unprojected transcript: provider projection strips thinking
+	// blocks from other providers, but they remain useful evidence here.
+	messages, err := session.ModelMessages(c.messages)
 	if err != nil {
 		return nil
 	}
-	context := make([]toolGateContextMessage, 0, len(messages))
+	entries := make([]toolGateEntry, 0, len(messages))
 	for _, message := range messages {
-		context = append(context, toolGateContextMessages(message)...)
+		entries = append(entries, toolGateContextEntries(message, pendingID)...)
 	}
-	for len(context) > 0 {
-		data, err := json.Marshal(context)
-		if err != nil {
-			return nil
-		}
-		if len(data) <= toolGateContextBytes {
-			return data
-		}
-		context = context[1:]
+	selected := selectToolGateEntries(entries, toolGateContextBytes)
+	data, err := json.Marshal(selected)
+	if err != nil {
+		return nil
 	}
-	return json.RawMessage("[]")
+	return data
 }
 
-func toolGateContextMessages(message llm.Message) []toolGateContextMessage {
+// selectToolGateEntries keeps conversation entries newest-first within
+// budget, then tool outputs newest-first in the remaining budget, and returns
+// the kept messages in their original order.
+func selectToolGateEntries(entries []toolGateEntry, budget int) []toolGateContextMessage {
+	const bracketBytes, separatorBytes = 2, 1
+	remaining := budget - bracketBytes
+	keep := make([]bool, len(entries))
+	pass := func(output bool) {
+		for i := len(entries) - 1; i >= 0; i-- {
+			if entries[i].output != output {
+				continue
+			}
+			data, err := json.Marshal(entries[i].message)
+			if err != nil {
+				continue
+			}
+			cost := len(data) + separatorBytes
+			if cost > remaining {
+				if output {
+					continue
+				}
+				break
+			}
+			remaining -= cost
+			keep[i] = true
+		}
+	}
+	pass(false)
+	pass(true)
+	selected := make([]toolGateContextMessage, 0, len(entries))
+	for i, entry := range entries {
+		if keep[i] {
+			selected = append(selected, entry.message)
+		}
+	}
+	return selected
+}
+
+func toolGateContextEntries(message llm.Message, pendingID string) []toolGateEntry {
 	errorText := func(err error) string {
 		if err == nil {
 			return ""
 		}
 		return err.Error()
 	}
+	text := func(role, name, value string) toolGateEntry {
+		return toolGateEntry{message: toolGateContextMessage{Role: role, Name: name, Text: truncateContextField(value, toolGateContextFieldBytes)}}
+	}
 	switch m := message.(type) {
 	case llm.UserMessage:
-		return []toolGateContextMessage{{Role: "user", Text: truncateContextField(m.Text)}}
+		return []toolGateEntry{text("user", "", m.Text)}
 	case llm.AssistantMessage:
-		messages := make([]toolGateContextMessage, 0, len(m.Blocks))
+		entries := make([]toolGateEntry, 0, len(m.Blocks))
 		for _, block := range m.Blocks {
 			switch b := block.(type) {
 			case llm.TextBlock:
-				messages = append(messages, toolGateContextMessage{Role: "assistant", Text: truncateContextField(b.Text)})
+				entries = append(entries, text("assistant", "", b.Text))
+			case llm.ThinkingBlock:
+				if b.Text != "" {
+					entries = append(entries, text("assistant_thinking", "", b.Text))
+				}
 			case llm.ToolCallBlock:
-				messages = append(messages, toolGateContextMessage{Role: "assistant_tool_call", Name: b.Name, Arguments: truncateContextJSON(b.Arguments)})
+				entries = append(entries, toolGateEntry{message: toolGateContextMessage{
+					Role:      "assistant_tool_call",
+					Name:      b.Name,
+					Arguments: truncateContextJSON(b.Arguments),
+					Pending:   pendingID != "" && b.ID == pendingID,
+				}})
 			}
 		}
-		return messages
+		return entries
 	case llm.ToolOutputMessage:
-		return []toolGateContextMessage{{Role: "tool_output", Name: m.ToolName, Text: truncateContextField(m.ToolOutput)}}
+		return []toolGateEntry{{message: toolGateContextMessage{Role: "tool_output", Name: m.ToolName, Text: truncateHead(m.ToolOutput, toolGateContextOutputBytes)}, output: true}}
 	case llm.ToolErrorMessage:
-		return []toolGateContextMessage{{Role: "tool_error", Name: m.ToolName, Text: truncateContextField(errorText(m.Error))}}
+		return []toolGateEntry{text("tool_error", m.ToolName, errorText(m.Error))}
 	case llm.ErrorMessage:
-		return []toolGateContextMessage{{Role: "error", Text: truncateContextField(errorText(m.Error))}}
+		return []toolGateEntry{text("error", "", errorText(m.Error))}
 	default:
 		return nil
 	}
 }
 
-func truncateContextField(value string) string {
-	if len(value) <= toolGateContextFieldBytes {
+func truncateContextField(value string, limit int) string {
+	if len(value) <= limit {
 		return value
 	}
-	return truncateHeadTail(value, toolGateContextFieldBytes)
+	return truncateHeadTail(value, limit)
+}
+
+// truncateHead keeps the first limit bytes on a rune boundary and marks the
+// cut so the reader knows the rest was dropped.
+func truncateHead(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	cut := limit
+	for cut > 0 && !utf8.RuneStart(value[cut]) {
+		cut--
+	}
+	return value[:cut] + "\n[... truncated]"
 }
 
 func truncateContextJSON(value json.RawMessage) json.RawMessage {
