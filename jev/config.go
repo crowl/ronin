@@ -5,7 +5,7 @@ import "time"
 const (
 	defaultEndpoint = "https://api.typesafe.ai/v1/systemone"
 	defaultModel    = "jev-latest"
-	defaultTimeout  = 3 * time.Second
+	defaultTimeout  = 10 * time.Second
 )
 
 // config holds the fixed Jev client connection settings. It is intentionally

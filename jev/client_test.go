@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/crowl/ronin/plugin"
 )
@@ -81,7 +82,7 @@ func TestNewClientUsesFixedConfiguration(t *testing.T) {
 	if client.endpoint != defaultEndpoint || client.model != defaultModel || client.apiKey != " key " {
 		t.Fatalf("client = %+v", client)
 	}
-	if client.http == nil || client.http.Timeout != defaultTimeout {
-		t.Fatalf("http client = %+v", client.http)
+	if client.http == nil || client.http.Timeout != 10*time.Second {
+		t.Fatalf("http client timeout = %v, want 10s", client.http)
 	}
 }
