@@ -7,8 +7,8 @@ import (
 )
 
 // verdict denies when the call is confidently off task. Shell calls are also
-// denied when they confidently read or write files outside the harness file
-// tools. A shell response must include the bypass answer.
+// denied when they confidently inspect or ad-hoc edit files outside the
+// harness file tools. A shell response must include the bypass answer.
 func verdict(answers map[string]plugin.Answer, shell bool) error {
 	if answers == nil {
 		return fmt.Errorf("guard evaluation returned an invalid response: answers are missing")

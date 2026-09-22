@@ -1,6 +1,7 @@
 // Package guard gates tool calls with one decision request. Every call is
-// checked for relevance. Shell calls are also checked for file access that
-// bypasses the harness file tools.
+// checked for relevance. Shell calls are also checked for file inspection or
+// ad-hoc edits that bypass the harness file tools. Ordinary tooling that must
+// rewrite files, such as formatters and git restore, is not a bypass.
 package guard
 
 import (
@@ -36,12 +37,14 @@ var relevanceQuestion = plugin.Question{
 
 var fileBypassQuestion = plugin.Question{
 	Type: "noul",
-	Instructions: "Does this shell command read or modify file contents in a way that bypasses the harness file tools (read_file, edit_file, write_file)? " +
-		"Count pipelines and chained commands. Answer yes for cat, head, tail, sed, awk, perl, python, dd, tee, redirection, and similar file IO. " +
-		"Answer no for commands that do not touch file contents, such as git status, go test, ls, or echo without redirection.",
+	Instructions: "Does this shell command inspect or rewrite file contents in place of the harness file tools (read_file, edit_file, write_file)? " +
+		"Count pipelines and chained commands. Answer yes for cat, head, tail, sed, awk, perl, python, dd, tee, redirection, and similar file IO used to view, dump, or patch file contents. " +
+		"Answer no for commands that do not touch file contents, such as git status, go test, ls, or echo without redirection. " +
+		"Also answer no for ordinary development tooling that must read or rewrite files to do its job, such as gofmt, goimports, rustfmt, prettier, and git checkout or git restore of tracked paths. " +
+		"A formatter or git restore is not a bypass even though it rewrites file bytes.",
 	Criteria: map[string]string{
-		"true":  "The command reads or writes file contents outside the harness file tools, including through a pipe, chain, or redirection.",
-		"false": "The command does not read or write file contents.",
+		"true":  "The command views, dumps, or patches file contents outside the harness file tools, including through a pipe, chain, or redirection.",
+		"false": "The command does not inspect or ad-hoc edit file contents. Formatters, compilers, test runners, and git checkout/restore of tracked files are not bypasses.",
 	},
 }
 
@@ -63,7 +66,8 @@ func NewPlugin(decider plugin.Decider) *Plugin {
 func (p *Plugin) Name() string { return "guard" }
 
 // GateToolCall asks whether the call is relevant and, for shell, whether it
-// bypasses the harness file tools. Both questions go in one decision request.
+// inspects or ad-hoc edits files outside the harness file tools. Both
+// questions go in one decision request.
 func (p *Plugin) GateToolCall(ctx context.Context, call plugin.ToolCall) (plugin.Decision, error) {
 	if p.decider == nil {
 		return plugin.Deny("guard is not initialized"), nil
