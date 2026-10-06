@@ -5,7 +5,6 @@ import (
 	"github.com/crowl/ronin/tool"
 	"github.com/crowl/ronin/tool/shell"
 	"github.com/crowl/ronin/tui/internal/terminal"
-	"github.com/crowl/ronin/workflow"
 )
 
 type terminalKeyRead struct{ Key terminal.Key }
@@ -22,8 +21,6 @@ type mcpActivationDone struct {
 	Activated bool
 	Err       error
 }
-type workflowEventReceived struct{ Event workflow.Event }
-type workflowDone struct{ Err error }
 type shellOutputReceived struct {
 	Stream tool.ShellStream
 	Text   string
@@ -49,6 +46,4 @@ func (conversationErrorReceived) event()  {}
 func (conversationPromptDone) event()     {}
 func (conversationCompactionDone) event() {}
 func (mcpActivationDone) event()          {}
-func (workflowEventReceived) event()      {}
-func (workflowDone) event()               {}
 func (shellCommandDone) event()           {}

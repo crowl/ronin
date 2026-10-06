@@ -2,7 +2,6 @@ package telemetry_test
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
@@ -17,9 +16,7 @@ func TestPluginRebuildsSpanTreeFromEvents(t *testing.T) {
 	ctx := plugin.NewContext(context.Background(), plugin.NewHost(p))
 	model := plugin.Model{Provider: "provider", Name: "model-a"}
 
-	wfCtx, wf := plugin.Begin(ctx)
-	p.Observe(ctx, plugin.WorkflowStarted{Operation: wf, Name: "flow.lua"})
-	turnCtx, turn := plugin.Begin(wfCtx)
+	turnCtx, turn := plugin.Begin(ctx)
 	p.Observe(ctx, plugin.PromptTurnStarted{Operation: turn, SessionID: "s", Model: model})
 	cycleCtx, cycle := plugin.Begin(turnCtx)
 	p.Observe(ctx, plugin.CycleStarted{Operation: cycle, Index: 1, Model: model})
@@ -37,7 +34,6 @@ func TestPluginRebuildsSpanTreeFromEvents(t *testing.T) {
 	p.Observe(ctx, plugin.ToolCallDenied{Operation: denied, Call: plugin.ToolCall{ID: "call-2", Name: "shell"}, Model: model, Err: &plugin.DeniedError{Plugin: "policy", Reason: "secret reason"}})
 	p.Observe(ctx, plugin.CycleEnded{Operation: cycle})
 	p.Observe(ctx, plugin.PromptTurnEnded{Operation: turn, Cycles: 1})
-	p.Observe(ctx, plugin.WorkflowEnded{Operation: wf, Err: errors.New("secret failure")})
 
 	byName := map[string][]tracetest.SpanStub{}
 	for _, s := range exporter.GetSpans() {
@@ -50,9 +46,9 @@ func TestPluginRebuildsSpanTreeFromEvents(t *testing.T) {
 		}
 		return byName[name][0]
 	}
-	workflow, prompt, cycleSpan, request := one("ronin.workflow"), one("ronin.prompt_turn"), one("ronin.cycle"), one("ronin.request")
+	prompt, cycleSpan, request := one("ronin.prompt_turn"), one("ronin.cycle"), one("ronin.request")
 	attemptSpan := one("ronin.http_attempt")
-	if prompt.Parent.SpanID() != workflow.SpanContext.SpanID() || cycleSpan.Parent.SpanID() != prompt.SpanContext.SpanID() || request.Parent.SpanID() != cycleSpan.SpanContext.SpanID() || attemptSpan.Parent.SpanID() != request.SpanContext.SpanID() {
+	if cycleSpan.Parent.SpanID() != prompt.SpanContext.SpanID() || request.Parent.SpanID() != cycleSpan.SpanContext.SpanID() || attemptSpan.Parent.SpanID() != request.SpanContext.SpanID() {
 		t.Fatal("span parentage does not follow operation IDs")
 	}
 	if attr(attemptSpan.Attributes, "http.response.status_code").AsInt64() != 200 || attr(request.Attributes, "gen_ai.response.finish_reason").AsString() != "tool_use" {
@@ -82,9 +78,6 @@ func TestPluginRebuildsSpanTreeFromEvents(t *testing.T) {
 		if s.Status.Description == "secret reason" {
 			t.Fatal("denial reason exported")
 		}
-	}
-	if workflow.Status.Description == "secret failure" || attr(workflow.Attributes, "ronin.workflow.name").AsString() != "flow.lua" {
-		t.Fatalf("workflow span: %v %v", workflow.Status, workflow.Attributes)
 	}
 }
 

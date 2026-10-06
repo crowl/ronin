@@ -7,9 +7,9 @@ import (
 	"github.com/crowl/ronin/tool"
 )
 
-const workflowTruncatedSuffix = "\n... truncated"
+const truncatedSuffix = "\n... truncated"
 
-func truncateWorkflowText(value string, limit int) string {
+func truncateText(value string, limit int) string {
 	if limit <= 0 {
 		return ""
 	}
@@ -17,7 +17,7 @@ func truncateWorkflowText(value string, limit int) string {
 		return strings.Clone(value)
 	}
 
-	suffix := workflowTruncatedSuffix
+	suffix := truncatedSuffix
 	if len(suffix) > limit {
 		suffix = suffix[:limit]
 	}
@@ -28,7 +28,7 @@ func truncateWorkflowText(value string, limit int) string {
 	return string([]byte(value[:prefixLimit])) + suffix
 }
 
-func truncateWorkflowPrefix(value string, limit int) string {
+func truncatePrefix(value string, limit int) string {
 	if limit <= 0 {
 		return ""
 	}
@@ -42,15 +42,11 @@ func truncateWorkflowPrefix(value string, limit int) string {
 	return string([]byte(value[:end]))
 }
 
-func boundWorkflowText(value string, limit int) string {
-	return truncateWorkflowText(value, limit)
+func boundText(value string, limit int) string {
+	return truncateText(value, limit)
 }
 
-func boundWorkflowSummary(value string) string {
-	return truncateWorkflowText(value, maxWorkflowSummaryBytes)
-}
-
-func workflowArtifactContentBytes(artifact tool.Artifact) int {
+func artifactContentBytes(artifact tool.Artifact) int {
 	switch artifact := artifact.(type) {
 	case tool.TextArtifact:
 		return len(artifact.Text)
@@ -68,7 +64,7 @@ func workflowArtifactContentBytes(artifact tool.Artifact) int {
 		return 0
 	}
 }
-func workflowArtifactContent(artifact tool.Artifact) string {
+func artifactContent(artifact tool.Artifact) string {
 	switch artifact := artifact.(type) {
 	case tool.TextArtifact:
 		return artifact.Text
@@ -87,9 +83,9 @@ func workflowArtifactContent(artifact tool.Artifact) string {
 	}
 }
 
-func boundWorkflowArtifact(artifact tool.Artifact, limit int) (tool.Artifact, int, bool) {
+func boundArtifact(artifact tool.Artifact, limit int) (tool.Artifact, int, bool) {
 	if limit <= 0 {
-		return tool.FileMetadataArtifact{}, 0, workflowArtifactContentBytes(artifact) > 0
+		return tool.FileMetadataArtifact{}, 0, artifactContentBytes(artifact) > 0
 	}
 	if typed, ok := artifact.(tool.FileMetadataArtifact); ok {
 		const prefix = "Already in context ("
@@ -98,11 +94,11 @@ func boundWorkflowArtifact(artifact tool.Artifact, limit int) (tool.Artifact, in
 			return tool.FileMetadataArtifact{}, 0, true
 		}
 		idLimit := limit - len(prefix) - len(suffix)
-		boundedID := truncateWorkflowPrefix(typed.FileID, idLimit)
+		boundedID := truncatePrefix(typed.FileID, idLimit)
 		used := len(prefix) + len(boundedID) + len(suffix)
 		return tool.FileMetadataArtifact{FileID: boundedID}, used, used < len(prefix)+len(typed.FileID)+len(suffix)
 	}
-	content := workflowArtifactContent(artifact)
+	content := artifactContent(artifact)
 	if content == "" {
 		switch artifact := artifact.(type) {
 		case tool.FileArtifact:
@@ -117,7 +113,7 @@ func boundWorkflowArtifact(artifact tool.Artifact, limit int) (tool.Artifact, in
 		}
 		return artifact, 0, false
 	}
-	bounded := truncateWorkflowPrefix(content, limit)
+	bounded := truncatePrefix(content, limit)
 	used := len(bounded)
 	truncated := len(content) > used
 

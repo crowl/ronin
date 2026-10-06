@@ -104,7 +104,7 @@ func (app *app) startShell(ctx context.Context, command string) {
 				status.Error = "command timed out"
 			}
 			if err != nil {
-				status.Error = truncateWorkflowText(err.Error(), session.MaxShellErrorBytes)
+				status.Error = truncateText(err.Error(), session.MaxShellErrorBytes)
 			}
 			err = errors.Join(err, history.RecordShellEvent(session.Event{Type: session.EventShellStatus, ShellStatus: &status}))
 		}

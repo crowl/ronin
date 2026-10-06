@@ -3,7 +3,6 @@ module github.com/crowl/ronin
 go 1.27.0
 
 require (
-	github.com/Shopify/go-lua v0.0.0-20250718183320-1e37f32ad7d0
 	github.com/tree-sitter/go-tree-sitter v0.25.0
 	github.com/tree-sitter/tree-sitter-go v0.25.0
 	github.com/tree-sitter/tree-sitter-ruby v0.23.1

@@ -114,8 +114,6 @@ func renderBoxContentLinesAt(block box, width int, toolsExpanded bool, now time.
 		}
 		duration := max(0, endedAt.Sub(typedBlock.StartedAt).Seconds())
 		return append(lines, mutedStyle.apply(fmt.Sprintf("  %s %.1fs", label, duration)))
-	case workflowBox:
-		return renderWorkflowBoxLines(typedBlock, width, toolsExpanded, now)
 	case systemMessageBox:
 		return markedLines(toolMarker, typedBlock.Text, width, style{})
 	case shellOutputBox:
@@ -216,7 +214,6 @@ const (
 type editorPresenter struct {
 	Text   []rune
 	Cursor int
-	Label  string
 }
 
 func (p editorPresenter) Lines(width int) []string {
@@ -226,9 +223,6 @@ func (p editorPresenter) Lines(width int) []string {
 	cursorLine, cursorColumn := editorCursorLineColumn(p.Text, cursor)
 
 	lines := make([]string, 0, len(logicalLines)+3)
-	if p.Label != "" {
-		lines = append(lines, "% "+p.Label)
-	}
 
 	firstVisualLine := true
 	for logicalLineIndex, logicalLine := range logicalLines {

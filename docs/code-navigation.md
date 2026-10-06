@@ -1,6 +1,6 @@
 # Code navigation
 
-`code_map` and `code_find` are available in terminal/prompt sessions and workflow agents, including read-only and managed-worktree agents. They do not grant shell access.
+`code_map` and `code_find` are available in terminal and prompt sessions. They do not grant shell access.
 
 Example tool arguments:
 

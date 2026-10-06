@@ -339,18 +339,6 @@ func (c *Conversation) CompactConversation(ctx context.Context) error {
 	return c.compact(ctx)
 }
 
-func (c *Conversation) RecordWorkflowResult(message session.WorkflowResultMessage) error {
-	if message.Timestamp.IsZero() {
-		message.Timestamp = c.now()
-	}
-	ctx, cancel := detachedPersistenceContext()
-	defer cancel()
-	if err := c.appendMessage(ctx, message); err != nil {
-		return fmt.Errorf("save workflow result: %w", err)
-	}
-	return nil
-}
-
 type RewindPoint struct {
 	MessageIndex int
 	Prompt       string

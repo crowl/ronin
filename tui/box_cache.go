@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"crypto/sha256"
 	"fmt"
 	"strings"
 	"time"
@@ -17,18 +16,17 @@ type boxLineCacheEntry struct {
 }
 
 type boxLineSignature struct {
-	Revision       uint64
-	Truncated      bool
-	Kind           string
-	Width          int
-	ToolsExpanded  bool
-	ToolCallID     string
-	Title          string
-	Text           string
-	WorkflowDigest [32]byte
-	StartedAt      int64
-	EndedAt        int64
-	ElapsedBucket  int64
+	Revision      uint64
+	Truncated     bool
+	Kind          string
+	Width         int
+	ToolsExpanded bool
+	ToolCallID    string
+	Title         string
+	Text          string
+	StartedAt     int64
+	EndedAt       int64
+	ElapsedBucket int64
 }
 
 func toolCallSignatureText(box toolCallBox) string {
@@ -111,23 +109,6 @@ func boxSignature(block box, width int, toolsExpanded bool, now time.Time) boxLi
 			duration := max(now.Sub(typedBlock.StartedAt), 0)
 			signature.ElapsedBucket = int64((duration + 50*time.Millisecond) / (100 * time.Millisecond))
 		}
-	case workflowBox:
-		signature.Kind = "workflow"
-		signature.StartedAt = typedBlock.StartedAt.UnixNano()
-		signature.EndedAt = typedBlock.EndedAt.UnixNano()
-		if typedBlock.EndedAt.IsZero() {
-			duration := max(now.Sub(typedBlock.StartedAt), 0)
-			signature.ElapsedBucket = int64((duration + 50*time.Millisecond) / (100 * time.Millisecond))
-		}
-		signature.Text = fmt.Sprintf("%q:%q:%q:%q:%d", typedBlock.Name, typedBlock.Input, typedBlock.Status, typedBlock.Summary, typedBlock.Completed)
-		digest := sha256.New()
-		_, _ = fmt.Fprintf(digest, "%q;", typedBlock.LatestActivity)
-		for _, steps := range [][]workflowStep{typedBlock.Active, typedBlock.Recent} {
-			for _, step := range steps {
-				_, _ = fmt.Fprintf(digest, "%d:%q:%q:%q:%d:%d;", step.Invocation, step.Name, step.Status, step.Error, step.StartedAt.UnixNano(), step.EndedAt.UnixNano())
-			}
-		}
-		copy(signature.WorkflowDigest[:], digest.Sum(nil))
 	case systemMessageBox:
 		signature.Kind = "system"
 		signature.Text = typedBlock.Text

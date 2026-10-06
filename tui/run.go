@@ -11,12 +11,7 @@ import (
 	"github.com/crowl/ronin/session"
 	"github.com/crowl/ronin/tui/internal/render"
 	"github.com/crowl/ronin/tui/internal/terminal"
-	"github.com/crowl/ronin/workflow"
 )
-
-type WorkflowRunner interface {
-	Run(context.Context, workflow.Workflow, string, func(workflow.Event)) workflow.Result
-}
 
 type Conversation interface {
 	CWD() string
@@ -25,7 +20,6 @@ type Conversation interface {
 	ContextUsage() llm.Usage
 	SessionUsage() llm.Usage
 	Messages() []session.Message
-	RecordWorkflowResult(session.WorkflowResultMessage) error
 	NewConversation() error
 	CompactConversation(context.Context) error
 	SwitchModel(llm.Model) error
@@ -45,12 +39,11 @@ type MCPActivator interface {
 }
 
 type Config struct {
-	Conversation   Conversation
-	WorkflowRunner WorkflowRunner
-	MCPActivator   MCPActivator
-	Commands       []Command
-	Input          *os.File
-	Output         *os.File
+	Conversation Conversation
+	MCPActivator MCPActivator
+	Commands     []Command
+	Input        *os.File
+	Output       *os.File
 }
 
 func Run(ctx context.Context, cfg Config) (runErr error) {
@@ -80,12 +73,11 @@ func Run(ctx context.Context, cfg Config) (runErr error) {
 	}
 
 	application, err := newApp(appConfig{
-		Terminal:       term,
-		Conversation:   cfg.Conversation,
-		WorkflowRunner: cfg.WorkflowRunner,
-		MCPActivator:   cfg.MCPActivator,
-		Renderer:       renderer,
-		Commands:       cfg.Commands,
+		Terminal:     term,
+		Conversation: cfg.Conversation,
+		MCPActivator: cfg.MCPActivator,
+		Renderer:     renderer,
+		Commands:     cfg.Commands,
 	})
 	if err != nil {
 		return fmt.Errorf("create app: %w", err)

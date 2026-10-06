@@ -14,7 +14,6 @@ import (
 	"github.com/crowl/ronin/runtime"
 	"github.com/crowl/ronin/session"
 	"github.com/crowl/ronin/tui"
-	"github.com/crowl/ronin/workflow"
 )
 
 func startupSession(ctx context.Context, store session.Store, workingDir string, metadata session.Metadata, resume bool) (session.Session, []session.Message, error) {
@@ -85,15 +84,6 @@ func resolveModel(settings config.Settings) (llm.Model, llm.ReasoningLevel, erro
 	}
 
 	return llm.Model{}, "", fmt.Errorf("unknown model %q in config (is the provider's API key set?)", settings.Model.Provider+":"+settings.Model.Name)
-}
-
-func resolveWorkflowModel(requested llm.Model) (llm.Model, error) {
-	for _, model := range llm.Models() {
-		if model.Provider == requested.Provider && model.Name == requested.Name {
-			return model, nil
-		}
-	}
-	return llm.Model{}, fmt.Errorf("unknown ronin.run_agent model %q", requested.Provider+":"+requested.Name)
 }
 
 type repeatedFlag []string
@@ -225,16 +215,7 @@ func runPrompt(ctx context.Context, conv prompter, prompt string, output io.Writ
 	return nil
 }
 
-type workflowRunner struct {
-	workingDir string
-	agent      workflow.AgentFunc
-}
-
-func (r workflowRunner) Run(ctx context.Context, item workflow.Workflow, input string, emit func(workflow.Event)) workflow.Result {
-	return workflow.Run(ctx, item, r.workingDir, input, r.agent, emit)
-}
-
-func runTUI(ctx context.Context, conv *runtime.Conversation, catalog *workflow.Catalog, agent workflow.AgentFunc, activator tui.MCPActivator, mcpServers map[string]config.MCPServer) error {
+func runTUI(ctx context.Context, conv *runtime.Conversation, activator tui.MCPActivator, mcpServers map[string]config.MCPServer) error {
 	models := llm.Models()
 
 	cmds := []tui.Command{
@@ -242,9 +223,6 @@ func runTUI(ctx context.Context, conv *runtime.Conversation, catalog *workflow.C
 		tui.RewindConversation{},
 		tui.ForkConversation{},
 		tui.CompactConversation{},
-	}
-	for _, item := range catalog.Workflows() {
-		cmds = append(cmds, tui.InvokeWorkflow{Workflow: item})
 	}
 	mcpNames := make([]string, 0, len(mcpServers))
 	for name := range mcpServers {
@@ -263,12 +241,11 @@ func runTUI(ctx context.Context, conv *runtime.Conversation, catalog *workflow.C
 	cmds = append(cmds, tui.Exit{})
 
 	if err := tui.Run(ctx, tui.Config{
-		Conversation:   conv,
-		WorkflowRunner: workflowRunner{workingDir: conv.CWD(), agent: agent},
-		MCPActivator:   activator,
-		Commands:       cmds,
-		Input:          os.Stdin,
-		Output:         os.Stdout,
+		Conversation: conv,
+		MCPActivator: activator,
+		Commands:     cmds,
+		Input:        os.Stdin,
+		Output:       os.Stdout,
 	}); err != nil {
 		return fmt.Errorf("run tui: %w", err)
 	}

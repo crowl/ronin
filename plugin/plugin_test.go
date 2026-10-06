@@ -123,7 +123,7 @@ func TestStartDropsFailingPluginsAndCloseRunsInReverse(t *testing.T) {
 	if err := host.Start(t.Context()); err == nil || !strings.Contains(err.Error(), `"bad"`) {
 		t.Fatalf("start err = %v", err)
 	}
-	host.Publish(t.Context(), plugin.WorkflowStarted{})
+	host.Publish(t.Context(), plugin.PromptTurnStarted{})
 	if err := host.Close(t.Context()); err == nil || !strings.Contains(err.Error(), "flush failed") {
 		t.Fatalf("close err = %v", err)
 	}

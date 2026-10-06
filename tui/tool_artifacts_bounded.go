@@ -17,7 +17,7 @@ func toolArtifactLinesBounded(artifact tool.Artifact, width, limit int) ([]strin
 		metadata := "Already in context (" + typed.FileID + ")"
 		return wrappedToolArtifactTextBounded(metadata, width, limit)
 	}
-	content := text.ExpandTabs(workflowArtifactContent(artifact))
+	content := text.ExpandTabs(artifactContent(artifact))
 	if _, ok := artifact.(tool.TextArtifact); ok {
 		return wrappedToolArtifactTextBounded(content, width, limit)
 	}
@@ -94,7 +94,7 @@ func toolArtifactLinesBounded(artifact tool.Artifact, width, limit int) ([]strin
 }
 
 func artifactHasContent(artifact tool.Artifact) bool {
-	return workflowArtifactContent(artifact) != ""
+	return artifactContent(artifact) != ""
 }
 
 func toolArtifactLinesBoundedValue(artifact tool.Artifact, width, limit int) ([]string, bool) {

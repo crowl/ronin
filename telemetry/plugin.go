@@ -11,7 +11,7 @@ import (
 
 // Plugin exports execution events as OpenTelemetry traces and metrics. It
 // rebuilds span parentage from event operation identifiers, so spans nest as
-// workflow > prompt turn > cycle > request/tool, and request > HTTP attempt.
+// prompt turn > cycle > request/tool, and request > HTTP attempt.
 //
 // Start configures the global providers from the OTEL_* environment (see
 // Setup); Observe works against whatever global providers are installed, so
@@ -55,11 +55,6 @@ func (p *Plugin) Close(ctx context.Context) error {
 
 func (p *Plugin) Observe(_ context.Context, event plugin.Event) {
 	switch e := event.(type) {
-	case plugin.WorkflowStarted:
-		ctx, op := Start(p.parent(e.ParentID), "workflow", attribute.String("ronin.workflow.name", e.Name))
-		p.begin(e.ID, ctx, op)
-	case plugin.WorkflowEnded:
-		p.end(e.ID, e.Err)
 	case plugin.PromptTurnStarted:
 		ctx := withModel(p.parent(e.ParentID), e.Model)
 		ctx, op := StartScope(ctx, "prompt_turn", attribute.String("ronin.session.id", e.SessionID))

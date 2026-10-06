@@ -12,7 +12,7 @@
 - OpenAI, Gemini, Anthropic, and xAI models
 - File editing, shell commands, and Go/TypeScript/TSX/Ruby code navigation (including Rails DSLs and Sorbet)
 - Persistent sessions with resume, rewind, and fork
-- Project instructions, reusable skills, MCP servers, and Lua workflows
+- Project instructions, reusable skills, and MCP servers
 - TypeSafe Jev tool gate enabled by default to score whether each tool call is relevant to the current task
 
 ## Quick start
@@ -54,7 +54,6 @@ go run ./cmd/ronin
 ronin --resume                           # Resume this project's latest session
 ronin -working_dir /path/to/project       # Work in another directory
 ronin -prompt "summarize this project"    # Run without the TUI
-ronin run workflow.lua "describe the task"
 ```
 
 In the TUI:
@@ -74,7 +73,7 @@ Local shell commands and their output are saved in session history but **never s
 
 Ronin creates `config.json` in `$XDG_CONFIG_HOME/ronin`, falling back to `$HOME/.config/ronin`. Configure the default model, reasoning level, provider overrides, and optional MCP servers there. API keys stay in environment variables.
 
-Use `AGENTS.md` for project instructions and `<config dir>/skills/<name>/SKILL.md` for reusable skills. Named Lua workflows in `<config dir>/workflows` are available from the TUI.
+Use `AGENTS.md` for project instructions and `<config dir>/skills/<name>/SKILL.md` for reusable skills.
 
 Sessions are stored separately in `$XDG_DATA_HOME/ronin/ronin.db`, falling back to `$HOME/.local/share/ronin/ronin.db`. Telemetry export is off by default.
 
@@ -82,7 +81,6 @@ Sessions are stored separately in `$XDG_DATA_HOME/ronin/ronin.db`, falling back 
 
 - [Configuration](docs/configuration.md) — providers, pricing, MCP servers, instructions, and skills
 - [Sessions and local shell commands](docs/sessions.md) — persistence, history controls, limits, and backups
-- [Workflows](docs/workflows.md) — Lua agents and managed worktrees
 - [Code navigation](docs/code-navigation.md) — tools, indexing, caching, and parser limitations
 - [Telemetry](docs/telemetry.md) — OTLP setup, execution traces, and metrics
 - [Plugins](docs/plugins.md) — lifecycle events, tool gates, the default Jev gate, and result filters

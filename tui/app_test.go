@@ -1061,8 +1061,6 @@ type fakeConversation struct {
 	compactConversationErr  error
 	switchModelErr          error
 	switchReasoningLevelErr error
-	recordWorkflowResultErr error
-	recordedWorkflowResult  session.WorkflowResultMessage
 
 	compactBlockUntilCancel bool
 	compactStarted          chan struct{}
@@ -1098,14 +1096,6 @@ func (c *fakeConversation) SessionUsage() llm.Usage {
 
 func (c *fakeConversation) ContextUsage() llm.Usage {
 	return llm.Usage{}
-}
-
-func (c *fakeConversation) RecordWorkflowResult(message session.WorkflowResultMessage) error {
-	c.recordedWorkflowResult = message
-	if c.recordWorkflowResultErr == nil {
-		c.messages = append(c.messages, message)
-	}
-	return c.recordWorkflowResultErr
 }
 
 func (c *fakeConversation) NewConversation() error {

@@ -15,7 +15,6 @@ import (
 	"github.com/crowl/ronin/tool/shell"
 	"github.com/crowl/ronin/tui/internal/editor"
 	"github.com/crowl/ronin/tui/internal/terminal"
-	"github.com/crowl/ronin/workflow"
 )
 
 type pendingTextDeltaKind int
@@ -25,16 +24,8 @@ const (
 	pendingTextDeltaThinking
 	pendingTextDeltaAssistant
 
-	maxWorkflowNameSize   = 256
-	maxWorkflowStatusSize = 32
-	maxWorkflowDetailSize = 128 * 1024
-
-	maxWorkflowSummaryBytes       = 64 * 1024
-	maxWorkflowVisualLines        = 1000
-	maxWorkflowSummaryLines       = 6
-	maxWorkflowRecentSteps        = 5
-	maxWorkflowStepErrorSize      = 1024
-	maxWorkflowLatestActivitySize = 256
+	// maxToolErrorBytes bounds the error text retained for a tool call box.
+	maxToolErrorBytes = 128 * 1024
 )
 
 type appModel struct {
@@ -52,7 +43,6 @@ type appModel struct {
 
 	shellOutputIndex int
 	steeringPrompt   string
-	workflowInput    *workflow.Workflow
 
 	indicatorFrame int
 
@@ -83,11 +73,6 @@ type runCommandAction struct {
 	Command Command
 }
 
-type runWorkflowAction struct {
-	Workflow workflow.Workflow
-	Input    string
-}
-
 type confirmRewindAction struct {
 	Item         menuItem
 	Point        runtime.RewindPoint
@@ -101,7 +86,6 @@ func (exitAction) modelAction()          {}
 func (cancelPromptAction) modelAction()  {}
 func (submitPromptAction) modelAction()  {}
 func (runCommandAction) modelAction()    {}
-func (runWorkflowAction) modelAction()   {}
 func (confirmRewindAction) modelAction() {}
 
 func newAppModel(commands []Command) (*appModel, error) {
@@ -150,8 +134,6 @@ func (m *appModel) populateInitialBoxes(conversation Conversation) {
 			m.boxes = append(m.boxes, userMessageBox{Text: msg.Text})
 		case llm.ErrorMessage:
 			m.boxes = append(m.boxes, errorMessageBox{Text: msg.Error.Error()})
-		case session.WorkflowResultMessage:
-			m.boxes = append(m.boxes, workflowBox{Name: boundWorkflowText(msg.Name, maxWorkflowNameSize), Input: boundWorkflowText(msg.Input, maxWorkflowDetailSize), Status: boundWorkflowText(string(msg.Status), maxWorkflowStatusSize), Summary: boundWorkflowSummary(msg.Summary), StartedAt: msg.Timestamp, EndedAt: msg.Timestamp})
 		case llm.AssistantMessage:
 			for _, b := range msg.Blocks {
 				switch block := b.(type) {
@@ -237,11 +219,6 @@ func (m *appModel) handleKey(key terminal.Key) (modelUpdate, error) {
 	}
 
 	if key.Type == terminal.KeyEscape {
-		if m.workflowInput != nil && !m.busy() {
-			m.workflowInput = nil
-			m.editor.Clear()
-			return modelUpdate{Render: true}, nil
-		}
 		if m.busy() {
 			m.boxes = append(m.boxes, errorMessageBox{Text: "Cancellation requested"})
 			return modelUpdate{Render: true, Action: cancelPromptAction{}}, nil
@@ -291,11 +268,6 @@ func (m *appModel) handleKey(key terminal.Key) (modelUpdate, error) {
 		return modelUpdate{Render: true}, nil
 	case editor.SubmitPrompt:
 		m.editor.Clear()
-		if m.workflowInput != nil {
-			item := *m.workflowInput
-			m.workflowInput = nil
-			return modelUpdate{Render: true, Action: runWorkflowAction{Workflow: item, Input: fx.Prompt}}, nil
-		}
 		return modelUpdate{Render: true, Action: submitPromptAction{Prompt: fx.Prompt}}, nil
 	}
 
@@ -362,112 +334,13 @@ func (m *appModel) finishShell(_ string, result shell.Result, err error) modelUp
 		m.boxes[m.shellOutputIndex] = box
 	}
 	m.boxLineCache.Reset()
-	return m.completeOperation(false)
+	return m.completeOperation()
 }
 
 func (m *appModel) startPrompt(prompt string) {
 	m.boxes = append(m.boxes, userMessageBox{Text: prompt})
 	m.beginOperation(operationPrompt, "Working")
 	m.saveError = ""
-}
-
-func (m *appModel) enterWorkflowInput(item workflow.Workflow) {
-	m.workflowInput = &item
-	m.editor.Clear()
-	m.menu.Hide()
-}
-
-func (m *appModel) startWorkflow(item workflow.Workflow, input string) {
-	m.boxes = append(m.boxes, workflowBox{Name: boundWorkflowText(item.Name, maxWorkflowNameSize), Input: boundWorkflowText(input, maxWorkflowDetailSize), StartedAt: time.Now()})
-	m.beginOperation(operationWorkflow, "Running workflow "+item.Name)
-	m.saveError = ""
-}
-
-func (m *appModel) handleWorkflowEvent(event workflow.Event, now time.Time) modelUpdate {
-	index := findWorkflowBoxIndex(m.boxes)
-	if index == -1 {
-		return modelUpdate{}
-	}
-	box := m.boxes[index].(workflowBox)
-	if !box.EndedAt.IsZero() {
-		return modelUpdate{}
-	}
-	switch event := event.(type) {
-	case workflow.Log:
-		box.LatestActivity = boundWorkflowText(event.Text, maxWorkflowLatestActivitySize)
-	case workflow.AgentStarted:
-		for _, step := range box.Active {
-			if step.Invocation == event.Invocation {
-				return modelUpdate{}
-			}
-		}
-		name := boundWorkflowText(event.Request.Name, maxWorkflowNameSize)
-		if strings.TrimSpace(name) == "" {
-			name = fmt.Sprintf("Agent %d", event.Invocation)
-		}
-		box.Active = append(box.Active, workflowStep{Invocation: event.Invocation, Name: name, Status: "running", StartedAt: now})
-	case workflow.AgentFinished:
-		for i, step := range box.Active {
-			if step.Invocation != event.Invocation {
-				continue
-			}
-			step.Status = "completed"
-			if event.Cancelled {
-				step.Status = "cancelled"
-			} else if event.Error != "" {
-				step.Status = "failed"
-			}
-			step.Error = boundWorkflowText(event.Error, maxWorkflowStepErrorSize)
-			step.EndedAt = now
-			box.recordFinishedStep(step)
-			box.Active = slices.Delete(box.Active, i, i+1)
-			break
-		}
-	case workflow.Finished:
-		box.Status = boundWorkflowText(string(event.Result.Status), maxWorkflowStatusSize)
-		box.Summary = boundWorkflowSummary(event.Result.Summary)
-		box.EndedAt = now
-		for _, step := range box.Active {
-			// A terminal workflow cannot leave an invocation running, even if
-			// its individual completion event was not delivered.
-			step.Status = "cancelled"
-			if event.Result.Status == workflow.StatusFailed {
-				step.Status = "failed"
-			}
-			step.EndedAt = now
-			box.recordFinishedStep(step)
-		}
-		box.Active = nil
-	default:
-		// Agent transcripts belong to internal workflow handoffs, not the TUI.
-		return modelUpdate{}
-	}
-	m.boxes[index] = box
-	return modelUpdate{Render: true}
-}
-
-func (b *workflowBox) recordFinishedStep(step workflowStep) {
-	b.Completed++
-	if len(b.Recent) == maxWorkflowRecentSteps {
-		b.Recent = slices.Delete(b.Recent, 0, 1)
-	}
-	b.Recent = append(b.Recent, step)
-}
-
-func (m *appModel) finishWorkflow(err error) modelUpdate {
-	if err != nil {
-		m.saveError = err.Error()
-	}
-
-	index := findWorkflowBoxIndex(m.boxes)
-	if index != -1 {
-		box := m.boxes[index].(workflowBox)
-		if box.Status == string(workflow.StatusCancelled) {
-			return m.completeOperation(true)
-		}
-	}
-
-	return m.completeOperation(false)
 }
 
 func (m *appModel) startMCPActivation(item menuItem, name string) {
@@ -487,7 +360,7 @@ func (m *appModel) finishMCPActivation(item menuItem, activated bool, err error)
 		m.boxes = append(m.boxes, systemMessageBox{Text: item.Value + " activated"})
 	}
 
-	return m.completeOperation(false)
+	return m.completeOperation()
 }
 
 func (m *appModel) startCompaction(item menuItem) {
@@ -517,7 +390,7 @@ func (m *appModel) finishCompaction(err error) modelUpdate {
 		m.boxes = append(m.boxes, errorMessageBox{Text: err.Error()})
 	}
 
-	return m.completeOperation(false)
+	return m.completeOperation()
 }
 
 func (m *appModel) finishPrompt(cancelled bool, now time.Time) modelUpdate {
@@ -540,7 +413,7 @@ func (m *appModel) finishPrompt(cancelled bool, now time.Time) modelUpdate {
 		m.boxes[i] = call
 	}
 
-	return m.completeOperation(cancelled)
+	return m.completeOperation()
 }
 
 func (m *appModel) handleConversationEvent(event runtime.Event, now time.Time) (modelUpdate, error) {
@@ -617,7 +490,7 @@ func (m *appModel) handleConversationEvent(event runtime.Event, now time.Time) (
 		if !ok {
 			return modelUpdate{}, fmt.Errorf("expected tool call box at index %d, got %T", index, m.boxes[index])
 		}
-		toolCallBox.Error = boundWorkflowText(toolCallBox.Error+typedEvent.Error.Error(), maxWorkflowDetailSize)
+		toolCallBox.Error = boundText(toolCallBox.Error+typedEvent.Error.Error(), maxToolErrorBytes)
 		if toolCallBox.StartedAt.IsZero() {
 			toolCallBox.StartedAt = now
 		}
@@ -724,7 +597,6 @@ func (m *appModel) lines(width int, conversation Conversation, now time.Time) ([
 	lines = append(lines, editorPresenter{
 		Text:   m.editor.Text(),
 		Cursor: m.editor.Cursor(),
-		Label:  m.editorLabel(),
 	}.Lines(width)...)
 
 	if m.menu.Shown() {
@@ -785,22 +657,6 @@ func (m *appModel) setReasoningLevels(levels []llm.ReasoningLevel) {
 		updated[i].Index = i
 	}
 	m.menu.items = updated
-}
-
-func (m *appModel) editorLabel() string {
-	if m.workflowInput == nil {
-		return ""
-	}
-	return "workflow " + m.workflowInput.Name + " input"
-}
-
-func findWorkflowBoxIndex(blocks []box) int {
-	for i, block := range slices.Backward(blocks) {
-		if _, ok := block.(workflowBox); ok {
-			return i
-		}
-	}
-	return -1
 }
 
 func (m *appModel) queueTextDelta(kind pendingTextDeltaKind, text string) {

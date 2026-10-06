@@ -62,17 +62,7 @@ func run() int {
 	defer cancel()
 	ctx = plugin.NewContext(ctx, host)
 
-	workflowCmd, workflowMode, err := parseWorkflowCommand(opts.args, os.Stdin)
-	if err != nil {
-		_, _ = fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-	if workflowMode {
-		err = runWorkflowMode(ctx, opts, workflowCmd, os.Stdout)
-	} else {
-		err = runConversationMode(ctx, opts, os.Stdout)
-	}
-	if err != nil {
+	if err := runConversationMode(ctx, opts, os.Stdout); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 		return 1
 	}

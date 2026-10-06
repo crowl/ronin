@@ -19,27 +19,6 @@ type ContextSummary struct {
 
 func (ContextSummary) TranscriptMessage() {}
 
-type WorkflowStatus string
-
-const (
-	WorkflowStatusCompleted WorkflowStatus = "completed"
-	WorkflowStatusFailed    WorkflowStatus = "failed"
-	WorkflowStatusCancelled WorkflowStatus = "cancelled"
-)
-
-type WorkflowResultMessage struct {
-	Timestamp time.Time
-	Name      string
-	Input     string
-	Status    WorkflowStatus
-	Summary   string
-}
-
-func (WorkflowResultMessage) TranscriptMessage() {}
-func (m WorkflowResultMessage) Text() string {
-	return "Workflow " + m.Name + " " + string(m.Status) + ".\nInput:\n" + m.Input + "\nSummary:\n" + m.Summary
-}
-
 // ModelMessages lowers application entries to provider-neutral input. Unknown
 // entries fail explicitly instead of silently disappearing from model context.
 func ModelMessages(messages []Message) ([]llm.Message, error) {
@@ -49,8 +28,6 @@ func ModelMessages(messages []Message) ([]llm.Message, error) {
 		switch m := entry.(type) {
 		case ContextSummary:
 			message = llm.UserMessage{Timestamp: m.Timestamp, Text: m.Text}
-		case WorkflowResultMessage:
-			message = llm.UserMessage{Timestamp: m.Timestamp, Text: m.Text()}
 		case llm.Message:
 			message = m
 		default:

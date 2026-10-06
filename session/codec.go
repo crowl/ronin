@@ -27,12 +27,8 @@ type messageJSON struct {
 	StopReason string      `json:"stop_reason,omitempty"`
 	Usage      llm.Usage   `json:"usage"`
 	ToolName   string      `json:"tool_name,omitempty"`
-	Name       string      `json:"name,omitempty"`
 	ToolCallID string      `json:"tool_call_id,omitempty"`
 	ToolOutput string      `json:"tool_output,omitempty"`
-	Status     string      `json:"status,omitempty"`
-	Summary    string      `json:"summary,omitempty"`
-	Input      string      `json:"input,omitempty"`
 	Error      string      `json:"error,omitempty"`
 }
 
@@ -202,7 +198,7 @@ func decodeEvent(eventType string, payload []byte) (Event, error) {
 
 func isMessageEventType(eventType string) bool {
 	switch eventType {
-	case "context_summary", "user_message", "assistant_message", "tool_result", "tool_error", "error", "workflow_result":
+	case "context_summary", "user_message", "assistant_message", "tool_result", "tool_error", "error":
 		return true
 	default:
 		return false
@@ -224,8 +220,6 @@ func messageKind(message Message) (string, error) {
 		return "tool_error", nil
 	case llm.ErrorMessage:
 		return "error", nil
-	case WorkflowResultMessage:
-		return "workflow_result", nil
 	default:
 		return "", fmt.Errorf("unsupported message type %T", message)
 	}
@@ -313,8 +307,6 @@ func encodeMessage(message Message) (messageJSON, error) {
 			encoded.Blocks = append(encoded.Blocks, encodedBlock)
 		}
 		return encoded, nil
-	case WorkflowResultMessage:
-		return messageJSON{Type: "workflow_result", Timestamp: m.Timestamp, Name: m.Name, Input: m.Input, Status: string(m.Status), Summary: m.Summary}, nil
 	case llm.ToolOutputMessage:
 		return messageJSON{Type: "tool_output", Timestamp: m.Timestamp, ToolName: m.ToolName, ToolCallID: m.ToolCallID, ToolOutput: m.ToolOutput}, nil
 	case llm.ToolErrorMessage:
@@ -347,8 +339,6 @@ func decodeMessage(encoded messageJSON) (Message, error) {
 			message.Blocks = append(message.Blocks, decodedBlock)
 		}
 		return message, nil
-	case "workflow_result":
-		return WorkflowResultMessage{Timestamp: encoded.Timestamp, Name: encoded.Name, Input: encoded.Input, Status: WorkflowStatus(encoded.Status), Summary: encoded.Summary}, nil
 	case "tool_output":
 		return llm.ToolOutputMessage{Timestamp: encoded.Timestamp, ToolName: encoded.ToolName, ToolCallID: encoded.ToolCallID, ToolOutput: encoded.ToolOutput}, nil
 	case "tool_error":

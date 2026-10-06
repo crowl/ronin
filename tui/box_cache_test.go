@@ -86,10 +86,10 @@ func TestBoxLineCache(t *testing.T) {
 		}
 	})
 
-	t.Run("running workflow elapsed time invalidates cached lines", func(t *testing.T) {
+	t.Run("running tool elapsed time invalidates cached lines", func(t *testing.T) {
 		var cache boxLineCache
 		startedAt := time.Unix(100, 0)
-		boxes := []box{workflowBox{Name: "review", StartedAt: startedAt}}
+		boxes := []box{toolCallBox{ToolCallID: "call-1", Title: "shell", StartedAt: startedAt}}
 
 		first := cache.Lines(boxes, 80, false, startedAt.Add(time.Second))
 		cachedLines := cache.entries[0].lines
@@ -99,7 +99,7 @@ func TestBoxLineCache(t *testing.T) {
 			t.Fatalf("elapsed time did not change rendered output")
 		}
 		if &cache.entries[0].lines[0] == &cachedLines[0] {
-			t.Fatalf("running workflow did not render again as time elapsed")
+			t.Fatalf("running tool did not render again as time elapsed")
 		}
 	})
 

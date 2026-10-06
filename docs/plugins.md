@@ -1,6 +1,6 @@
 # Plugins
 
-Ronin's execution engine publishes lifecycle events and consults tool hooks through the `plugin` package. Plugins are Go values compiled into the binary and registered in `cmd/ronin/main.go`; they extend Ronin without changes to the runtime, model clients, or workflows. OpenTelemetry export (`telemetry.NewPlugin`) and the default Jev tool gate (`jev.NewPlugin`) are implemented this way.
+Ronin's execution engine publishes lifecycle events and consults tool hooks through the `plugin` package. Plugins are Go values compiled into the binary and registered in `cmd/ronin/main.go`; they extend Ronin without changes to the runtime or model clients. OpenTelemetry export (`telemetry.NewPlugin`) and the default Jev tool gate (`jev.NewPlugin`) are implemented this way.
 
 ## Contract
 
@@ -21,18 +21,17 @@ Plugins are dispatched by `plugin.Host`, which is installed on the root context 
 Events are plain data. Each started/ended pair embeds `plugin.Operation{ID, ParentID}`; parent identifiers rebuild the execution tree without shared context:
 
 ```
-WorkflowStarted/Ended
-  PromptTurnStarted/Ended (SessionID, Model, Cycles)
-    CycleStarted/Ended (Index)
-      ModelRequestStarted/FirstOutput/Ended (Purpose, Usage, StopReason)
-        HTTPAttemptStarted/Ended (Attempt, StatusCode)
-      ToolCallStarted/Ended (Call, ResultSize)   ToolCallDenied (Rejected, Err)
+PromptTurnStarted/Ended (SessionID, Model, Cycles)
+  CycleStarted/Ended (Index)
+    ModelRequestStarted/FirstOutput/Ended (Purpose, Usage, StopReason)
+      HTTPAttemptStarted/Ended (Attempt, StatusCode)
+    ToolCallStarted/Ended (Call, ResultSize)   ToolCallDenied (Rejected, Err)
 ContextCompacted, SessionSaveFailed (ParentID only)
 ```
 
-Auxiliary structured requests (compaction, workflow output formatting) appear as model requests with a non-`conversation` purpose. Child-agent prompt turns started by a workflow report the workflow operation as their parent.
+Auxiliary structured requests (such as compaction) appear as model requests with a non-`conversation` purpose.
 
-Observers run synchronously on the publishing goroutine, in registration order. They must return promptly and must not initiate model calls. Panics are recovered and logged; observers cannot fail a run. Events may arrive concurrently from parallel workflow agents, so observers need their own synchronization.
+Observers run synchronously on the publishing goroutine, in registration order. They must return promptly and must not initiate model calls. Panics are recovered and logged; observers cannot fail a run. Events may arrive concurrently, so observers need their own synchronization.
 
 ## Tool hooks
 
@@ -80,8 +79,8 @@ environment settings or modes.
 Before every tool call, Ronin asks two Noul questions: whether the call is a
 relevant next step for the current user request, and whether it could have an
 irreversible side effect. Asking both questions for every tool also covers
-workflows, MCP tools, and tools added later without maintaining a list of
-mutating tool names. Ronin denies a call when P(relevant) is at most 0.45 or
+MCP tools and tools added later without maintaining a list of mutating tool
+names. Ronin denies a call when P(relevant) is at most 0.45 or
 P(irreversible) is at least 0.8.
 
 The structured state sent to TypeSafe contains the current user request, bounded

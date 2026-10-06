@@ -7,7 +7,6 @@ type operationKind uint8
 const (
 	operationIdle operationKind = iota
 	operationPrompt
-	operationWorkflow
 	operationCompaction
 	operationMCP
 	operationShell
@@ -26,17 +25,16 @@ func (m *appModel) beginOperation(kind operationKind, label string) {
 	m.indicatorFrame = 0
 }
 
-// completeOperation owns queue consumption. Shell input is rejected while busy;
-// cancelled workflows discard queued input. Other operations preserve the
-// existing behavior of submitting queued input even after cancellation.
-func (m *appModel) completeOperation(cancelled bool) modelUpdate {
+// completeOperation owns queue consumption. Shell input is rejected while
+// busy; other operations submit queued input even after cancellation.
+func (m *appModel) completeOperation() modelUpdate {
 	kind := m.operation.kind
 	m.operation = operationState{}
 	m.statusBarCache.Reset()
 	next := m.steeringPrompt
 	m.steeringPrompt = ""
 	update := modelUpdate{Render: true}
-	if kind != operationShell && !(kind == operationWorkflow && cancelled) && next != "" {
+	if kind != operationShell && next != "" {
 		update.Action = submitPromptAction{Prompt: next}
 	}
 	return update

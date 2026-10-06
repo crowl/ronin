@@ -12,8 +12,8 @@ type Event interface{ event() }
 
 // Operation identifies a started/ended pair. ParentID links an operation to
 // the enclosing one (empty at the root), letting plugins rebuild the
-// execution tree: workflow > prompt turn > cycle > request/tool call, and
-// request > HTTP attempt.
+// execution tree: prompt turn > cycle > request/tool call, and request >
+// HTTP attempt.
 type Operation struct {
 	ID       string
 	ParentID string
@@ -49,18 +49,6 @@ type Usage struct {
 	// Cost is the estimated USD cost; valid only when CostAvailable is true.
 	Cost          float64
 	CostAvailable bool
-}
-
-// WorkflowStarted marks the start of a Lua workflow script run.
-type WorkflowStarted struct {
-	Operation
-	Name string
-}
-
-// WorkflowEnded marks the end of a workflow run.
-type WorkflowEnded struct {
-	Operation
-	Err error
 }
 
 // PromptTurnStarted marks the processing of one user prompt.
@@ -171,8 +159,6 @@ type SessionSaveFailed struct {
 	Err       error
 }
 
-func (WorkflowStarted) event()         {}
-func (WorkflowEnded) event()           {}
 func (PromptTurnStarted) event()       {}
 func (PromptTurnEnded) event()         {}
 func (CycleStarted) event()            {}

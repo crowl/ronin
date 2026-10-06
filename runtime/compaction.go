@@ -321,7 +321,7 @@ func buildCompactionFactSheetWithPreviousSummary(messages []session.Message, ses
 
 func importantCompactionFact(msg session.Message) bool {
 	switch typed := msg.(type) {
-	case llm.UserMessage, session.WorkflowResultMessage, llm.ToolOutputMessage, llm.ToolErrorMessage, llm.ErrorMessage:
+	case llm.UserMessage, llm.ToolOutputMessage, llm.ToolErrorMessage, llm.ErrorMessage:
 		return true
 	case llm.AssistantMessage:
 		return len(messageToolCallIDs(typed)) > 0
@@ -346,8 +346,6 @@ func compactionFactLine(index int, msg session.Message) string {
 				_, _ = fmt.Fprintf(&b, "  tool_call %s args=%s\n", call.Name, compactOneLine(string(call.Arguments), 400))
 			}
 		}
-	case session.WorkflowResultMessage:
-		_, _ = fmt.Fprintf(&b, "- %03d workflow %s %s input=%s summary=%s\n", index+1, typedMsg.Name, typedMsg.Status, compactOneLine(typedMsg.Input, 500), compactOneLine(typedMsg.Summary, 700))
 	case llm.ToolOutputMessage:
 		_, _ = fmt.Fprintf(&b, "- %03d tool_result %s: %s\n", index+1, typedMsg.ToolName, compactOneLine(typedMsg.ToolOutput, 4000))
 		b.WriteString(compactionToolFacts(typedMsg.ToolName, typedMsg.ToolOutput))

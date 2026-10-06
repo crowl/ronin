@@ -14,7 +14,7 @@ func (b *toolCallBox) addDisplayArtifact(artifact tool.Artifact) {
 		b.DisplayTruncated = true
 		return
 	}
-	bounded, used, truncated := boundWorkflowArtifact(artifact, maxToolDisplayBytes-b.DisplayBytes)
+	bounded, used, truncated := boundArtifact(artifact, maxToolDisplayBytes-b.DisplayBytes)
 	if used > 0 {
 		b.Artifacts = appendToolArtifact(b.Artifacts, bounded)
 	}

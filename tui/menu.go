@@ -70,14 +70,6 @@ func newMenu(commands []Command) (*menuState, error) {
 				Description: typedCommand.Skill.Description,
 				Command:     typedCommand,
 			})
-		case InvokeWorkflow:
-			items = append(items, menuItem{
-				Index:       i,
-				Name:        "/workflow:" + typedCommand.Workflow.Name,
-				Value:       "/workflow:" + typedCommand.Workflow.Name,
-				Description: "run the " + typedCommand.Workflow.Name + " workflow",
-				Command:     typedCommand,
-			})
 		case ActivateMCP:
 			items = append(items, menuItem{
 				Index:       i,

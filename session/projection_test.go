@@ -9,9 +9,8 @@ import (
 )
 
 func TestModelMessages(t *testing.T) {
-	workflow := session.WorkflowResultMessage{Name: "review", Summary: "done", Status: session.WorkflowStatusCompleted}
-	messages := []session.Message{session.ContextSummary{Text: "summary"}, workflow, llm.UserMessage{Text: "request"}}
-	want := []llm.Message{llm.UserMessage{Text: "summary"}, llm.UserMessage{Text: workflow.Text()}, llm.UserMessage{Text: "request"}}
+	messages := []session.Message{session.ContextSummary{Text: "summary"}, llm.UserMessage{Text: "request"}}
+	want := []llm.Message{llm.UserMessage{Text: "summary"}, llm.UserMessage{Text: "request"}}
 	got, err := session.ModelMessages(messages)
 	if err != nil {
 		t.Fatal(err)

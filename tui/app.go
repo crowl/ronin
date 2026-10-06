@@ -7,10 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/crowl/ronin/session"
 	"github.com/crowl/ronin/tui/internal/render"
 	"github.com/crowl/ronin/tui/internal/terminal"
-	"github.com/crowl/ronin/workflow"
 )
 
 var errExitRequested = errors.New("exit requested")
@@ -26,12 +24,11 @@ type renderTarget interface {
 }
 
 type appConfig struct {
-	Terminal       terminalIO
-	Conversation   Conversation
-	WorkflowRunner WorkflowRunner
-	MCPActivator   MCPActivator
-	Renderer       renderTarget
-	Commands       []Command
+	Terminal     terminalIO
+	Conversation Conversation
+	MCPActivator MCPActivator
+	Renderer     renderTarget
+	Commands     []Command
 }
 
 const (
@@ -48,21 +45,19 @@ func newApp(cfg appConfig) (*app, error) {
 	model.populateInitialBoxes(cfg.Conversation)
 
 	return &app{
-		conversation:   cfg.Conversation,
-		workflowRunner: cfg.WorkflowRunner,
-		mcpActivator:   cfg.MCPActivator,
-		events:         make(chan event, defaultEventsBufferLen),
-		terminal:       cfg.Terminal,
-		renderer:       cfg.Renderer,
-		model:          model,
+		conversation: cfg.Conversation,
+		mcpActivator: cfg.MCPActivator,
+		events:       make(chan event, defaultEventsBufferLen),
+		terminal:     cfg.Terminal,
+		renderer:     cfg.Renderer,
+		model:        model,
 	}, nil
 }
 
 type app struct {
-	conversation   Conversation
-	workflowRunner WorkflowRunner
-	mcpActivator   MCPActivator
-	events         chan event
+	conversation Conversation
+	mcpActivator MCPActivator
+	events       chan event
 
 	terminal terminalIO
 	renderer renderTarget
@@ -201,11 +196,6 @@ func (app *app) handleAppEvent(ctx context.Context, event event) error {
 	case shellCommandDone:
 		app.releaseOperation()
 		return app.applyUpdate(ctx, app.model.finishShell(typedEvent.Command, typedEvent.Result, typedEvent.Err))
-	case workflowEventReceived:
-		return app.applyUpdate(ctx, app.model.handleWorkflowEvent(typedEvent.Event, time.Now()))
-	case workflowDone:
-		app.releaseOperation()
-		return app.applyUpdate(ctx, app.model.finishWorkflow(typedEvent.Err))
 	}
 	return nil
 }
@@ -235,8 +225,6 @@ func (app *app) applyUpdate(ctx context.Context, update modelUpdate) error {
 		if err := app.runCommand(ctx, action.Item, action.Command); err != nil {
 			return err
 		}
-	case runWorkflowAction:
-		app.runWorkflow(ctx, action.Workflow, action.Input)
 	case confirmRewindAction:
 		history, ok := app.conversation.(HistoryConversation)
 		if !ok {
@@ -407,8 +395,6 @@ func (app *app) runCommand(ctx context.Context, item menuItem, command Command) 
 		}
 	case InvokeSkill:
 		_ = typedCommand.Skill
-	case InvokeWorkflow:
-		app.model.enterWorkflowInput(typedCommand.Workflow)
 	case ActivateMCP:
 		if app.model.busy() {
 			err = errors.New("cannot activate an MCP server while another operation is active")
@@ -444,48 +430,6 @@ func (app *app) activateMCP(ctx context.Context, item menuItem, name string) {
 		}
 		select {
 		case app.events <- mcpActivationDone{Item: item, Activated: activated, Err: err}:
-		case <-ctx.Done():
-		}
-	})
-}
-
-func (app *app) runWorkflow(ctx context.Context, item workflow.Workflow, input string) {
-	app.model.startWorkflow(item, input)
-	if app.workflowRunner == nil {
-		app.model.handleWorkflowEvent(workflow.Finished{Result: workflow.Result{Name: item.Name, Input: input, Status: workflow.StatusFailed, Summary: "workflow runner is not configured"}}, time.Now())
-		_ = app.applyUpdate(ctx, app.model.finishWorkflow(nil))
-		return
-	}
-
-	workflowCtx, cancel := app.operationContext(ctx)
-	app.requestRender()
-	app.workers.Go(func() {
-		defer cancel()
-		result := app.workflowRunner.Run(workflowCtx, item, input, func(event workflow.Event) {
-			// Do not queue agent transcripts or retain prompts/reports in the UI.
-			switch progress := event.(type) {
-			case workflow.AgentEventReceived:
-				return
-			case workflow.AgentStarted:
-				progress.Request = workflow.AgentRequest{Name: boundWorkflowText(progress.Request.Name, maxWorkflowNameSize)}
-				event = progress
-			case workflow.AgentFinished:
-				progress.Text = ""
-				progress.Error = boundWorkflowText(progress.Error, maxWorkflowStepErrorSize)
-				event = progress
-			}
-			select {
-			case app.events <- workflowEventReceived{Event: event}:
-			case <-ctx.Done():
-			}
-		})
-		message := session.WorkflowResultMessage{
-			Timestamp: time.Now(), Name: result.Name, Input: result.Input,
-			Status: session.WorkflowStatus(result.Status), Summary: boundWorkflowSummary(result.Summary),
-		}
-		err := app.conversation.RecordWorkflowResult(message)
-		select {
-		case app.events <- workflowDone{Err: err}:
 		case <-ctx.Done():
 		}
 	})

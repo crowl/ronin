@@ -48,8 +48,7 @@ func TestInvalidTranscriptFailsBeforeAutomaticCompaction(t *testing.T) {
 
 func TestProviderReceivesProjectedTranscript(t *testing.T) {
 	client := &fakeModelClient{events: []llm.PredictionEvent{llm.PredictionFinished{StopReason: llm.StopReasonEndTurn}}}
-	result := session.WorkflowResultMessage{Name: "review", Summary: "approved", Status: session.WorkflowStatusCompleted}
-	c, err := runtime.NewConversation(runtime.ConversationConfig{ModelClient: client, Messages: []session.Message{session.ContextSummary{Text: "summary"}, result}})
+	c, err := runtime.NewConversation(runtime.ConversationConfig{ModelClient: client, Messages: []session.Message{session.ContextSummary{Text: "summary"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +62,7 @@ func TestProviderReceivesProjectedTranscript(t *testing.T) {
 		t.Fatalf("requests=%d", len(client.requests))
 	}
 	messages := client.requests[0].Messages
-	for i, want := range []string{"summary", result.Text(), "continue"} {
+	for i, want := range []string{"summary", "continue"} {
 		got, ok := messages[i].(llm.UserMessage)
 		if !ok || got.Text != want {
 			t.Fatalf("provider message %d = %#v", i, messages[i])

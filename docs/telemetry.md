@@ -18,7 +18,7 @@ For gRPC, use `OTEL_EXPORTER_OTLP_PROTOCOL=grpc` and typically port 4317. The de
 
 ## Execution traces
 
-A top-level user prompt starts a trace with `ronin.prompt_turn`, containing `ronin.cycle` spans for each model/tool cycle. These contain `ronin.request` and `ronin.tool` spans. Workflow runs have `ronin.workflow` spans, with child-agent prompt turns linked beneath the invoking workflow rather than detached into unrelated traces.
+A top-level user prompt starts a trace with `ronin.prompt_turn`, containing `ronin.cycle` spans for each model/tool cycle. These contain `ronin.request` and `ronin.tool` spans.
 
 Tool spans record the exact tool name, call ID, issuing provider/model, argument size, serialized result size, duration, and outcome. Unknown tools and rejected arguments are recorded too (`ronin.tool.rejected`), as are calls blocked by a plugin tool gate (`ronin.tool.denied`). Argument contents, results, prompts, and raw error messages are not exported. SDK/backend attribute limits may truncate or drop metadata.
 
@@ -27,21 +27,21 @@ Provider/model attribution uses `gen_ai.provider.name` and `gen_ai.request.model
 ## Metrics and accounting
 
 - `ronin.request.count`, `ronin.tool.count`, `ronin.http_attempt.count`: logical requests, individual tool invocations, and actual HTTP attempts, respectively.
-- `ronin.{request,tool,http_attempt,cycle,prompt_turn,workflow}.duration`: seconds, with outcome and model dimensions where applicable.
+- `ronin.{request,tool,http_attempt,cycle,prompt_turn}.duration`: seconds, with outcome and model dimensions where applicable.
 - `ronin.token.usage`: tokens by provider/model, purpose, and disjoint category (`input`, `output`, `cache_read`, `cache_write`). Here `input` excludes cached and cache-written input; trace input-token totals include them.
 - `ronin.cost.estimated`: estimated USD by provider/model and purpose; unavailable pricing produces no cost increment.
 - `ronin.{cycle,prompt_turn}.{requests,tool_calls,http_attempts,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens}`: per-scope histograms broken down by model.
 
-Tool metrics also carry the exact tool name. Arguments, call IDs, and session IDs never become metric labels. Parent spans summarize direct counts and known token/cost totals. Child-agent activity is excluded from parent direct totals, avoiding double counting; inspect descendant spans for delegated work. Wall time is separate from summed operation durations.
+Tool metrics also carry the exact tool name. Arguments, call IDs, and session IDs never become metric labels. Parent spans summarize direct counts and known token/cost totals. Wall time is separate from summed operation durations.
 
-Structured requests for compaction and workflow-output formatting record provider-reported usage and cost with purpose tags, including usage retained when output validation fails. Missing usage remains explicitly unavailable, rather than being treated as a free request. Auxiliary usage is journaled separately from model messages in persisted conversations; it contributes to session cost without changing the conversation context-size estimate. Workflow agents keep their own accounting, separate from their parent's direct totals. Parent `ronin.usage.complete` and `ronin.cost.complete` flags distinguish complete totals from known partial totals. Interrupted requests without reported usage remain unknown. Actual response model IDs are not currently exposed by the provider interface; model tags identify the requested model.
+Structured requests for compaction record provider-reported usage and cost with purpose tags, including usage retained when output validation fails. Missing usage remains explicitly unavailable, rather than being treated as a free request. Auxiliary usage is journaled separately from model messages in persisted conversations; it contributes to session cost without changing the conversation context-size estimate. Parent `ronin.usage.complete` and `ronin.cost.complete` flags distinguish complete totals from known partial totals. Interrupted requests without reported usage remain unknown. Actual response model IDs are not currently exposed by the provider interface; model tags identify the requested model.
 
 ## Prompt caching
 
 - Anthropic conversation requests enable automatic caching with top-level `cache_control: {"type":"ephemeral"}` (default five-minute TTL). One-off structured requests do not opt in. Cache writes incur a premium, so short or infrequently reused prefixes may not save money.
 - OpenAI uses default implicit caching. Both cached reads and reported cache writes are accounted for, including newer models with cache-write pricing.
 - OpenAI Responses requests to `https://api.openai.com` and xAI Responses requests to `https://api.x.ai` include a stable per-conversation `prompt_cache_key`. (xAI documents `x-grok-conv-id` for Chat Completions, which Ronin does not use.) These opaque identities improve routing opportunities but do not guarantee hits. Recognized provider names and hosts must both match; custom compatible endpoints and base-URL overrides on other hosts receive no routing hint.
-- Persisted sessions retain their routing identity across resume; new conversations and forks get separate identities. Workflow-agent conversations also get distinct identities.
+- Persisted sessions retain their routing identity across resume; new conversations and forks get separate identities.
 - Google remains on stateless Interactions, which supports implicit caching. No explicit cache objects or server-side conversation storage are introduced.
 
 ### Measuring effectiveness

@@ -11,18 +11,16 @@ import (
 	"time"
 
 	"github.com/crowl/ronin/config"
-	"github.com/crowl/ronin/internal/agentrun"
 	"github.com/crowl/ronin/internal/agenttools"
 	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/plugin"
 	"github.com/crowl/ronin/runtime"
 	"github.com/crowl/ronin/session"
 	"github.com/crowl/ronin/session/sqlite"
-	"github.com/crowl/ronin/workflow"
 )
 
-// cliOptions holds parsed command line flags. args carries the positional
-// arguments that follow the flags.
+// cliOptions holds parsed command line flags. Ronin takes no positional
+// arguments.
 type cliOptions struct {
 	version        bool
 	resume         bool
@@ -34,7 +32,6 @@ type cliOptions struct {
 	contextFiles   []string
 	skills         []string
 	mcp            []string
-	args           []string
 }
 
 // parseFlags parses args (without the program name). Usage and parse errors
@@ -59,10 +56,14 @@ func parseFlags(args []string, usageOutput io.Writer) (cliOptions, error) {
 	if err := fs.Parse(args); err != nil {
 		return cliOptions{}, err
 	}
+	if fs.NArg() > 0 {
+		err := fmt.Errorf("unexpected argument %q", fs.Arg(0))
+		_, _ = fmt.Fprintln(usageOutput, err)
+		return cliOptions{}, err
+	}
 	opts.contextFiles = contextFiles
 	opts.skills = skills
 	opts.mcp = mcp
-	opts.args = fs.Args()
 	return opts, nil
 }
 
@@ -142,35 +143,6 @@ func closeInto(err *error, name string, c io.Closer) {
 	}
 }
 
-func newWorkflowAgentFunc(sel modelSelection, workingDir string, tools *agenttools.Factory, mcp agentrun.MCPSource) workflow.AgentFunc {
-	runner := agentrun.New(agentrun.Config{
-		WorkingDir:     workingDir,
-		Model:          sel.model,
-		ReasoningLevel: sel.level,
-		MaxTurns:       sel.settings.MaxTurns,
-		MCP:            mcp,
-		ResolveModel:   resolveWorkflowModel,
-		Tools:          tools,
-	})
-	return runner.Run
-}
-
-// runWorkflowMode executes a Lua workflow script from the command line.
-func runWorkflowMode(ctx context.Context, opts cliOptions, cmd workflowCommand, output io.Writer) (err error) {
-	sel, err := loadModelSelection(opts.model, opts.reasoningLevel)
-	if err != nil {
-		return err
-	}
-	registry, err := startMCP(ctx, opts.workingDir, sel.settings.MCPServers, opts.mcp)
-	if err != nil {
-		return err
-	}
-	defer closeInto(&err, "MCP servers", registry)
-
-	agent := newWorkflowAgentFunc(sel, opts.workingDir, agenttools.NewFactory(), registry)
-	return runWorkflow(ctx, cmd.Script, opts.workingDir, cmd.Input, agent, output)
-}
-
 // promptContext is the instruction material included in the system prompt.
 type promptContext struct {
 	skills       []runtime.Skill
@@ -209,7 +181,7 @@ func loadPromptContext(opts cliOptions, configDir, skillsDir string) (promptCont
 // -prompt or through the TUI.
 func runConversationMode(ctx context.Context, opts cliOptions, output io.Writer) (err error) {
 	if opts.prompt == "" && len(opts.mcp) != 0 {
-		return errors.New("--mcp is only supported with --prompt or run; use /mcp:<name> in the TUI")
+		return errors.New("--mcp is only supported with --prompt; use /mcp:<name> in the TUI")
 	}
 
 	sel, err := loadModelSelection(opts.model, opts.reasoningLevel)
@@ -225,14 +197,6 @@ func runConversationMode(ctx context.Context, opts cliOptions, output io.Writer)
 	if err != nil {
 		return fmt.Errorf("failed to resolve skills directory: %w", err)
 	}
-	workflowsDir, err := config.WorkflowsDir()
-	if err != nil {
-		return fmt.Errorf("failed to resolve workflows directory: %w", err)
-	}
-	workflowCatalog, err := workflow.LoadCatalog(workflowsDir)
-	if err != nil {
-		return fmt.Errorf("failed to load workflows: %w", err)
-	}
 	pc, err := loadPromptContext(opts, configDir, skillsDir)
 	if err != nil {
 		return err
@@ -244,14 +208,7 @@ func runConversationMode(ctx context.Context, opts cliOptions, output io.Writer)
 	}
 	defer closeInto(&err, "MCP servers", registry)
 
-	// One tool factory is shared by the conversation and workflow agents so
-	// their file mutations are coordinated.
-	toolFactory := agenttools.NewFactory()
-	baseTools := toolFactory.New(opts.workingDir, false, false, nil)
-	workflowAgent := newWorkflowAgentFunc(sel, opts.workingDir, toolFactory, registry)
-	if len(workflowCatalog.Workflows()) > 0 {
-		baseTools = append(baseTools, workflow.NewTool(workflowCatalog, opts.workingDir, workflowAgent))
-	}
+	baseTools := agenttools.NewFactory().New(opts.workingDir, false, false, nil)
 	tools := append(append([]runtime.Tool(nil), baseTools...), registry.Tools()...)
 
 	systemPromptInput := runtime.SystemPromptInput{
@@ -323,7 +280,7 @@ func runConversationMode(ctx context.Context, opts cliOptions, output io.Writer)
 		baseTools:         baseTools,
 		systemPromptInput: systemPromptInput,
 	}
-	return runTUI(ctx, conv, workflowCatalog, workflowAgent, activator, sel.settings.MCPServers)
+	return runTUI(ctx, conv, activator, sel.settings.MCPServers)
 }
 
 // closePlugins gives plugins a bounded window to flush after the run ends.

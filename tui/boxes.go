@@ -24,28 +24,6 @@ type toolCallBox struct {
 	EndedAt          time.Time
 }
 
-type workflowStep struct {
-	Invocation int
-	Name       string
-	Status     string
-	Error      string
-	StartedAt  time.Time
-	EndedAt    time.Time
-}
-
-type workflowBox struct {
-	Name           string
-	Input          string
-	Status         string
-	Summary        string
-	Active         []workflowStep
-	Recent         []workflowStep
-	Completed      int
-	LatestActivity string
-	StartedAt      time.Time
-	EndedAt        time.Time
-}
-
 type systemMessageBox struct{ Text string }
 
 type shellOutputBox struct {
@@ -67,7 +45,6 @@ func (b userMessageBox) box()       {}
 func (b assistantMessageBox) box()  {}
 func (b assistantThinkingBox) box() {}
 func (b toolCallBox) box()          {}
-func (b workflowBox) box()          {}
 func (b systemMessageBox) box()     {}
 func (b shellOutputBox) box()       {}
 func (b errorMessageBox) box()      {}

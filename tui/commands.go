@@ -3,7 +3,6 @@ package tui
 import (
 	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/runtime"
-	"github.com/crowl/ronin/workflow"
 )
 
 type StartNewConversation struct{}
@@ -27,8 +26,6 @@ type SwitchReasoningLevel struct{ Level llm.ReasoningLevel }
 
 type InvokeSkill struct{ Skill runtime.Skill }
 
-type InvokeWorkflow struct{ Workflow workflow.Workflow }
-
 type ActivateMCP struct{ Name string }
 
 type Exit struct{}
@@ -45,6 +42,5 @@ func (CompactConversation) command()  {}
 func (SwitchModel) command()          {}
 func (SwitchReasoningLevel) command() {}
 func (InvokeSkill) command()          {}
-func (InvokeWorkflow) command()       {}
 func (ActivateMCP) command()          {}
 func (Exit) command()                 {}

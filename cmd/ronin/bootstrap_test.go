@@ -19,7 +19,6 @@ func TestParseFlags(t *testing.T) {
 			"-model", "openai:gpt", "-reasoning", "high", "-disable-jev",
 			"-context-file", "a.md", "-context-file", "b.md",
 			"-skill", "git", "-mcp", "docs", "-mcp", "all",
-			"run", "flow.lua", "input",
 		}, &bytes.Buffer{})
 		if err != nil {
 			t.Fatalf("parseFlags() error = %v", err)
@@ -34,7 +33,6 @@ func TestParseFlags(t *testing.T) {
 			contextFiles:   []string{"a.md", "b.md"},
 			skills:         []string{"git"},
 			mcp:            []string{"docs", "all"},
-			args:           []string{"run", "flow.lua", "input"},
 		}
 		if !reflect.DeepEqual(opts, want) {
 			t.Fatalf("parseFlags() = %#v, want %#v", opts, want)
@@ -46,8 +44,15 @@ func TestParseFlags(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parseFlags() error = %v", err)
 		}
-		if opts.workingDir != "." || opts.version || opts.disableJev || len(opts.args) != 0 {
+		if opts.workingDir != "." || opts.version || opts.disableJev {
 			t.Fatalf("parseFlags() = %#v", opts)
+		}
+	})
+
+	t.Run("rejects positional arguments", func(t *testing.T) {
+		var usage bytes.Buffer
+		if _, err := parseFlags([]string{"run"}, &usage); err == nil || !strings.Contains(err.Error(), `unexpected argument "run"`) {
+			t.Fatalf("parseFlags(run) error = %v", err)
 		}
 	})
 

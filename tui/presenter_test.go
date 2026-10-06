@@ -53,25 +53,6 @@ func TestRenderToolCallUsesToolMarker(t *testing.T) {
 	}
 }
 
-func TestRenderWorkflowUsesMutedContent(t *testing.T) {
-	box := workflowBox{
-		Name:    "implement",
-		Input:   "build it",
-		Summary: "done",
-		Recent:  []workflowStep{{Name: "Planning", Status: "completed"}},
-	}
-	lines := renderBoxLinesAt(box, 80, false, box.StartedAt)
-
-	if strings.Contains(lines[0], mutedStyle.start()) {
-		t.Fatalf("workflow title is unexpectedly muted: %q", lines[0])
-	}
-	for i, line := range lines[1:] {
-		if !strings.Contains(line, mutedStyle.start()) {
-			t.Fatalf("workflow content at line %d is not muted: %q", i+1, line)
-		}
-	}
-}
-
 func TestWorkingIndicatorUsesConversationPadding(t *testing.T) {
 	lines := workingIndicator{Frame: 3}.Lines(80)
 	if got := lines[0]; got != " Working..." {
@@ -114,9 +95,9 @@ func TestUserMessageUsesMutedBorders(t *testing.T) {
 }
 
 func TestEditorUsesMutedBorders(t *testing.T) {
-	lines := editorPresenter{Label: "workflow implement input"}.Lines(32)
-	if len(lines) != 4 {
-		t.Fatalf("editor lines = %#v, want borders around label and editor", plainLines(lines))
+	lines := editorPresenter{}.Lines(32)
+	if len(lines) != 3 {
+		t.Fatalf("editor lines = %#v, want borders around the editor", plainLines(lines))
 	}
 	border := strings.Repeat("─", 32)
 	plain := plainLines(lines)
@@ -127,9 +108,6 @@ func TestEditorUsesMutedBorders(t *testing.T) {
 		if !strings.Contains(lines[index], mutedStyle.start()) {
 			t.Fatalf("editor border is not muted: %q", lines[index])
 		}
-	}
-	if plain[1] != "% workflow implement input" {
-		t.Fatalf("editor label = %q", plain[1])
 	}
 }
 

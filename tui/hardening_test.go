@@ -27,7 +27,7 @@ func TestUnknownToolLifecycle(t *testing.T) {
 }
 
 func TestCommandsRejectedWhileBusy(t *testing.T) {
-	for _, command := range []Command{StartNewConversation{}, CompactConversation{}, SwitchModel{}, SwitchReasoningLevel{}, RewindConversation{}, ForkConversation{}, InvokeWorkflow{}, ActivateMCP{}} {
+	for _, command := range []Command{StartNewConversation{}, CompactConversation{}, SwitchModel{}, SwitchReasoningLevel{}, RewindConversation{}, ForkConversation{}, ActivateMCP{}} {
 		app := newTestApp(t, testAppConfig{})
 		app.model.beginOperation(operationPrompt, "Working")
 		if err := app.runCommand(t.Context(), menuItem{Value: "test"}, command); err != nil {

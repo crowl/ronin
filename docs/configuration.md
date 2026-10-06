@@ -118,12 +118,12 @@ For a server managed outside Ronin, configure its SSE endpoint instead:
 
 Each server must set exactly one of `command` or `url`. Configured MCP servers are opt-in: Ronin does not connect them automatically. In the TUI, activate a server with its generated slash command, such as `/mcp:gopls`. Activation applies to the current process and future sessions started with `/new`; activating an already active server is a no-op.
 
-For non-interactive prompts and workflow runs, use the repeatable `--mcp` flag:
+For non-interactive prompts, use the repeatable `--mcp` flag:
 
 ```sh
 ronin --mcp gopls --prompt "inspect this package"
 ronin --mcp gopls --mcp github --prompt "review this repository"
-ronin --mcp all run workflow.lua "input"
+ronin --mcp all --prompt "review this repository"
 ```
 
 With no `--mcp` flag, no MCP servers are connected. `--mcp all` activates every configured server and cannot be combined with named selections. Unknown server names and connection, initialization, or tool-listing failures stop the non-interactive command with an error.
