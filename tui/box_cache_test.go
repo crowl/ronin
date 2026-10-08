@@ -86,6 +86,28 @@ func TestBoxLineCache(t *testing.T) {
 		}
 	})
 
+	t.Run("reuses collapsed tool lines while output streams", func(t *testing.T) {
+		var cache boxLineCache
+		now := time.Unix(100, 0)
+		call := toolCallBox{
+			ToolCallID: "call_1",
+			Title:      "shell",
+			StartedAt:  now.Add(-time.Second),
+			EndedAt:    now,
+		}
+		call.addDisplayArtifact(tool.TextArtifact{Text: "first"})
+
+		cache.Lines([]box{call}, 80, false, now)
+		toolLines := cache.entries[0].lines
+
+		call.addDisplayArtifact(tool.TextArtifact{Text: "second"})
+		cache.Lines([]box{call}, 80, false, now)
+
+		if &cache.entries[0].lines[0] != &toolLines[0] {
+			t.Fatal("collapsed tool box rendered again for hidden output")
+		}
+	})
+
 	t.Run("running tool elapsed time invalidates cached lines", func(t *testing.T) {
 		var cache boxLineCache
 		startedAt := time.Unix(100, 0)

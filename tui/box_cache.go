@@ -96,12 +96,15 @@ func boxSignature(block box, width int, toolsExpanded bool, now time.Time) boxLi
 		signature.Kind = "tool"
 		signature.ToolCallID = typedBlock.ToolCallID
 		signature.Title = typedBlock.Title
-		signature.Revision = typedBlock.Revision
-		signature.Truncated = typedBlock.DisplayTruncated
-		if typedBlock.Revision == 0 {
-			signature.Text = toolCallSignatureText(typedBlock)
-		} else {
-			signature.Text = typedBlock.Error
+		// Collapsed tool boxes render only the title, error and duration,
+		// so artifact changes cannot affect their lines.
+		signature.Text = typedBlock.Error
+		if toolsExpanded {
+			signature.Revision = typedBlock.Revision
+			signature.Truncated = typedBlock.DisplayTruncated
+			if typedBlock.Revision == 0 {
+				signature.Text = toolCallSignatureText(typedBlock)
+			}
 		}
 		signature.StartedAt = typedBlock.StartedAt.UnixNano()
 		signature.EndedAt = typedBlock.EndedAt.UnixNano()
