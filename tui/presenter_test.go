@@ -1,8 +1,12 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/crowl/ronin/tool"
 )
 
 func TestMinimalConversationRendering(t *testing.T) {
@@ -50,6 +54,74 @@ func TestRenderToolCallUsesToolMarker(t *testing.T) {
 	}
 	if plain[len(plain)-1] != "   Elapsed 0.0s" {
 		t.Fatalf("tool duration = %q", plain[len(plain)-1])
+	}
+}
+
+func TestRenderToolCallHidesOutputUntilExpanded(t *testing.T) {
+	startedAt := time.Unix(100, 0)
+	box := toolCallBox{
+		Title:     "shell",
+		StartedAt: startedAt,
+		EndedAt:   startedAt.Add(time.Second),
+	}
+	box.addDisplayArtifact(tool.TextArtifact{Text: "one\ntwo\nthree"})
+
+	collapsed := plainLines(renderBoxLinesAt(box, 80, false, startedAt))
+	if len(collapsed) != 2 {
+		t.Fatalf("collapsed tool call = %#v, want title and duration only", collapsed)
+	}
+	if collapsed[0] != " • shell" || collapsed[1] != "   Took 1.0s" {
+		t.Fatalf("collapsed tool call = %#v", collapsed)
+	}
+
+	expanded := plainLines(renderBoxLinesAt(box, 80, true, startedAt))
+	if got := strings.Join(expanded, "\n"); !strings.Contains(got, "one") ||
+		!strings.Contains(got, "two") || !strings.Contains(got, "three") {
+		t.Fatalf("expanded tool call did not render output:\n%s", got)
+	}
+}
+
+func TestRenderToolCallBoundsExpandedOutput(t *testing.T) {
+	startedAt := time.Unix(100, 0)
+	box := toolCallBox{Title: "shell", StartedAt: startedAt, EndedAt: startedAt}
+	values := make([]string, 0, maxToolOutputLines*2)
+	for i := range cap(values) {
+		values = append(values, fmt.Sprintf("line-%d", i))
+	}
+	box.addDisplayArtifact(tool.TextArtifact{Text: strings.Join(values, "\n")})
+
+	expanded := plainLines(renderBoxLinesAt(box, 80, true, startedAt))
+	// Title, bounded output, truncation notice and duration.
+	if len(expanded) != maxToolOutputLines+3 {
+		t.Fatalf("expanded tool call = %#v, want %d output lines", expanded, maxToolOutputLines)
+	}
+	if notice := expanded[len(expanded)-2]; notice != "   ... (more output)" {
+		t.Fatalf("truncation notice = %q", notice)
+	}
+	if strings.Contains(strings.Join(expanded, "\n"), "line-"+fmt.Sprint(maxToolOutputLines)) {
+		t.Fatalf("expanded tool call rendered beyond the bound:\n%s", strings.Join(expanded, "\n"))
+	}
+}
+
+func TestRenderToolCallAlwaysShowsError(t *testing.T) {
+	startedAt := time.Unix(100, 0)
+	box := toolCallBox{
+		Title:     "shell",
+		Error:     "exit status 1",
+		StartedAt: startedAt,
+		EndedAt:   startedAt,
+	}
+	box.addDisplayArtifact(tool.TextArtifact{Text: "hidden output"})
+
+	for _, expanded := range []bool{false, true} {
+		lines := renderBoxLinesAt(box, 80, expanded, startedAt)
+		plain := strings.Join(plainLines(lines), "\n")
+		if !strings.Contains(plain, "exit status 1") {
+			t.Fatalf("tool error missing (expanded=%v):\n%s", expanded, plain)
+		}
+		if strings.Contains(plain, "hidden output") != expanded {
+			t.Fatalf("tool output visibility (expanded=%v):\n%s", expanded, plain)
+		}
 	}
 }
 

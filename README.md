@@ -60,7 +60,7 @@ In the TUI:
 
 | Input | Action |
 | --- | --- |
-| `Ctrl+O` | Expand tool output |
+| `Ctrl+O` | Show tool output, hidden by default and truncated when shown |
 | `Escape` | Cancel an active operation |
 | `/rewind` | Return to before a previous prompt |
 | `/fork` | Start a child session from a previous prompt |

@@ -15,10 +15,12 @@ import (
 // Conversation
 
 const (
-	maxToolOutputLinesNotExpanded = 10
-	conversationBoxPadding        = " "
-	promptMarker                  = "› "
-	toolMarker                    = "• "
+	// maxToolOutputLines bounds tool output once the user expands it.
+	// Tool output is hidden entirely until then.
+	maxToolOutputLines     = 10
+	conversationBoxPadding = " "
+	promptMarker           = "› "
+	toolMarker             = "• "
 )
 
 type boxesPresenter struct {
@@ -72,39 +74,14 @@ func renderBoxContentLinesAt(block box, width int, toolsExpanded bool, now time.
 		return markdownLines(typedBlock.Text, width, thinkingTextStyles())
 	case toolCallBox:
 		lines := markedLines(toolMarker, typedBlock.Title, width, strongStyle)
-		var artifactLines []string
-		more := false
-		for _, artifact := range typedBlock.Artifacts {
-			if !toolsExpanded && typedBlock.Revision > 0 {
-				preview, truncated := toolArtifactLinesBounded(artifact, width, maxToolOutputLinesNotExpanded-len(artifactLines))
-				artifactLines = append(artifactLines, preview...)
-				more = more || truncated
-				if more {
-					break
-				}
-			} else {
-				artifactLines = append(artifactLines, toolArtifactLines(artifact, width)...)
-			}
+		if toolsExpanded {
+			lines = append(lines, toolOutputLines(typedBlock, width)...)
 		}
 		if typedBlock.Error != "" {
 			for _, line := range text.Wrap("  ", typedBlock.Error, width) {
-				artifactLines = append(artifactLines, errorStyle.apply(line))
+				lines = append(lines, errorStyle.apply(line))
 			}
 		}
-		if len(artifactLines) > maxToolOutputLinesNotExpanded && !toolsExpanded {
-			skipped := len(artifactLines) - maxToolOutputLinesNotExpanded
-			notice := fmt.Sprintf("  ... (%d more lines, ctrl+o to expand)", skipped)
-			if more {
-				notice = "  ... (more output, ctrl+o to expand)"
-			}
-			artifactLines = append(artifactLines[:maxToolOutputLinesNotExpanded], mutedStyle.apply(notice))
-		} else if more {
-			artifactLines = append(artifactLines, mutedStyle.apply("  ... (more output, ctrl+o to expand)"))
-		}
-		if typedBlock.DisplayTruncated {
-			lines = append(lines, mutedStyle.apply("  ... (display output truncated)"))
-		}
-		lines = append(lines, artifactLines...)
 
 		endedAt := typedBlock.EndedAt
 		label := "Took"
@@ -123,6 +100,37 @@ func renderBoxContentLinesAt(block box, width int, toolsExpanded bool, now time.
 	default:
 		return nil
 	}
+}
+
+// toolOutputLines renders a bounded preview of captured tool artifacts.
+// Tool output is only rendered once the user expands it, and never in
+// full: long output is cut at maxToolOutputLines.
+func toolOutputLines(block toolCallBox, width int) []string {
+	var lines []string
+	truncated := false
+	for _, artifact := range block.Artifacts {
+		if len(lines) >= maxToolOutputLines {
+			truncated = true
+			break
+		}
+		preview, more := toolArtifactLinesBounded(artifact, width, maxToolOutputLines-len(lines))
+		lines = append(lines, preview...)
+		if more {
+			truncated = true
+			break
+		}
+	}
+	if len(lines) > maxToolOutputLines {
+		lines = lines[:maxToolOutputLines]
+		truncated = true
+	}
+	switch {
+	case truncated:
+		lines = append(lines, mutedStyle.apply("  ... (more output)"))
+	case block.DisplayTruncated:
+		lines = append(lines, mutedStyle.apply("  ... (display output truncated)"))
+	}
+	return lines
 }
 
 func renderShellOutputLines(box shellOutputBox, width int) []string {
