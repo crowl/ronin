@@ -10,6 +10,7 @@ import (
 	"github.com/crowl/ronin/config"
 	"github.com/crowl/ronin/llm"
 	"github.com/crowl/ronin/llm/anthropic"
+	"github.com/crowl/ronin/llm/antigravity"
 	"github.com/crowl/ronin/llm/google"
 	"github.com/crowl/ronin/llm/openai"
 )
@@ -73,6 +74,8 @@ func setupProviders(settings ...config.Settings) error {
 			err = anthropic.SetupModels(apiKey, baseURL, models)
 		case "google":
 			err = google.SetupModels(apiKey, baseURL, models)
+		case "antigravity":
+			err = antigravity.SetupModels(apiKey, baseURL, models)
 		default:
 			return fmt.Errorf("provider %q uses unsupported adapter %q", providerName, provider.Adapter)
 		}

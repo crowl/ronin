@@ -58,7 +58,7 @@ Ronin merges an embedded provider and model catalog with optional `providers` ov
 
 Pricing rates are USD per million tokens. Providers and models can be disabled with `"enabled": false`.
 
-Custom providers use one of the built-in `openai`, `anthropic`, or `google` adapters while keeping API keys in environment variables:
+Custom providers use one of the built-in `openai`, `anthropic`, `google`, or `antigravity` adapters while keeping API keys in environment variables:
 
 ```json
 {
@@ -88,6 +88,16 @@ Custom providers use one of the built-in `openai`, `anthropic`, or `google` adap
 ```
 
 The TUI only offers reasoning levels supported by the active model. Switching to a model that does not support the current level selects the nearest supported level, preferring the higher level on a tie. The status bar reports the estimated cumulative main-conversation cost; `$?` means at least one call could not be priced.
+
+### Antigravity adapter
+
+The `antigravity` adapter speaks Google's Cloud Code Assist protocol, the backend behind the Antigravity CLI. It differs from the `google` adapter in three ways:
+
+- **Reasoning selects a model, not a field.** Each public model maps to a backend model per level, so `gemini-3.1-pro` at `high` is sent as `gemini-pro-agent`. Models absent from the routing table are sent unchanged, which lets a newly entitled model work before the table knows about it.
+- **Authentication is a bearer token.** `ANTIGRAVITY_API_KEY` is sent as `Authorization: Bearer`. Behind the Limes proxy this is a placeholder the proxy replaces with the local Antigravity login.
+- **The proxy supplies the project.** Cloud Code Assist requests are bound to a project the client cannot discover, so the adapter omits it and Limes injects it.
+
+The model catalog varies by account entitlement and by reported client version, so the configured list is authoritative rather than the adapter's built-in fallback. Query `/v1internal:fetchAvailableModels` to see what an account is actually offered.
 
 ## MCP servers
 

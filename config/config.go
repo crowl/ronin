@@ -443,7 +443,7 @@ func validateProviders(providers map[string]Provider) error {
 			continue
 		}
 		switch provider.Adapter {
-		case "openai", "anthropic", "google":
+		case "openai", "anthropic", "google", "antigravity":
 		default:
 			return fmt.Errorf("providers.%s.adapter %q is not supported", name, provider.Adapter)
 		}

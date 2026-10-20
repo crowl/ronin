@@ -27,6 +27,16 @@
         "gemini-3.7-flash": {"context_window": 1048576, "reasoning": {"mode": "effort", "levels": ["off", "low", "medium", "high"]}, "pricing": {"input": 0.75, "output": 3.75, "cache_read": 0.075}}
       }
     },
+    "antigravity": {
+      "adapter": "antigravity",
+      "base_url": "https://cloudcode-pa.googleapis.com",
+      "base_url_env": "ANTIGRAVITY_BASE_URL",
+      "api_key_env": "ANTIGRAVITY_API_KEY",
+      "models": {
+        "gemini-3.1-pro": {"context_window": 1048576, "reasoning": {"mode": "effort", "levels": ["off", "low", "high"]}},
+        "gemini-3.8-flash": {"context_window": 1048576, "reasoning": {"mode": "effort", "levels": ["off", "low", "medium", "high"]}}
+      }
+    },
     "anthropic": {
       "adapter": "anthropic",
       "base_url": "https://api.anthropic.com/v1",
